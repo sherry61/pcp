@@ -1,0 +1,718 @@
+<template>
+  <div class="delivery">
+    <AppHeader :username="username" :userId="userId" />
+
+    <div class="main-content">
+      <AppSidebar />
+
+      <div class="content">
+        <div class="page-header">
+          <div>
+            <h2 class="page-title">资产交付（买家）</h2>
+            <p class="page-subtitle">当前开放 HE 公钥上传与结果本地解密</p>
+          </div>
+          <el-button size="small" type="primary" plain @click="refreshResults" :loading="isLoading">
+            刷新
+          </el-button>
+        </div>
+
+        <el-table
+          :data="resultList"
+          border
+          stripe
+          v-loading="isLoading"
+          style="width: 100%"
+        >
+          <el-table-column prop="transaction_id" label="交易ID" min-width="180" />
+
+          <el-table-column label="交付状态" width="170">
+            <template #default="{ row }">
+              <el-tag :type="getRowTagType(row)">
+                {{ getRowStatusText(row) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="交付方法" width="120">
+            <template #default>
+              <span class="method-pill">{{ deliveryMethodLabel }}</span>
+            </template>
+          </el-table-column>
+
+          <el-table-column label="操作" min-width="360">
+            <template #default="{ row }">
+              <div class="action-cell">
+                <el-button size="small" @click="viewContract(row)">查看合约</el-button>
+                <el-button
+                  size="small"
+                  type="primary"
+                  :loading="row.uploadingKeys"
+                  :disabled="row.heRecord?.public_keys_ready"
+                  @click="uploadHePublicKeys(row)"
+                >
+                  {{ row.heRecord?.public_keys_ready ? '已上传公钥' : '上传公钥' }}
+                </el-button>
+                <el-button
+                  size="small"
+                  type="success"
+                  :loading="row.downloading"
+                  :disabled="!row.heRecord?.result_ready"
+                  @click="downloadResult(row)"
+                >
+                  下载结果
+                </el-button>
+                <el-button
+                  size="small"
+                  :loading="row.syncingHe"
+                  @click="refreshHeStatus(row)"
+                >
+                  刷新状态
+                </el-button>
+              </div>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <el-dialog v-model="decryptDialog.visible" title="本地解密 HE 结果" width="620px">
+          <div v-if="decryptDialog.row" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">交易ID</span>
+              <span>{{ decryptDialog.row.transaction_id }}</span>
+            </div>
+            <div class="dialog-row">
+              <span class="dialog-label">算法</span>
+              <span>{{ decryptDialog.algorithm }}</span>
+            </div>
+            <div class="dialog-row file-row">
+              <span class="dialog-label">私钥文件</span>
+              <input type="file" accept=".json" @change="onPrivateKeyFileChange" />
+            </div>
+            <div v-if="decryptDialog.privateKeyFile" class="file-name">
+              {{ decryptDialog.privateKeyFile.name }}
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closeDecryptDialog">取消</el-button>
+            <el-button type="primary" :loading="decryptDialog.processing" @click="confirmDecryptResult">
+              解密并导出 CSV
+            </el-button>
+          </template>
+        </el-dialog>
+
+        <div v-if="contractInfo.visible" class="modal" @click.self="closeContractInfo">
+          <div class="modal-content wide-modal">
+            <h3>数字合约信息</h3>
+
+            <div class="contract-info" v-if="contractInfo.data">
+              <div class="info-section">
+                <h4>基本信息</h4>
+                <div class="info-grid">
+                  <div class="info-item">
+                    <label>合约ID:</label>
+                    <span>{{ contractInfo.data.contract_id }}</span>
+                  </div>
+                  <div class="info-item">
+                    <label>合约名称:</label>
+                    <span>{{ contractInfo.data.contract_name }}</span>
+                  </div>
+                  <div class="info-item">
+                    <label>创建时间:</label>
+                    <span>{{ formatDate(contractInfo.data.created_at) }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="info-section">
+                <h4>产品信息</h4>
+                <div class="info-grid">
+                  <div class="info-item">
+                    <label>产品名称:</label>
+                    <span>{{ contractInfo.data.product_name }}</span>
+                  </div>
+                  <div class="info-item">
+                    <label>Token ID:</label>
+                    <span>{{ contractInfo.data.token_id }}</span>
+                  </div>
+                  <div class="info-item">
+                    <label>合约描述:</label>
+                    <span class="description">{{ contractInfo.data.contract_description }}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div class="info-section">
+                <h4>参与方</h4>
+                <div class="info-grid">
+                  <div class="info-item">
+                    <label>卖家:</label>
+                    <span class="address">{{ contractInfo.data.seller_id }}</span>
+                  </div>
+                  <div class="info-item">
+                    <label>买家:</label>
+                    <span class="address">{{ contractInfo.data.buyer_id }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="button-container">
+              <button class="confirm-button" @click="closeContractInfo">确认</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script>
+/* eslint-disable vue/multi-word-component-names */
+import axios from 'axios'
+import AppHeader from '@/components/AppHeader.vue'
+import AppSidebar from '@/components/AppSidebar.vue'
+import heConfig from '@/utils/heDeliveryConfig'
+import heCrypto from '@/utils/heCrypto'
+import heCsv from '@/utils/heCsv'
+
+const API_BASE = 'http://10.112.47.214:3000'
+
+export default {
+  name: 'DeliveryBuyer',
+  components: { AppHeader, AppSidebar },
+  data() {
+    return {
+      userId: '',
+      username: '',
+      isLoading: false,
+      resultList: [],
+      contractInfo: { visible: false, data: null },
+      decryptDialog: {
+        visible: false,
+        row: null,
+        algorithm: '',
+        encryptedText: '',
+        privateKeyFile: null,
+        processing: false
+      }
+    }
+  },
+  computed: {
+    deliveryMethodLabel() {
+      return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_HE)
+    }
+  },
+  async created() {
+    await this.initUser()
+    await this.refreshResults()
+  },
+  methods: {
+    parseJwt(token) {
+      const base64Url = token.split('.')[1]
+      const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
+      const jsonPayload = decodeURIComponent(
+        atob(base64)
+          .split('')
+          .map((c) => `%${(`00${c.charCodeAt(0).toString(16)}`).slice(-2)}`)
+          .join('')
+      )
+      return JSON.parse(jsonPayload)
+    },
+
+    async initUser() {
+      const token = localStorage.getItem('token')
+      if (!token) return
+
+      const payload = this.parseJwt(token)
+      this.username = decodeURIComponent(payload.username)
+
+      const response = await axios.post(`${API_BASE}/api/get-user-id`, {
+        username: this.username
+      })
+      this.userId = String(response.data.id || '')
+    },
+
+    async getAllBuyerAddresses() {
+      const addresses = []
+      const sources = [
+        { org: 'wx-org1.chainmaker.org', api: 'get-certificates' },
+        { org: 'wx-org2.chainmaker.org', api: 'get-certificates2' }
+      ]
+
+      for (const source of sources) {
+        try {
+          const response = await axios.post(`${API_BASE}/api/${source.api}`, {
+            userId: this.userId
+          })
+          const certs = Array.isArray(response.data.certificates) ? response.data.certificates : []
+          for (const cert of certs) {
+            const certPath = `/home/super/r/GoSDK/crypto-config/${source.org}/user/${cert.cert}/${cert.cert}.sign.crt`
+            const addrResponse = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
+              cert_path: certPath
+            })
+            const address = addrResponse?.data?.ethereum?.address
+            if (address) {
+              addresses.push(address)
+            }
+          }
+        } catch (error) {
+          console.warn('获取买家证书地址失败:', error?.message || error)
+        }
+      }
+
+      return [...new Set(addresses)]
+    },
+
+    async refreshResults() {
+      this.isLoading = true
+      try {
+        const buyerAddresses = await this.getAllBuyerAddresses()
+        if (!buyerAddresses.length) {
+          this.resultList = []
+          this.$message?.warning('当前用户未找到可用证书地址')
+          return
+        }
+
+        const rows = []
+        for (const address of buyerAddresses) {
+          try {
+            const response = await axios.get(`${API_BASE}/api/buyer-transaction-status/${address}`)
+            const transactions = Array.isArray(response.data.transactions) ? response.data.transactions : []
+
+            transactions
+              .filter((item) => item.status === '已确认')
+              .forEach((item) => {
+                rows.push({
+                  transaction_id: item.transaction_id,
+                  buyer_address: item.buyer_address,
+                  seller_address: item.seller_address,
+                  quantity: item.quantity,
+                  heRecord: null,
+                  uploadingKeys: false,
+                  downloading: false,
+                  syncingHe: false
+                })
+              })
+          } catch (error) {
+            console.warn('加载买家交易失败:', address, error?.message || error)
+          }
+        }
+
+        this.resultList = rows
+        await Promise.all(this.resultList.map((row) => this.refreshHeStatus(row, false)))
+      } catch (error) {
+        console.error('加载结果失败:', error)
+        this.$message?.error('加载结果失败')
+      } finally {
+        this.isLoading = false
+      }
+    },
+
+    async refreshHeStatus(row, showMessage = true) {
+      if (!row?.transaction_id) return
+      row.syncingHe = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/he/status`, {
+          params: { transactionId: row.transaction_id }
+        })
+        row.heRecord = response.data?.item || null
+        if (showMessage) {
+          this.$message?.success('HE 状态已刷新')
+        }
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'HE 状态刷新失败'
+        if (showMessage) {
+          this.$message?.error(message)
+        }
+      } finally {
+        row.syncingHe = false
+      }
+    },
+
+    getRowStatusText(row) {
+      return heConfig.getHeStatusText(row.heRecord?.pcp_status || 'NOT_EXIST')
+    },
+
+    getRowTagType(row) {
+      switch (String(row.heRecord?.pcp_status || '').toUpperCase()) {
+        case 'COMPLETED':
+          return 'success'
+        case 'FAILED':
+        case 'AUDIT_FAILED':
+          return 'danger'
+        case 'RUNNING':
+        case 'QUEUED':
+        case 'WAITING_INPUT':
+          return 'warning'
+        default:
+          return 'info'
+      }
+    },
+
+    async uploadHePublicKeys(row) {
+      if (!row?.transaction_id) return
+      row.uploadingKeys = true
+      try {
+        const keyPairs = await heCrypto.generateHeKeyPairs()
+        const publicPayload = heCrypto.buildHePublicKeyPayload(keyPairs)
+
+        await axios.post(`${API_BASE}/api/privacy/he/public-keys`, {
+          transactionId: row.transaction_id,
+          ...publicPayload
+        })
+
+        heCrypto.downloadPrivateKeyFile({
+          algorithm: 'Paillier',
+          transactionId: row.transaction_id,
+          keyMaterial: keyPairs.paillier.privateKey
+        })
+        heCrypto.downloadPrivateKeyFile({
+          algorithm: 'ElGamal',
+          transactionId: row.transaction_id,
+          keyMaterial: keyPairs.elgamal.privateKey
+        })
+
+        await this.refreshHeStatus(row, false)
+        this.$message?.success('HE 公钥上传成功，私钥已下载到本地')
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'HE 公钥上传失败'
+        this.$message?.error(message)
+      } finally {
+        row.uploadingKeys = false
+      }
+    },
+
+    async downloadResult(row) {
+      if (!row?.transaction_id || !row.heRecord?.result_ready) {
+        this.$message?.warning('当前结果尚不可下载')
+        return
+      }
+
+      row.downloading = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/he/result`, {
+          params: { transactionId: row.transaction_id },
+          responseType: 'blob'
+        })
+
+        const algorithm = response.headers['x-he-enc-type'] || row.heRecord?.selected_enc_type || ''
+        const encryptedText = await heCsv.blobToText(response.data)
+
+        this.decryptDialog.visible = true
+        this.decryptDialog.row = row
+        this.decryptDialog.algorithm = algorithm
+        this.decryptDialog.encryptedText = encryptedText
+        this.decryptDialog.privateKeyFile = null
+      } catch (error) {
+        const message = await this.resolveBlobErrorMessage(error, '下载 HE 结果失败')
+        this.$message?.error(message)
+      } finally {
+        row.downloading = false
+      }
+    },
+
+    onPrivateKeyFileChange(event) {
+      this.decryptDialog.privateKeyFile = event.target.files?.[0] || null
+      event.target.value = ''
+    },
+
+    async resolveBlobErrorMessage(error, fallbackMessage) {
+      const blobPayload = error?.response?.data
+      if (!blobPayload || typeof Blob === 'undefined' || !(blobPayload instanceof Blob)) {
+        return error?.response?.data?.message || error?.message || fallbackMessage
+      }
+
+      try {
+        const text = await heCsv.blobToText(blobPayload)
+        if (!text) {
+          return fallbackMessage
+        }
+
+        try {
+          const parsed = JSON.parse(text)
+          return parsed?.message || fallbackMessage
+        } catch (parseError) {
+          return text
+        }
+      } catch (blobError) {
+        return fallbackMessage
+      }
+    },
+
+    async confirmDecryptResult() {
+      if (!this.decryptDialog.privateKeyFile || !this.decryptDialog.row) {
+        this.$message?.warning('请先选择私钥文件')
+        return
+      }
+
+      this.decryptDialog.processing = true
+      try {
+        const privateKeyText = await this.decryptDialog.privateKeyFile.text()
+        const plaintextCsv = await heCrypto.decryptHeResultCsv({
+          algorithm: this.decryptDialog.algorithm,
+          encryptedCsvText: this.decryptDialog.encryptedText,
+          privateKeyText
+        })
+
+        heCsv.downloadCsvText({
+          csvText: plaintextCsv,
+          filename: `he_result_${this.decryptDialog.row.transaction_id}.csv`
+        })
+
+        this.$message?.success('HE 结果已在浏览器内解密并导出')
+        this.closeDecryptDialog()
+      } catch (error) {
+        this.$message?.error(error?.message || '本地解密失败')
+      } finally {
+        this.decryptDialog.processing = false
+      }
+    },
+
+    closeDecryptDialog() {
+      this.decryptDialog.visible = false
+      this.decryptDialog.row = null
+      this.decryptDialog.algorithm = ''
+      this.decryptDialog.encryptedText = ''
+      this.decryptDialog.privateKeyFile = null
+      this.decryptDialog.processing = false
+    },
+
+    async generateContractInfo(row) {
+      try {
+        const transactionId = row.transaction_id
+        if (!transactionId) throw new Error('缺少 transaction_id')
+
+        const txDetailRes = await axios.get(`${API_BASE}/api/get-transaction-detail/${transactionId}`)
+        const tx = txDetailRes?.data?.transaction
+        if (!tx) throw new Error('未获取到交易详情')
+
+        const assetId = tx.asset_id
+        const assetRes = await axios.get(`${API_BASE}/api/asset/${assetId}`)
+        const assetInfo = assetRes?.data || {}
+
+        return {
+          contract_id: row.contract_id || `CONTRACT-${transactionId}`,
+          contract_name: `${assetInfo.asset_name || '数字产品'}-数字合约`,
+          contract_description:
+            assetInfo.description ||
+            '该数字合约依据平台交易信息自动生成，用于界定交易双方权责与限制条件',
+          created_at:
+            (tx.created_at && new Date(tx.created_at.replace(' ', 'T')).toISOString()) ||
+            new Date().toISOString(),
+          token_id: assetId,
+          product_name: assetInfo.asset_name || '未知产品',
+          seller_id: tx.seller_address ?? 'unknown-seller',
+          buyer_id: tx.buyer_address ?? 'unknown-buyer',
+          operations: ['所有'],
+          constraints: {
+            expiration_time: tx.expiration_time
+              ? new Date(tx.expiration_time.replace(' ', 'T')).toISOString()
+              : null,
+            quantity: tx.quantity ?? null
+          }
+        }
+      } catch (error) {
+        console.error('生成合约信息失败:', error)
+        this.$message?.error('生成合约信息失败')
+        return null
+      }
+    },
+
+    async viewContract(row) {
+      const info = await this.generateContractInfo(row)
+      if (info) {
+        this.contractInfo.data = info
+        this.contractInfo.visible = true
+      }
+    },
+
+    closeContractInfo() {
+      this.contractInfo.visible = false
+      this.contractInfo.data = null
+    },
+
+    formatDate(dateString) {
+      if (!dateString) return '-'
+      try {
+        const date = new Date(dateString)
+        return date.toLocaleString('zh-CN', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit'
+        })
+      } catch (error) {
+        return String(dateString)
+      }
+    }
+  }
+}
+</script>
+
+<style scoped>
+.delivery {
+  --header-height: 60px;
+  --sidebar-width: 280px;
+
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: #f5f6fa;
+}
+
+.main-content {
+  display: flex;
+  flex: 1;
+  background: #f5f6fa;
+  min-height: calc(100vh - var(--header-height));
+}
+
+.content {
+  flex: 1;
+  padding: 20px;
+}
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.page-title {
+  margin: 0;
+  font-size: 22px;
+}
+
+.page-subtitle {
+  margin: 6px 0 0;
+  color: #6b7280;
+  font-size: 13px;
+}
+
+.method-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #edf7ee;
+  color: #217a3c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.action-cell {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dialog-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.dialog-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.dialog-label {
+  min-width: 80px;
+  color: #4b5563;
+  font-size: 13px;
+}
+
+.file-row {
+  align-items: flex-start;
+}
+
+.file-name {
+  margin-left: 94px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+}
+
+.modal-content {
+  width: min(840px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  background: #fff;
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.info-section + .info-section {
+  margin-top: 18px;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.info-item label {
+  display: block;
+  margin-bottom: 4px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.description,
+.address {
+  word-break: break-all;
+}
+
+.button-container {
+  margin-top: 20px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.confirm-button {
+  border: none;
+  border-radius: 8px;
+  background: #111827;
+  color: #fff;
+  padding: 10px 18px;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dialog-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .file-name {
+    margin-left: 0;
+  }
+
+  .info-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>

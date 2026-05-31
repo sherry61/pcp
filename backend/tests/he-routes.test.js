@@ -1,0 +1,91 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const {
+  normalizeHeRecord,
+  normalizeHeResultSyncPayload,
+  ensureCompatibleExistingHeContract,
+  validateHeCsvFile,
+  extractHeResultMetadata
+} = require('../pcp/he');
+
+test('normalizeHeRecord stores PCP contract id and uploaded public keys in a single HE record', () => {
+  const record = normalizeHeRecord({
+    transactionId: 'TX-001',
+    businessContractId: 'CONTRACT-001',
+    buyerId: 'buyer_addr',
+    sellerId: 'seller_addr',
+    paillierPublicKey: { n: '11', g: '12' },
+    elgamalPublicKey: { p: '23', g: '5', y: '9' }
+  });
+
+  assert.equal(record.transaction_id, 'TX-001');
+  assert.equal(record.business_contract_id, 'CONTRACT-001');
+  assert.equal(record.pcp_status, 'WAITING_INPUT');
+  assert.match(record.paillier_public_key_json, /"n":"11"/);
+});
+
+test('ensureCompatibleExistingHeContract rejects mismatched encType or operation', () => {
+  assert.throws(() => ensureCompatibleExistingHeContract({
+    pcp_contract_id: 'HE_TASK_001',
+    selected_enc_type: 'Paillier',
+    selected_operation: 'ADD'
+  }, 'ElGamal', 'ADD'), /encType/);
+
+  assert.throws(() => ensureCompatibleExistingHeContract({
+    pcp_contract_id: 'HE_TASK_001',
+    selected_enc_type: 'Paillier',
+    selected_operation: 'ADD'
+  }, 'Paillier', 'MUL'), /operation/);
+});
+
+test('validateHeCsvFile enforces ElGamal c1,c2 headers', () => {
+  assert.throws(() => validateHeCsvFile('ElGamal', {
+    buffer: Buffer.from('cipher\n123')
+  }), /c1,c2/);
+
+  assert.doesNotThrow(() => validateHeCsvFile('ElGamal', {
+    buffer: Buffer.from('c1,c2\n1,2')
+  }));
+});
+
+test('extractHeResultMetadata reads persisted result fields from PCP-style payloads', () => {
+  assert.deepEqual(
+    extractHeResultMetadata({
+      data: {
+        result: {
+          download_token: 'token-1',
+          filename: 'result.csv',
+          result_uri: '/tmp/result.csv'
+        }
+      }
+    }),
+    {
+      downloadToken: 'token-1',
+      resultFilename: 'result.csv',
+      resultStoragePath: '/tmp/result.csv'
+    }
+  );
+});
+
+test('normalizeHeResultSyncPayload accepts transaction or PCP contract identifiers', () => {
+  assert.deepEqual(
+    normalizeHeResultSyncPayload({
+      contractId: 'PCP-001',
+      status: 'COMPLETED',
+      downloadToken: 'token-1',
+      resultFilename: 'result.csv'
+    }),
+    {
+      transactionId: null,
+      pcpContractId: 'PCP-001',
+      pcpStatus: 'COMPLETED',
+      downloadToken: 'token-1',
+      resultFilename: 'result.csv',
+      resultStoragePath: null,
+      lastError: null
+    }
+  );
+
+  assert.throws(() => normalizeHeResultSyncPayload({}), /transactionId or pcpContractId is required/);
+});

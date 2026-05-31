@@ -1,0 +1,22 @@
+CREATE TABLE IF NOT EXISTS he_delivery_contracts (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  transaction_id VARCHAR(128) NOT NULL,
+  business_contract_id VARCHAR(128) NOT NULL,
+  pcp_contract_id VARCHAR(128) DEFAULT NULL,
+  buyer_id VARCHAR(255) NOT NULL,
+  seller_id VARCHAR(255) NOT NULL,
+  selected_enc_type VARCHAR(32) DEFAULT NULL,
+  selected_operation VARCHAR(16) DEFAULT NULL,
+  paillier_public_key_json JSON DEFAULT NULL,
+  elgamal_public_key_json JSON DEFAULT NULL,
+  pcp_status VARCHAR(32) DEFAULT 'WAITING_INPUT',
+  download_token TEXT DEFAULT NULL,
+  result_filename VARCHAR(255) DEFAULT NULL,
+  result_storage_path TEXT DEFAULT NULL,
+  last_error TEXT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_he_tx (transaction_id),
+  UNIQUE KEY uniq_he_pcp_contract (pcp_contract_id),
+  KEY idx_he_business_contract (business_contract_id)
+);
