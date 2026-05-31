@@ -16,7 +16,7 @@ const { sm4 } = require('sm-crypto');
 
 const { spawn } = require('child_process');
 const FormData = require('form-data');
-const { registerHeRoutes } = require('./pcp');
+const { registerHeRoutes, registerPreRoutes } = require('./pcp');
 
 
 // ====== 基础实例与常量（确保在后面使用之前就定义好）======
@@ -501,6 +501,15 @@ registerHeRoutes({
       return null;
     }
   },
+  safeBaseName,
+  pickContentType
+});
+
+registerPreRoutes({
+  app,
+  upload,
+  dbQuery,
+  firstDefined,
   safeBaseName,
   pickContentType
 });
@@ -2128,7 +2137,8 @@ app.post('/api/save-digital-contract', (req, res) => {
     expiration_time,     // ISO 或 "2025-07-21T21:10:00"
     quantity_limit,
     processing_type,      // 资产类型
-    model_file_hash
+    model_file_hash,
+    pc_type
     // 🚫 不再有 contract_content
   } = req.body;
 
@@ -2157,8 +2167,9 @@ app.post('/api/save-digital-contract', (req, res) => {
       expiration_time,
       quantity_limit,
       processing_type,
+      pc_type,
       model_file_hash
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
 
   const values = [
@@ -2174,6 +2185,7 @@ app.post('/api/save-digital-contract', (req, res) => {
     formattedExpiration,
     quantity_limit || null,
     processing_type || null,
+    pc_type || null,
     model_file_hash || null
   ];
 
@@ -2251,10 +2263,15 @@ app.post('/api/seller-confirm-transaction', (req, res) => {
 app.get('/api/buyer-transaction-status/:buyer_address', (req, res) => {
     const buyer_address = req.params.buyer_address;
 
-    // 查询买方发起的交易状态
     const query = `
-        SELECT * FROM transactions
-        WHERE buyer_address = ?`;
+        SELECT
+          t.*,
+          dc.pc_type,
+          dc.contract_id AS digital_contract_id
+        FROM transactions t
+        LEFT JOIN digital_contracts dc
+          ON dc.transaction_id = t.transaction_id
+        WHERE t.buyer_address = ?`;
 
     db.query(query, [buyer_address], (err, results) => {
         if (err) {
@@ -2289,12 +2306,16 @@ app.get('/api/buyer-transaction-status/:buyer_address', (req, res) => {
 app.get('/api/seller-transaction-status/:seller_address', (req, res) => {
   const seller_address = req.params.seller_address;
 
-  // ① 先查出该卖家名下所有“已确认”的交易
   const txSql = `
-    SELECT *
-    FROM transactions
-    WHERE seller_address = ? AND status = '已确认'
-    ORDER BY created_at DESC
+    SELECT
+      t.*,
+      dc.pc_type,
+      dc.contract_id AS digital_contract_id
+    FROM transactions t
+    LEFT JOIN digital_contracts dc
+      ON dc.transaction_id = t.transaction_id
+    WHERE t.seller_address = ? AND t.status = '已确认'
+    ORDER BY t.created_at DESC
   `;
 
   db.query(txSql, [seller_address], (err, txRows) => {

@@ -9,7 +9,7 @@
         <div class="page-header">
           <div>
             <h2 class="page-title">资产交付（买家）</h2>
-            <p class="page-subtitle">当前开放 HE 公钥上传与结果本地解密</p>
+            <p class="page-subtitle">按数字合约约定的隐私计算方式进行交付</p>
           </div>
           <el-button size="small" type="primary" plain @click="refreshResults" :loading="isLoading">
             刷新
@@ -25,25 +25,26 @@
         >
           <el-table-column prop="transaction_id" label="交易ID" min-width="180" />
 
-          <el-table-column label="交付状态" width="170">
+          <el-table-column label="交付状态" width="180">
             <template #default="{ row }">
-              <el-tag :type="getRowTagType(row)">
-                {{ getRowStatusText(row) }}
+              <el-tag :type="getRowTagType(getCurrentStatus(row))">
+                {{ getCurrentStatusText(row) }}
               </el-tag>
             </template>
           </el-table-column>
 
           <el-table-column label="交付方法" width="120">
-            <template #default>
-              <span class="method-pill">{{ deliveryMethodLabel }}</span>
+            <template #default="{ row }">
+              <span class="method-pill">{{ getDeliveryMethodLabel(row) }}</span>
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" min-width="360">
+          <el-table-column label="操作" min-width="420">
             <template #default="{ row }">
               <div class="action-cell">
                 <el-button size="small" @click="viewContract(row)">查看合约</el-button>
                 <el-button
+                  v-if="isHeRow(row)"
                   size="small"
                   type="primary"
                   :loading="row.uploadingKeys"
@@ -53,6 +54,7 @@
                   {{ row.heRecord?.public_keys_ready ? '已上传公钥' : '上传公钥' }}
                 </el-button>
                 <el-button
+                  v-if="isHeRow(row)"
                   size="small"
                   type="success"
                   :loading="row.downloading"
@@ -62,12 +64,54 @@
                   下载结果
                 </el-button>
                 <el-button
+                  v-if="isHeRow(row)"
                   size="small"
                   :loading="row.syncingHe"
                   @click="refreshHeStatus(row)"
                 >
-                  刷新状态
+                  刷新 HE
                 </el-button>
+                <el-button
+                  v-if="isPreRow(row)"
+                  size="small"
+                  type="primary"
+                  :loading="row.uploadingPreKey"
+                  :disabled="row.preRecord?.buyer_public_key_ready"
+                  @click="uploadPrePublicKey(row)"
+                >
+                  {{ row.preRecord?.buyer_public_key_ready ? '已上传 PRE 公钥' : '上传 PRE 公钥' }}
+                </el-button>
+                <el-button
+                  v-if="isPreRow(row)"
+                  size="small"
+                  type="warning"
+                  :loading="row.processingPre"
+                  :disabled="!canManualTriggerPreReEncrypt(row)"
+                  @click="triggerPreReEncrypt(row)"
+                >
+                  {{ isPreRetryState(row) ? '重试 PRE 重加密' : '发起 PRE 重加密' }}
+                </el-button>
+                <el-button
+                  v-if="isPreRow(row)"
+                  size="small"
+                  type="success"
+                  :loading="row.downloadingPre"
+                  :disabled="!row.preRecord?.result_ready"
+                  @click="downloadPreResult(row)"
+                >
+                  下载 PRE 结果包
+                </el-button>
+                <el-button
+                  v-if="isPreRow(row)"
+                  size="small"
+                  :loading="row.syncingPre"
+                  @click="refreshPreStatus(row)"
+                >
+                  刷新 PRE
+                </el-button>
+                <span v-if="isPreRow(row)" class="helper-text">
+                  {{ getPreActionHint(row) }}
+                </span>
               </div>
             </template>
           </el-table-column>
@@ -96,6 +140,32 @@
             <el-button @click="closeDecryptDialog">取消</el-button>
             <el-button type="primary" :loading="decryptDialog.processing" @click="confirmDecryptResult">
               解密并导出 CSV
+            </el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="preDecryptDialog.visible" title="本地解密 PRE 结果" width="620px">
+          <div v-if="preDecryptDialog.row" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">交易ID</span>
+              <span>{{ preDecryptDialog.row.transaction_id }}</span>
+            </div>
+            <div class="dialog-row file-row">
+              <span class="dialog-label">PRE 私钥文件</span>
+              <input type="file" accept=".json" @change="onPrePrivateKeyFileChange" />
+            </div>
+            <div v-if="preDecryptDialog.privateKeyFile" class="file-name">
+              {{ preDecryptDialog.privateKeyFile.name }}
+            </div>
+            <div class="dialog-hint">
+              <span>浏览器会在本地解密 PRE 结果，并直接导出原始压缩包。</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closePreDecryptDialog">取消</el-button>
+            <el-button type="primary" :loading="preDecryptDialog.processing" @click="confirmDecryptPreResult">
+              解密并导出压缩包
             </el-button>
           </template>
         </el-dialog>
@@ -174,6 +244,7 @@ import AppSidebar from '@/components/AppSidebar.vue'
 import heConfig from '@/utils/heDeliveryConfig'
 import heCrypto from '@/utils/heCrypto'
 import heCsv from '@/utils/heCsv'
+import preCrypto from '@/utils/preCrypto'
 
 const API_BASE = 'http://10.112.47.214:3000'
 
@@ -194,12 +265,14 @@ export default {
         encryptedText: '',
         privateKeyFile: null,
         processing: false
+      },
+      preDecryptDialog: {
+        visible: false,
+        row: null,
+        encryptedBlob: null,
+        privateKeyFile: null,
+        processing: false
       }
-    }
-  },
-  computed: {
-    deliveryMethodLabel() {
-      return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_HE)
     }
   },
   async created() {
@@ -280,17 +353,23 @@ export default {
             const transactions = Array.isArray(response.data.transactions) ? response.data.transactions : []
 
             transactions
-              .filter((item) => item.status === '已确认')
+              .filter((item) => item.status === '已确认' && this.normalizePcType(item.pc_type))
               .forEach((item) => {
                 rows.push({
                   transaction_id: item.transaction_id,
+                  pc_type: this.normalizePcType(item.pc_type),
                   buyer_address: item.buyer_address,
                   seller_address: item.seller_address,
                   quantity: item.quantity,
                   heRecord: null,
+                  preRecord: null,
                   uploadingKeys: false,
                   downloading: false,
-                  syncingHe: false
+                  downloadingPre: false,
+                  uploadingPreKey: false,
+                  syncingHe: false,
+                  syncingPre: false,
+                  processingPre: false
                 })
               })
           } catch (error) {
@@ -299,13 +378,33 @@ export default {
         }
 
         this.resultList = rows
-        await Promise.all(this.resultList.map((row) => this.refreshHeStatus(row, false)))
+        await Promise.all(this.resultList.map((row) => (
+          this.isHeRow(row)
+            ? this.refreshHeStatus(row, false)
+            : this.refreshPreStatus(row, false)
+        )))
       } catch (error) {
         console.error('加载结果失败:', error)
         this.$message?.error('加载结果失败')
       } finally {
         this.isLoading = false
       }
+    },
+
+    normalizePcType(value) {
+      return String(value || '').trim().toUpperCase()
+    },
+
+    isHeRow(row) {
+      return this.normalizePcType(row?.pc_type) === 'HE'
+    },
+
+    isPreRow(row) {
+      return this.normalizePcType(row?.pc_type) === 'PRE'
+    },
+
+    getDeliveryMethodLabel(row) {
+      return heConfig.getDeliveryMethodLabel(this.isPreRow(row) ? heConfig.DELIVERY_METHOD_PRE : heConfig.DELIVERY_METHOD_HE)
     },
 
     async refreshHeStatus(row, showMessage = true) {
@@ -329,12 +428,28 @@ export default {
       }
     },
 
-    getRowStatusText(row) {
-      return heConfig.getHeStatusText(row.heRecord?.pcp_status || 'NOT_EXIST')
+    getRowStatusText(status) {
+      return heConfig.getHeStatusText(status || 'NOT_EXIST')
     },
 
-    getRowTagType(row) {
-      switch (String(row.heRecord?.pcp_status || '').toUpperCase()) {
+    getPreStatusText(status) {
+      return heConfig.getPcpStatusText(status || 'NOT_EXIST')
+    },
+
+    getCurrentStatus(row) {
+      return this.isPreRow(row)
+        ? row.preRecord?.pcp_status || 'NOT_EXIST'
+        : row.heRecord?.pcp_status || 'NOT_EXIST'
+    },
+
+    getCurrentStatusText(row) {
+      return this.isPreRow(row)
+        ? this.getPreStatusText(this.getCurrentStatus(row))
+        : this.getRowStatusText(this.getCurrentStatus(row))
+    },
+
+    getRowTagType(status) {
+      switch (String(status || '').toUpperCase()) {
         case 'COMPLETED':
           return 'success'
         case 'FAILED':
@@ -347,6 +462,71 @@ export default {
         default:
           return 'info'
       }
+    },
+
+    async refreshPreStatus(row, showMessage = true) {
+      if (!row?.transaction_id) return
+      row.syncingPre = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/pre/status`, {
+          params: { transactionId: row.transaction_id }
+        })
+        row.preRecord = response.data?.item || null
+        if (showMessage) {
+          this.$message?.success('PRE 状态已刷新')
+        }
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'PRE 状态刷新失败'
+        if (showMessage) {
+          this.$message?.error(message)
+        }
+      } finally {
+        row.syncingPre = false
+      }
+    },
+
+    isPreRetryState(row) {
+      return String(row?.preRecord?.pcp_status || '').toUpperCase() === 'FAILED'
+    },
+
+    canManualTriggerPreReEncrypt(row) {
+      if (!this.isPreRow(row) || !row?.preRecord?.buyer_public_key_ready) {
+        return false
+      }
+
+      const status = String(row.preRecord?.pcp_status || '').toUpperCase()
+      return status === 'WAITING_INPUT' || status === 'FAILED'
+    },
+
+    getPreActionHint(row) {
+      const status = String(row?.preRecord?.pcp_status || 'NOT_EXIST').toUpperCase()
+      const buyerPublicKeyReady = Boolean(row?.preRecord?.buyer_public_key_ready)
+
+      if (!buyerPublicKeyReady) {
+        return '请先上传 PRE 公钥'
+      }
+
+      if (status === 'NOT_EXIST' || status === 'CREATED') {
+        return '已上传 PRE 公钥，等待卖方交付'
+      }
+
+      if (status === 'WAITING_INPUT') {
+        return '卖方已完成 PRE 交付，可发起重加密'
+      }
+
+      if (status === 'QUEUED' || status === 'RUNNING') {
+        return 'PRE 重加密进行中，请等待结果'
+      }
+
+      if (status === 'COMPLETED') {
+        return 'PRE 重加密已完成，可下载结果包'
+      }
+
+      if (status === 'FAILED') {
+        return 'PRE 重加密失败，可重试'
+      }
+
+      return `PRE: ${this.getPreStatusText(status)}`
     },
 
     async uploadHePublicKeys(row) {
@@ -411,8 +591,92 @@ export default {
       }
     },
 
+    async uploadPrePublicKey(row) {
+      if (!row?.transaction_id || row.preRecord?.buyer_public_key_ready) return
+
+      row.uploadingPreKey = true
+      try {
+        const keyMaterial = await preCrypto.generatePreBuyerKeyPair()
+        await axios.post(`${API_BASE}/api/privacy/pre/buyer-public-key`, {
+          transactionId: row.transaction_id,
+          buyerPublicKey: keyMaterial.publicKeyHex
+        })
+        preCrypto.downloadPrePrivateKeyFile({
+          transactionId: row.transaction_id,
+          privateKeyPem: keyMaterial.privateKeyPem
+        })
+
+        await this.refreshPreStatus(row, false)
+        this.$message?.success('PRE 公钥上传成功，私钥已下载到本地')
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'PRE 公钥上传失败'
+        this.$message?.error(message)
+      } finally {
+        row.uploadingPreKey = false
+      }
+    },
+
+    async triggerPreReEncrypt(row) {
+      if (!row?.transaction_id) return
+
+      if (!row.preRecord?.buyer_public_key_ready) {
+        this.$message?.warning('请先上传 PRE 公钥')
+        return
+      }
+
+      if (!this.canManualTriggerPreReEncrypt(row)) {
+        this.$message?.warning('卖方尚未完成 PRE 交付，请等待交付后再发起重加密')
+        return
+      }
+
+      row.processingPre = true
+      try {
+        await axios.post(`${API_BASE}/api/privacy/pre/re-encrypt`, {
+          transactionId: row.transaction_id
+        })
+
+        await this.refreshPreStatus(row, false)
+        this.$message?.success('PRE 重加密任务已提交')
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'PRE 提交失败'
+        this.$message?.error(message)
+      } finally {
+        row.processingPre = false
+      }
+    },
+
+    async downloadPreResult(row) {
+      if (!row?.transaction_id || !row.preRecord?.result_ready) {
+        this.$message?.warning('当前 PRE 结果尚不可下载')
+        return
+      }
+
+      row.downloadingPre = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/pre/result`, {
+          params: { transactionId: row.transaction_id },
+          responseType: 'blob'
+        })
+
+        this.preDecryptDialog.visible = true
+        this.preDecryptDialog.row = row
+        this.preDecryptDialog.encryptedBlob = response.data
+        this.preDecryptDialog.privateKeyFile = null
+      } catch (error) {
+        const message = await this.resolveBlobErrorMessage(error, '下载 PRE 结果失败')
+        this.$message?.error(message)
+      } finally {
+        row.downloadingPre = false
+      }
+    },
+
     onPrivateKeyFileChange(event) {
       this.decryptDialog.privateKeyFile = event.target.files?.[0] || null
+      event.target.value = ''
+    },
+
+    onPrePrivateKeyFileChange(event) {
+      this.preDecryptDialog.privateKeyFile = event.target.files?.[0] || null
       event.target.value = ''
     },
 
@@ -475,6 +739,42 @@ export default {
       this.decryptDialog.encryptedText = ''
       this.decryptDialog.privateKeyFile = null
       this.decryptDialog.processing = false
+    },
+
+    async confirmDecryptPreResult() {
+      if (!this.preDecryptDialog.privateKeyFile || !this.preDecryptDialog.row || !this.preDecryptDialog.encryptedBlob) {
+        this.$message?.warning('请先选择 PRE 私钥文件')
+        return
+      }
+
+      this.preDecryptDialog.processing = true
+      try {
+        const [privateKeyText, encryptedTarBuffer] = await Promise.all([
+          this.preDecryptDialog.privateKeyFile.text(),
+          this.preDecryptDialog.encryptedBlob.arrayBuffer()
+        ])
+
+        await preCrypto.downloadDecryptedPreResultArchive({
+          encryptedTarBuffer,
+          privateKeyText,
+          transactionId: this.preDecryptDialog.row.transaction_id
+        })
+
+        this.$message?.success('PRE 结果已在浏览器内解密并导出')
+        this.closePreDecryptDialog()
+      } catch (error) {
+        this.$message?.error(error?.message || 'PRE 本地解密失败')
+      } finally {
+        this.preDecryptDialog.processing = false
+      }
+    },
+
+    closePreDecryptDialog() {
+      this.preDecryptDialog.visible = false
+      this.preDecryptDialog.row = null
+      this.preDecryptDialog.encryptedBlob = null
+      this.preDecryptDialog.privateKeyFile = null
+      this.preDecryptDialog.processing = false
     },
 
     async generateContractInfo(row) {
@@ -605,11 +905,22 @@ export default {
   font-weight: 600;
 }
 
+.status-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .action-cell {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.helper-text {
+  color: #6b7280;
+  font-size: 12px;
 }
 
 .dialog-body {

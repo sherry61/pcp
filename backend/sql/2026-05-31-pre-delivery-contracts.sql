@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS pre_delivery_contracts (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  transaction_id VARCHAR(128) NOT NULL,
+  business_contract_id VARCHAR(128) NOT NULL,
+  pcp_contract_id VARCHAR(128) DEFAULT NULL,
+  buyer_id VARCHAR(255) NOT NULL,
+  seller_id VARCHAR(255) NOT NULL,
+  buyer_public_key TEXT DEFAULT NULL,
+  tee_key_id VARCHAR(255) DEFAULT NULL,
+  pcp_status VARCHAR(32) DEFAULT 'CREATED',
+  download_token TEXT DEFAULT NULL,
+  result_filename VARCHAR(255) DEFAULT NULL,
+  result_storage_path TEXT DEFAULT NULL,
+  last_error TEXT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_pre_tx (transaction_id),
+  UNIQUE KEY uniq_pre_pcp_contract (pcp_contract_id),
+  KEY idx_pre_business_contract (business_contract_id)
+);

@@ -23,6 +23,10 @@
             </div>
             <div class="row"><span class="k">状态:</span><span class="v">{{ a.status }}</span></div>
             <div class="row">
+              <span class="k">购买权限:</span>
+              <span class="v rights-text">{{ a.quality || "未填写" }}</span>
+            </div>
+            <div class="row">
               <span class="k">卖家地址:</span>
               <span class="v mono">{{ a.seller_address }}</span>
             </div>
@@ -31,6 +35,19 @@
               <span class="v mono">{{ a.buyer_address }}</span>
             </div>
             <div class="row"><span class="k">申请数量:</span><span class="v">{{ a.quantity }}</span></div>
+            <div class="row pc-row">
+              <span class="k">隐私计算类型:</span>
+              <span class="v">
+                <select v-model="a.pc_type" class="pc-select">
+                  <option disabled value="">请选择类型</option>
+                  <option value="HE">HE</option>
+                  <option value="PRE">PRE</option>
+                  <option value="FL">FL</option>
+                  <option value="MPC">MPC</option>
+                  <option value="TEE">TEE</option>
+                </select>
+              </span>
+            </div>
 
             <div class="actions">
               <button
@@ -91,6 +108,10 @@ export default {
           .join("")
       );
       return JSON.parse(jsonPayload);
+    },
+
+    normalizePcType(value) {
+      return String(value || "").trim().toUpperCase();
     },
 
     async fetchUserId(username) {
@@ -154,9 +175,11 @@ export default {
               price: tx.price ?? 100, // 后端如果没给价格，你原来写死 1.5，我这里兼容一下
               file_hash: tx.asset_id,
               status: tx.status,
+              quality: tx.quality,
               seller_address: tx.seller_address,
               buyer_address: tx.buyer_address,
               quantity: tx.quantity,
+              pc_type: "",
             }));
 
             allPendingTx.push(...formatted);
@@ -175,6 +198,12 @@ export default {
     async confirmTransaction(asset) {
   try {
     const isAgree = true;
+    const pcType = this.normalizePcType(asset.pc_type);
+
+    if (!pcType) {
+      this.$message.error('请先填写隐私计算类型');
+      return;
+    }
 
     // --- Step 1: 获取交易和资产的必要信息 ---
     const txDetail = await axios.get(`http://10.112.47.214:3000/api/get-transaction-detail/${asset.transaction_id}`);
@@ -244,7 +273,8 @@ export default {
     expiration_time: expirationIso,
     quantity_limit: quantityLimit,
     processing_type: processingType,
-    model_file_hash: modelFileHash
+    model_file_hash: modelFileHash,
+    pc_type: pcType
   });
 
   this.$message.success("数字合约已生成并保存");
@@ -255,9 +285,6 @@ export default {
 }
 
     // --- Step 3: 处理所有链上交易（所有权和使用权）---
-    
-    // 【关键修改】引入一个总的成功标志位
-    let anyTransactionSucceeded = false; 
 
     const qualityList = qualityStr.split(',').map(q => q.trim());
     let hasOwnership = qualityList.includes('所有权');
@@ -278,7 +305,6 @@ export default {
         const permissionResponse = await axios.post('http://10.112.47.214:8848/pre/BuyPermission', permissionPayload);
         if (permissionResponse.status === 200 && permissionResponse.data.code === 0) {
           this.$message.success(`权限 [${rightType}] 交易成功`);
-          anyTransactionSucceeded = true; // 【关键修改】只要有一次成功，就标记
         } else {
           this.$message.warning(`权限 [${rightType}] 交易失败: ${permissionResponse.data.message}`);
         }
@@ -290,76 +316,8 @@ export default {
 
     // 处理所有权 (transferAsset)
     if (hasOwnership) {
-      const transferSuccess = await this.transferAsset(asset);
-      if (transferSuccess) {
-        anyTransactionSucceeded = true; // 【关键修改】转移成功，也标记
-      }
+      await this.transferAsset(asset);
     }
-
-    // --- Step 4: 【统一处理】根据交易是否成功，决定是否存入二次交易表 ---
-    
-    // 【关键修改】最后检查总的成功标志位
-   if (anyTransactionSucceeded) {
-  console.log('✅ 至少有一项权益交易成功，开始处理二次销售入库...');
-  
-  try {
-    // 4.1. 获取资产的完整信息作为基础模板
-    const assetDetailsResponse = await axios.get(`http://10.112.47.214:3000/api/get-asset-details/${asset.file_hash}`);
-    
-    if (assetDetailsResponse.status === 200) {
-      const assetDetails = assetDetailsResponse.data;
-      console.log('获取到资产完整信息:', assetDetails);
-
-      // 4.2. 检查原始资产是否允许二次销售
-      if (assetDetails.allow_resale === 1) {
-        console.log('该资产允许二次交易，准备存入 resalable_assets 表。');
-
-        // 【=============== 核心修改在这里 ===============】
-        // 4.3. 准备要存入新表的数据
-        
-        // 我们从交易信息中获取买家实际购买的权益列表
-        const purchasedRights = qualityStr.split(',').map(q => q.trim());
-        
-        const resalableData = {
-          ...assetDetails, // 先复制所有原始信息作为模板
-
-          // --- 关键覆盖操作 ---
-          user_id: transactionInfo.buyer_id,        // 覆盖为新所有者(买家)的ID
-          current_owner_address: asset.buyer_address, // 覆盖为新所有者(买家)的地址
-          
-          // 根据买家购买的权益，重置可出售权益字段
-          // 无论原始资产的权益是什么，新记录只反映本次购买的权益
-          can_sell_asset: purchasedRights.includes('所有权') ? 1 : 0,
-          can_sell_view: purchasedRights.includes('查阅权') ? 1 : 0,
-          can_sell_process: purchasedRights.includes('加工权') ? 1 : 0,
-        };
-        
-        // 移除旧的ID，让新表自增
-        delete resalableData.id;
-
-        console.log('准备存入 resalable_assets 的最终数据:', resalableData);
-        
-        // 4.4. 调用接口，存入新表
-        await axios.post('http://10.112.47.214:3000/api/save-resalable-asset', resalableData);
-        
-        console.log('成功请求将资产存入 resalable_assets 表。');
-        this.$message.info('该资产已成功加入可二次交易列表！');
-
-      } else {
-        console.log('ℹ️ 该资产的原始设置不允许二次交易 (allow_resale is not 1)。');
-      }
-    } else {
-      console.error('获取资产详细信息失败:', assetDetailsResponse.data.message);
-    }
-  } catch (postProcessError) {
-    console.error('❌ 交易后处理（二次销售入库）失败:', postProcessError);
-    this.$message.error('交易后处理失败，请联系管理员。');
-  }
-
-} else {
-    //console.log('❌ 所有权益交易均未成功，不执行二次销售入库。');
-    //this.$message.error('所有链上交易均未成功，请检查区块链网络或联系管理员。');
-}
 
   } catch (error) {
     console.error('❌ 确认交易顶层流程异常:', error);
@@ -508,6 +466,18 @@ export default {
   background: #007bff;
   color: #fff;
 }
+.pc-row {
+  align-items: center;
+}
+.pc-select {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  background: #fff;
+  color: #111;
+}
 .btn:disabled {
   background: #c6c6c6;
   cursor: not-allowed;
@@ -521,36 +491,44 @@ export default {
 }
 
 .apply-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
   background: #fff;
-  border-radius: 10px;
-  padding: 16px 16px 12px;
-  border: 1px solid #e5e5e5;
-  box-shadow: 0 2px 8px rgba(0,0,0,.06);
+  border-radius: 12px;
+  padding: 18px;
+  border: 1px solid #e7ecf3;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
 }
 
 .row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
   gap: 10px;
-  margin: 8px 0;
 }
 .k {
-  width: 80px;
-  font-weight: 700;
-  color: #222;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.6;
 }
 .v {
-  flex: 1;
-  color: #333;
-  word-break: break-word;
+  color: #101828;
+  font-size: 14px;
+  line-height: 1.6;
+  word-break: break-all;
 }
 .mono {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 13px;
 }
+.rights-text {
+  color: #175cd3;
+  font-weight: 600;
+}
 .actions {
   display: flex;
-  justify-content: center;
-  margin-top: 14px;
+  justify-content: flex-end;
+  padding-top: 6px;
 }
 .empty {
   padding: 30px;

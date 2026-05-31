@@ -1,4 +1,5 @@
 const DELIVERY_METHOD_HE = 'he';
+const DELIVERY_METHOD_PRE = 'pre';
 
 const HE_ENC_TYPES = ['Paillier', 'ElGamal'];
 
@@ -15,9 +16,30 @@ const PCP_HE_STATUSES = [
   'AUDIT_FAILED'
 ];
 
+const PRE_ALLOWED_SOURCE_EXTENSIONS = [
+  '.zip',
+  '.tar',
+  '.tar.gz',
+  '.tgz'
+];
+
+const PCP_PRE_STATUSES = [
+  'NOT_EXIST',
+  'CREATED',
+  'WAITING_INPUT',
+  'QUEUED',
+  'RUNNING',
+  'COMPLETED',
+  'FAILED',
+  'AUDIT_FAILED'
+];
+
 module.exports = {
   DELIVERY_METHOD_HE,
+  DELIVERY_METHOD_PRE,
   HE_ENC_TYPES,
   HE_OPERATIONS,
-  PCP_HE_STATUSES
+  PCP_HE_STATUSES,
+  PRE_ALLOWED_SOURCE_EXTENSIONS,
+  PCP_PRE_STATUSES
 };

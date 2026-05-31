@@ -8,7 +8,7 @@
         <div class="page-header">
           <div>
             <h2 class="title">资产交付</h2>
-            <p class="subtitle">当前仅开放 HE 交付流程</p>
+            <p class="subtitle">按数字合约约定的隐私计算方式进行交付</p>
           </div>
           <el-button type="primary" plain @click="fetchRequestedAssets" :loading="isLoadingTransactions">
             刷新交易列表
@@ -19,17 +19,17 @@
           <el-table :data="requestedAssets" border stripe v-loading="isLoadingTransactions" style="width: 100%">
             <el-table-column prop="transaction_id" label="交易ID" min-width="180" />
 
-            <el-table-column label="交付状态" width="170">
+            <el-table-column label="交付状态" width="180">
               <template #default="{ row }">
-                <el-tag :type="getStatusTagType(row.heRecord?.pcp_status)">
-                  {{ getStatusText(row.heRecord?.pcp_status) }}
+                <el-tag :type="getStatusTagType(getCurrentStatus(row))">
+                  {{ getStatusText(getCurrentStatus(row)) }}
                 </el-tag>
               </template>
             </el-table-column>
 
             <el-table-column label="交付方法" width="120">
-              <template #default>
-                <span class="method-pill">{{ deliveryMethodLabel }}</span>
+              <template #default="{ row }">
+                <span class="method-pill">{{ getDeliveryMethodLabel(row) }}</span>
               </template>
             </el-table-column>
 
@@ -39,20 +39,29 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="交付" min-width="260">
+            <el-table-column label="交付" min-width="420">
               <template #default="{ row }">
                 <div class="action-cell">
-                  <el-button size="small" type="primary" :loading="row.checkingHe" @click="openHeDelivery(row)">
-                    交付
+                  <el-button v-if="isHeRow(row)" size="small" type="primary" :loading="row.checkingHe" @click="openHeDelivery(row)">
+                    HE 交付
                   </el-button>
-                  <el-button size="small" @click="refreshHeStatus(row)" :loading="row.syncingHe">
-                    刷新状态
+                  <el-button v-if="isPreRow(row)" size="small" type="warning" :loading="row.processingPre" @click="openPreDelivery(row)">
+                    PRE 交付
                   </el-button>
-                  <span class="helper-text" v-if="row.heRecord?.public_keys_ready === false">
+                  <el-button v-if="isHeRow(row)" size="small" @click="refreshHeStatus(row)" :loading="row.syncingHe">
+                    刷新 HE
+                  </el-button>
+                  <el-button v-if="isPreRow(row)" size="small" @click="refreshPreStatus(row)" :loading="row.syncingPre">
+                    刷新 PRE
+                  </el-button>
+                  <span class="helper-text" v-if="isHeRow(row) && row.heRecord?.public_keys_ready === false">
                     等待买方上传 HE 公钥
                   </span>
-                  <span class="helper-text" v-else-if="row.heRecord?.selected_enc_type">
+                  <span class="helper-text" v-else-if="isHeRow(row) && row.heRecord?.selected_enc_type">
                     {{ row.heRecord.selected_enc_type }} / {{ row.heRecord.selected_operation || '-' }}
+                  </span>
+                  <span class="helper-text" v-if="isPreRow(row) && row.preRecord?.pcp_status">
+                    PRE: {{ getStatusText(row.preRecord.pcp_status) }}
                   </span>
                 </div>
               </template>
@@ -112,6 +121,36 @@
             <el-button @click="closeHeDialog">取消</el-button>
             <el-button type="primary" :loading="heDialog.submitting" @click="submitHeDelivery">
               提交交付
+            </el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="preDialog.visible" title="PRE 交付" width="620px">
+          <div v-if="preDialog.asset" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">交易ID</span>
+              <span>{{ preDialog.asset.transaction_id }}</span>
+            </div>
+
+            <div class="dialog-row file-row">
+              <span class="dialog-label">原始压缩包</span>
+              <input
+                type="file"
+                accept=".zip,.tar,.tar.gz,.tgz,application/zip,application/x-tar,application/gzip"
+                @change="onPreFileChange"
+              />
+            </div>
+            <div v-if="preDialog.file" class="file-name">{{ preDialog.file.name }}</div>
+
+            <div class="dialog-hint">
+              <span>浏览器会在本地生成 PRE 三件套和 key package，再通过后端转发 PCP。</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closePreDialog">取消</el-button>
+            <el-button type="primary" :loading="preDialog.submitting" @click="submitPreDelivery">
+              提交 PRE 交付
             </el-button>
           </template>
         </el-dialog>
@@ -191,6 +230,7 @@ import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import heConfig from '@/utils/heDeliveryConfig'
 import heCrypto from '@/utils/heCrypto'
+import preCrypto from '@/utils/preCrypto'
 
 const API_BASE = 'http://10.112.47.214:3000'
 
@@ -212,13 +252,16 @@ export default {
         file1: null,
         file2: null,
         submitting: false
+      },
+      preDialog: {
+        visible: false,
+        asset: null,
+        file: null,
+        submitting: false
       }
     }
   },
   computed: {
-    deliveryMethodLabel() {
-      return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_HE)
-    },
     heEncTypeOptions() {
       return heConfig.HE_ENC_TYPE_OPTIONS
     },
@@ -304,17 +347,21 @@ export default {
             const transactions = Array.isArray(response.data.transactions) ? response.data.transactions : []
 
             transactions
-              .filter((item) => item.status === '已确认')
+              .filter((item) => item.status === '已确认' && this.normalizePcType(item.pc_type))
               .forEach((item) => {
                 rows.push({
                   transaction_id: item.transaction_id,
+                  pc_type: this.normalizePcType(item.pc_type),
                   file_hash: item.asset_id,
                   seller_address: item.seller_address,
                   buyer_address: item.buyer_address,
                   quantity: item.quantity,
                   heRecord: null,
+                  preRecord: null,
                   checkingHe: false,
-                  syncingHe: false
+                  syncingHe: false,
+                  syncingPre: false,
+                  processingPre: false
                 })
               })
           } catch (error) {
@@ -323,10 +370,30 @@ export default {
         }
 
         this.requestedAssets = rows
-        await Promise.all(this.requestedAssets.map((row) => this.refreshHeStatus(row, false)))
+        await Promise.all(this.requestedAssets.map((row) => (
+          this.isHeRow(row)
+            ? this.refreshHeStatus(row, false)
+            : this.refreshPreStatus(row, false)
+        )))
       } finally {
         this.isLoadingTransactions = false
       }
+    },
+
+    normalizePcType(value) {
+      return String(value || '').trim().toUpperCase()
+    },
+
+    isHeRow(row) {
+      return this.normalizePcType(row?.pc_type) === 'HE'
+    },
+
+    isPreRow(row) {
+      return this.normalizePcType(row?.pc_type) === 'PRE'
+    },
+
+    getDeliveryMethodLabel(row) {
+      return heConfig.getDeliveryMethodLabel(this.isPreRow(row) ? heConfig.DELIVERY_METHOD_PRE : heConfig.DELIVERY_METHOD_HE)
     },
 
     async refreshHeStatus(row, showMessage = true) {
@@ -351,7 +418,13 @@ export default {
     },
 
     getStatusText(status) {
-      return heConfig.getHeStatusText(status)
+      return heConfig.getPcpStatusText(status)
+    },
+
+    getCurrentStatus(row) {
+      return this.isPreRow(row)
+        ? row.preRecord?.pcp_status || 'NOT_EXIST'
+        : row.heRecord?.pcp_status || 'NOT_EXIST'
     },
 
     getStatusTagType(status) {
@@ -367,6 +440,27 @@ export default {
           return 'warning'
         default:
           return 'info'
+      }
+    },
+
+    async refreshPreStatus(row, showMessage = true) {
+      if (!row?.transaction_id) return
+      row.syncingPre = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/pre/status`, {
+          params: { transactionId: row.transaction_id }
+        })
+        row.preRecord = response.data?.item || null
+        if (showMessage) {
+          this.$message?.success('PRE 状态已刷新')
+        }
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'PRE 状态刷新失败'
+        if (showMessage) {
+          this.$message?.error(message)
+        }
+      } finally {
+        row.syncingPre = false
       }
     },
 
@@ -472,12 +566,84 @@ export default {
       }
     },
 
+    openPreDelivery(row) {
+      if (!row?.transaction_id) return
+      this.preDialog.visible = true
+      this.preDialog.asset = row
+      this.preDialog.file = null
+    },
+
+    onPreFileChange(event) {
+      this.preDialog.file = event.target.files?.[0] || null
+      event.target.value = ''
+    },
+
+    async submitPreDelivery() {
+      if (!this.preDialog.asset) return
+      if (!this.preDialog.file) {
+        this.$message?.warning('请先选择原始压缩包')
+        return
+      }
+
+      const assetRow = this.preDialog.asset
+      this.preDialog.submitting = true
+      assetRow.processingPre = true
+      try {
+        preCrypto.ensureAllowedPreSourceFile(this.preDialog.file)
+        const teeResp = await axios.get(`${API_BASE}/api/privacy/pre/tee-materials`, {
+          params: { sellerId: assetRow.seller_address }
+        })
+        const teeMaterials = teeResp.data?.item || {}
+        if (!teeMaterials.public_key || !teeMaterials.key_id) {
+          throw new Error('TEE 材料返回不完整')
+        }
+
+        const payload = await preCrypto.createPrePublishPayload({
+          file: this.preDialog.file,
+          teePublicKeyHex: teeMaterials.public_key,
+          teeKeyId: teeMaterials.key_id,
+          producerId: assetRow.seller_address,
+          taskId: `CONTRACT-${assetRow.transaction_id}`,
+          contentType: 'archive'
+        })
+
+        const formData = new FormData()
+        formData.append('transactionId', assetRow.transaction_id)
+        formData.append('teeKeyId', teeMaterials.key_id)
+        formData.append('key_package', payload.keyPackageHex)
+        formData.append('source_cipher_file', payload.sourceCipherFile, payload.filenames.sourceCipherFile)
+        formData.append('source_wrapped_key_file', payload.sourceWrappedKeyFile, payload.filenames.sourceWrappedKeyFile)
+        formData.append('source_meta_file', payload.sourceMetaFile, payload.filenames.sourceMetaFile)
+
+        const response = await axios.post(`${API_BASE}/api/privacy/pre/publish`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+
+        assetRow.preRecord = response.data?.item || assetRow.preRecord
+        this.$message?.success(response.data?.message || 'PRE 交付已提交')
+        this.closePreDialog()
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'PRE 提交失败'
+        this.$message?.error(message)
+      } finally {
+        this.preDialog.submitting = false
+        assetRow.processingPre = false
+      }
+    },
+
     closeHeDialog() {
       this.heDialog.visible = false
       this.heDialog.asset = null
       this.heDialog.file1 = null
       this.heDialog.file2 = null
       this.heDialog.submitting = false
+    },
+
+    closePreDialog() {
+      this.preDialog.visible = false
+      this.preDialog.asset = null
+      this.preDialog.file = null
+      this.preDialog.submitting = false
     },
 
     async generateContractInfo(transaction) {
@@ -606,6 +772,12 @@ export default {
   color: #217a3c;
   font-size: 12px;
   font-weight: 600;
+}
+
+.status-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .action-cell {
