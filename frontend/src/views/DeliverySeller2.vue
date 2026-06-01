@@ -53,10 +53,37 @@
                   <el-button v-if="isHeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.checkingHe" @click="openHeDelivery(row)">
                     发起计算
                   </el-button>
-                  <el-button v-if="isFlRow(row)" size="small" type="success" class="action-btn-primary" :loading="row.processingFl" @click="openFlDelivery(row)">
+                  <el-button
+                    v-if="isFlRow(row) && !getSellerJoinPackage(row)"
+                    size="small"
+                    type="primary"
+                    class="action-btn-primary"
+                    :loading="row.processingFl || row.checkingFl"
+                    @click="openFlJoinDialog(row)"
+                  >
+                    提交材料
+                  </el-button>
+                  <el-button
+                    v-else-if="isFlRow(row)"
+                    size="small"
+                    type="primary"
+                    class="action-btn-primary action-btn-disabled-primary"
+                    disabled
+                  >
+                    已提交材料
+                  </el-button>
+                  <el-button
+                    v-if="isFlRow(row)"
+                    size="small"
+                    type="success"
+                    class="action-btn-primary"
+                    :loading="row.uploadingFlBatch || row.checkingFlBatch"
+                    :disabled="!canOpenFlBatchDialog(row)"
+                    @click="openFlBatchDialog(row)"
+                  >
                     发起训练
                   </el-button>
-                  <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre" @click="openPreDelivery(row)">
+                  <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)">
                     发起重加密
                   </el-button>
                   <el-button
@@ -68,7 +95,7 @@
                     :disabled="!getSellerBottomModelPackage(row)"
                     @click="downloadFlSellerBottomModel(row)"
                   >
-                    下载 Bottom 模型
+                    下载底模
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
@@ -79,7 +106,7 @@
                     :disabled="!getLatestSellerGradientPackage(row)"
                     @click="downloadFlSellerGradient(row)"
                   >
-                    下载梯度结果
+                    下载梯度
                   </el-button>
                 </div>
               </template>
@@ -91,47 +118,61 @@
           <div v-if="heDialog.asset" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
-              <span>{{ heDialog.asset.transaction_id }}</span>
+              <span class="dialog-value">{{ heDialog.asset.transaction_id }}</span>
             </div>
 
-            <div class="dialog-row">
-              <span class="dialog-label">加密算法</span>
-              <el-select v-model="heDialog.encType" placeholder="请选择算法" @change="handleEncTypeChange">
-                <el-option
-                  v-for="item in heEncTypeOptions"
-                  :key="item"
-                  :label="item"
-                  :value="item"
-                />
-              </el-select>
+            <div class="dialog-grid">
+              <div class="dialog-field">
+                <span class="dialog-label">加密算法</span>
+                <el-select v-model="heDialog.encType" placeholder="请选择算法" @change="handleEncTypeChange">
+                  <el-option
+                    v-for="item in heEncTypeOptions"
+                    :key="item"
+                    :label="item"
+                    :value="item"
+                  />
+                </el-select>
+              </div>
+
+              <div class="dialog-field">
+                <span class="dialog-label">操作符</span>
+                <el-select v-model="heDialog.operation" placeholder="请选择操作符">
+                  <el-option
+                    v-for="item in heOperationOptions"
+                    :key="item"
+                    :label="item"
+                    :value="item"
+                  />
+                </el-select>
+              </div>
             </div>
 
-            <div class="dialog-row">
-              <span class="dialog-label">操作符</span>
-              <el-select v-model="heDialog.operation" placeholder="请选择操作符">
-                <el-option
-                  v-for="item in heOperationOptions"
-                  :key="item"
-                  :label="item"
-                  :value="item"
-                />
-              </el-select>
+            <div class="dialog-grid">
+              <div class="dialog-field">
+                <span class="dialog-label">CSV 文件 1</span>
+                <div class="file-action-group">
+                  <input ref="heCsvFile1Input" class="hidden-file-input" type="file" accept=".csv" @change="onDialogFileChange('file1', $event)" />
+                  <el-button size="small" plain @click="openFileSelector('heCsvFile1Input')">
+                    选择文件
+                  </el-button>
+                </div>
+                <div v-if="heDialog.file1" class="file-name inline-file-name">{{ heDialog.file1.name }}</div>
+              </div>
+
+              <div class="dialog-field">
+                <span class="dialog-label">CSV 文件 2</span>
+                <div class="file-action-group">
+                  <input ref="heCsvFile2Input" class="hidden-file-input" type="file" accept=".csv" @change="onDialogFileChange('file2', $event)" />
+                  <el-button size="small" plain @click="openFileSelector('heCsvFile2Input')">
+                    选择文件
+                  </el-button>
+                </div>
+                <div v-if="heDialog.file2" class="file-name inline-file-name">{{ heDialog.file2.name }}</div>
+              </div>
             </div>
 
-            <div class="dialog-row file-row">
-              <span class="dialog-label">CSV 文件 1</span>
-              <input type="file" accept=".csv" @change="onDialogFileChange('file1', $event)" />
-            </div>
-            <div v-if="heDialog.file1" class="file-name">{{ heDialog.file1.name }}</div>
-
-            <div class="dialog-row file-row">
-              <span class="dialog-label">CSV 文件 2</span>
-              <input type="file" accept=".csv" @change="onDialogFileChange('file2', $event)" />
-            </div>
-            <div v-if="heDialog.file2" class="file-name">{{ heDialog.file2.name }}</div>
-
-            <div class="dialog-hint">
-              <span>上传原始数字 CSV，浏览器会使用当前交易绑定的 HE 公钥先加密，再提交交付。</span>
+            <div class="dialog-hint compact-hint">
+              <span>上传两个原始数字 CSV，浏览器会使用当前交易绑定的 HE 公钥先加密，再提交计算。</span>
             </div>
           </div>
 
@@ -147,21 +188,28 @@
           <div v-if="preDialog.asset" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
-              <span>{{ preDialog.asset.transaction_id }}</span>
+              <span class="dialog-value">{{ preDialog.asset.transaction_id }}</span>
             </div>
 
-            <div class="dialog-row file-row">
+            <div class="dialog-field">
               <span class="dialog-label">原始压缩包</span>
-              <input
-                type="file"
-                accept=".zip,.tar,.tar.gz,.tgz,application/zip,application/x-tar,application/gzip"
-                @change="onPreFileChange"
-              />
+              <div class="file-action-group">
+                <input
+                  ref="preSourceArchiveInput"
+                  class="hidden-file-input"
+                  type="file"
+                  accept=".zip,.tar,.tar.gz,.tgz,application/zip,application/x-tar,application/gzip"
+                  @change="onPreFileChange"
+                />
+                <el-button size="small" plain @click="openFileSelector('preSourceArchiveInput')">
+                  选择文件
+                </el-button>
+              </div>
             </div>
-            <div v-if="preDialog.file" class="file-name">{{ preDialog.file.name }}</div>
+            <div v-if="preDialog.file" class="file-name inline-file-name">{{ preDialog.file.name }}</div>
 
-            <div class="dialog-hint">
-              <span>浏览器会在本地生成 PRE 三件套和 key package，再通过后端转发 PCP。</span>
+            <div class="dialog-hint compact-hint">
+              <span>请选择卖方原始压缩包，浏览器会在本地生成 PRE 三件套和 key package，再通过后端转发 PCP。</span>
             </div>
           </div>
 
@@ -173,27 +221,62 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="flDialog.visible" title="发起 FL 训练" width="620px">
-          <div v-if="flDialog.asset" class="dialog-body">
+        <el-dialog v-model="flJoinDialog.visible" title="提交 FL 材料" width="620px">
+          <div v-if="flJoinDialog.asset" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
-              <span>{{ flDialog.asset.transaction_id }}</span>
+              <span>{{ flJoinDialog.asset.transaction_id }}</span>
             </div>
 
-            <div class="dialog-row file-row">
-              <span class="dialog-label">Seller Batch ZIP</span>
-              <input type="file" accept=".zip,application/zip" @change="onFlZipFileChange" />
+            <div class="dialog-hint compact-hint">
+              <span>提交后将为当前卖方在浏览器本地生成 FL RSA 密钥，并把公钥上传到 PCP 完成 join。</span>
             </div>
-            <div v-if="flDialog.file" class="file-name">{{ flDialog.file.name }}</div>
 
-            <div class="dialog-hint">
-              <span>当前仅支持单轮 FL 训练。ZIP 内需包含 smashed/ 与 label/ 两组加密包，每组包含 cipher.bin、wrapped_key.bin、meta.json。</span>
+            <div class="dialog-hint compact-hint">
+              <span>提交成功后，请立即下载并妥善保存卖方私钥文件，后续解密底模和梯度结果都要使用。</span>
             </div>
           </div>
 
           <template #footer>
-            <el-button @click="closeFlDialog">取消</el-button>
-            <el-button type="primary" :loading="flDialog.submitting" @click="submitFlDelivery">
+            <el-button @click="closeFlJoinDialog">取消</el-button>
+            <el-button type="primary" :loading="flJoinDialog.submitting" @click="submitFlJoin">
+              提交材料
+            </el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="flBatchDialog.visible" title="发起 FL 训练" width="620px">
+          <div v-if="flBatchDialog.asset" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">交易ID</span>
+              <span>{{ flBatchDialog.asset.transaction_id }}</span>
+            </div>
+
+            <div class="dialog-row file-row">
+              <span class="dialog-label">Seller Batch ZIP</span>
+              <div class="file-action-group">
+                <input
+                  ref="flBatchZipInput"
+                  class="hidden-file-input"
+                  type="file"
+                  accept=".zip,application/zip"
+                  @change="onFlZipFileChange"
+                />
+                <el-button size="small" plain @click="openFileSelector('flBatchZipInput')">
+                  选择文件
+                </el-button>
+              </div>
+            </div>
+            <div v-if="flBatchDialog.file" class="file-name">{{ flBatchDialog.file.name }}</div>
+
+            <div class="dialog-hint compact-hint">
+              <span>请上传卖方本地封装好的 batch ZIP，内容需包含 smashed 与 label 两组加密材料。</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closeFlBatchDialog">取消</el-button>
+            <el-button type="primary" :loading="flBatchDialog.submitting" @click="submitFlBatch">
               发起训练
             </el-button>
           </template>
@@ -211,13 +294,18 @@
             </div>
             <div class="dialog-row file-row">
               <span class="dialog-label">FL 私钥文件</span>
-              <input type="file" accept=".json" @change="onFlPrivateKeyFileChange" />
+              <div class="file-action-group">
+                <input ref="sellerFlPrivateKeyInput" class="hidden-file-input" type="file" accept=".json" @change="onFlPrivateKeyFileChange" />
+                <el-button size="small" plain @click="openFileSelector('sellerFlPrivateKeyInput')">
+                  选择文件
+                </el-button>
+              </div>
             </div>
             <div v-if="flDecryptDialog.privateKeyFile" class="file-name">
               {{ flDecryptDialog.privateKeyFile.name }}
             </div>
             <div class="dialog-hint">
-              <span>浏览器会在本地解密 FL 结果，并直接导出原始文件。</span>
+              <span>请选择 `.json` 私钥文件，浏览器会在本地解密 FL 结果，并直接导出原始文件。</span>
             </div>
           </div>
 
@@ -231,56 +319,41 @@
 
         <div v-if="contractInfo.visible" class="modal" @click.self="closeContractInfo">
           <div class="modal-content wide-modal">
-            <h3>数字合约信息</h3>
+            <h3>数字合约</h3>
 
             <div class="contract-info" v-if="contractInfo.data">
-              <div class="info-section">
-                <h4>基本信息</h4>
-                <div class="info-grid">
-                  <div class="info-item">
-                    <label>合约ID:</label>
-                    <span>{{ contractInfo.data.contract_id }}</span>
-                  </div>
-                  <div class="info-item">
-                    <label>合约名称:</label>
-                    <span>{{ contractInfo.data.contract_name }}</span>
-                  </div>
-                  <div class="info-item">
-                    <label>创建时间:</label>
-                    <span>{{ formatDate(contractInfo.data.created_at) }}</span>
-                  </div>
+              <div class="contract-grid">
+                <div class="contract-item">
+                  <label>合约ID</label>
+                  <span class="value code">{{ contractInfo.data.contract_id }}</span>
                 </div>
-              </div>
-
-              <div class="info-section">
-                <h4>产品信息</h4>
-                <div class="info-grid">
-                  <div class="info-item">
-                    <label>产品名称:</label>
-                    <span>{{ contractInfo.data.product_name }}</span>
-                  </div>
-                  <div class="info-item">
-                    <label>Token ID:</label>
-                    <span>{{ contractInfo.data.token_id }}</span>
-                  </div>
-                  <div class="info-item">
-                    <label>合约描述:</label>
-                    <span class="description">{{ contractInfo.data.contract_description }}</span>
-                  </div>
+                <div class="contract-item">
+                  <label>合约名称</label>
+                  <span class="value">{{ contractInfo.data.contract_name }}</span>
                 </div>
-              </div>
-
-              <div class="info-section">
-                <h4>参与方</h4>
-                <div class="info-grid">
-                  <div class="info-item">
-                    <label>卖家:</label>
-                    <span class="address">{{ contractInfo.data.seller_id }}</span>
-                  </div>
-                  <div class="info-item">
-                    <label>买家:</label>
-                    <span class="address">{{ contractInfo.data.buyer_id }}</span>
-                  </div>
+                <div class="contract-item">
+                  <label>创建时间</label>
+                  <span class="value">{{ formatDate(contractInfo.data.created_at) }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>交付方法</label>
+                  <span class="value">{{ contractInfo.data.delivery_method_label }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>产品名称</label>
+                  <span class="value">{{ contractInfo.data.product_name }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>产品描述</label>
+                  <span class="value description">{{ contractInfo.data.contract_description }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>买家名称</label>
+                  <span class="value">{{ contractInfo.data.buyer_name }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>卖家名称</label>
+                  <span class="value">{{ contractInfo.data.seller_name }}</span>
                 </div>
               </div>
             </div>
@@ -335,7 +408,12 @@ export default {
         file: null,
         submitting: false
       },
-      flDialog: {
+      flJoinDialog: {
+        visible: false,
+        asset: null,
+        submitting: false
+      },
+      flBatchDialog: {
         visible: false,
         asset: null,
         file: null,
@@ -456,6 +534,7 @@ export default {
                   syncingPre: false,
                   processingPre: false,
                   processingFl: false,
+                  flBottomModelDownloaded: false,
                   downloadingFlBottom: false,
                   downloadingFlGradient: false
                 })
@@ -680,6 +759,7 @@ export default {
           }
         })
         row.flRecord = response.data?.item || null
+        this.syncFlBottomModelDownloadedState(row)
         if (showMessage) {
           this.$message?.success('FL 状态已刷新')
         }
@@ -700,6 +780,33 @@ export default {
     getSellerBottomModelPackage(row) {
       const joinPackage = this.getSellerJoinPackage(row)
       return joinPackage?.download_token ? joinPackage : null
+    },
+
+    getFlBottomModelDownloadKey(row) {
+      return `flBottomDownloaded:${row?.transaction_id || ''}:${row?.seller_address || ''}`
+    },
+
+    hasDownloadedFlBottomModel(row) {
+      if (!row?.transaction_id || !row?.seller_address) return false
+      if (typeof row?.flBottomModelDownloaded === 'boolean') {
+        return row.flBottomModelDownloaded
+      }
+      return localStorage.getItem(this.getFlBottomModelDownloadKey(row)) === '1'
+    },
+
+    markFlBottomModelDownloaded(row) {
+      if (!row?.transaction_id || !row?.seller_address) return
+      localStorage.setItem(this.getFlBottomModelDownloadKey(row), '1')
+      row.flBottomModelDownloaded = true
+    },
+
+    syncFlBottomModelDownloadedState(row) {
+      if (!row?.transaction_id || !row?.seller_address) return
+      row.flBottomModelDownloaded = localStorage.getItem(this.getFlBottomModelDownloadKey(row)) === '1'
+    },
+
+    canOpenFlBatchDialog(row) {
+      return Boolean(this.getSellerJoinPackage(row) && this.hasDownloadedFlBottomModel(row))
     },
 
     getLatestSellerGradientPackage(row) {
@@ -811,11 +918,30 @@ export default {
       }
     },
 
-    openPreDelivery(row) {
+    async openPreDelivery(row) {
       if (!row?.transaction_id) return
-      this.preDialog.visible = true
-      this.preDialog.asset = row
-      this.preDialog.file = null
+
+      row.checkingPre = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/pre/status`, {
+          params: { transactionId: row.transaction_id }
+        })
+        row.preRecord = response.data?.item || null
+
+        if (!row.preRecord?.buyer_public_key_ready) {
+          this.$message?.warning('买方尚未提交 PRE 材料，请等待买方先上传公钥')
+          return
+        }
+
+        this.preDialog.visible = true
+        this.preDialog.asset = row
+        this.preDialog.file = null
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'PRE 状态查询失败'
+        this.$message?.error(message)
+      } finally {
+        row.checkingPre = false
+      }
     },
 
     onPreFileChange(event) {
@@ -823,58 +949,157 @@ export default {
       event.target.value = ''
     },
 
-    openFlDelivery(row) {
+    async openFlJoinDialog(row) {
       if (!row?.transaction_id) return
-      this.flDialog.visible = true
-      this.flDialog.asset = row
-      this.flDialog.file = null
+
+      row.checkingFl = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/fl/status`, {
+          params: {
+            transactionId: row.transaction_id,
+            entityId: row.seller_address
+          }
+        })
+        row.flRecord = response.data?.item || null
+
+        if (!row.flRecord?.pcp_contract_id) {
+          this.$message?.warning('买方尚未提交 FL 材料，请等待买方先创建合同')
+          return
+        }
+
+        if (this.getSellerJoinPackage(row)) {
+          this.$message?.warning('当前卖方已提交材料，可直接下载底模')
+          return
+        }
+
+        this.flJoinDialog.visible = true
+        this.flJoinDialog.asset = row
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'FL 状态查询失败'
+        this.$message?.error(message)
+      } finally {
+        row.checkingFl = false
+      }
+    },
+
+    async openFlBatchDialog(row) {
+      if (!row?.transaction_id) return
+
+      row.checkingFlBatch = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/fl/status`, {
+          params: {
+            transactionId: row.transaction_id,
+            entityId: row.seller_address
+          }
+        })
+        row.flRecord = response.data?.item || null
+
+        if (!row.flRecord?.pcp_contract_id) {
+          this.$message?.warning('买方尚未提交 FL 材料，请等待买方先创建合同')
+          return
+        }
+
+        if (!this.getSellerJoinPackage(row)) {
+          this.$message?.warning('请先提交材料')
+          return
+        }
+
+        if (!this.hasDownloadedFlBottomModel(row)) {
+          this.$message?.warning('请先下载底模，再发起训练')
+          return
+        }
+
+        this.flBatchDialog.visible = true
+        this.flBatchDialog.asset = row
+        this.flBatchDialog.file = null
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'FL 状态查询失败'
+        this.$message?.error(message)
+      } finally {
+        row.checkingFlBatch = false
+      }
     },
 
     onFlZipFileChange(event) {
-      this.flDialog.file = event.target.files?.[0] || null
+      this.flBatchDialog.file = event.target.files?.[0] || null
       event.target.value = ''
     },
 
-    async submitFlDelivery() {
-      if (!this.flDialog.asset) return
-      if (!this.flDialog.file) {
-        this.$message?.warning('请先选择 seller batch ZIP')
-        return
-      }
+    openFileSelector(refName) {
+      this.$refs[refName]?.click?.()
+    },
 
-      const assetRow = this.flDialog.asset
+    async submitFlJoin() {
+      if (!this.flJoinDialog.asset) return
+
+      const assetRow = this.flJoinDialog.asset
       if (!assetRow.flRecord?.pcp_contract_id) {
         this.$message?.warning('买方尚未创建 FL 合同')
         return
       }
 
-      this.flDialog.submitting = true
+      this.flJoinDialog.submitting = true
       assetRow.processingFl = true
+      try {
+        const keyMaterial = await flCrypto.generateFlKeyPair()
+        await axios.post(`${API_BASE}/api/privacy/fl/join`, {
+          transactionId: assetRow.transaction_id,
+          sellerId: assetRow.seller_address,
+          sellerPublicKey: keyMaterial.publicKeyHex
+        })
+        flCrypto.downloadFlPrivateKeyFile({
+          role: 'seller',
+          transactionId: assetRow.transaction_id,
+          privateKeyPem: keyMaterial.privateKeyPem
+        })
+        await this.refreshFlStatus(assetRow, false)
+        this.$message?.success('FL 材料已提交，请先下载底模')
+        this.closeFlJoinDialog()
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'FL 提交失败'
+        this.$message?.error(message)
+      } finally {
+        this.flJoinDialog.submitting = false
+        assetRow.processingFl = false
+      }
+    },
+
+    async submitFlBatch() {
+      if (!this.flBatchDialog.asset) return
+      if (!this.flBatchDialog.file) {
+        this.$message?.warning('请先选择 seller batch ZIP')
+        return
+      }
+
+      const assetRow = this.flBatchDialog.asset
+      if (!assetRow.flRecord?.pcp_contract_id) {
+        this.$message?.warning('买方尚未创建 FL 合同')
+        return
+      }
+
+      if (!this.getSellerJoinPackage(assetRow)) {
+        this.$message?.warning('请先提交材料')
+        return
+      }
+
+      if (!this.hasDownloadedFlBottomModel(assetRow)) {
+        this.$message?.warning('请先下载底模，再发起训练')
+        return
+      }
+
+      this.flBatchDialog.submitting = true
+      assetRow.uploadingFlBatch = true
 
       try {
-        if (!String(this.flDialog.file.name || '').toLowerCase().endsWith('.zip')) {
+        if (!String(this.flBatchDialog.file.name || '').toLowerCase().endsWith('.zip')) {
           throw new Error('仅支持上传 zip 压缩包')
-        }
-
-        if (!this.getSellerJoinPackage(assetRow)) {
-          const keyMaterial = await flCrypto.generateFlKeyPair()
-          await axios.post(`${API_BASE}/api/privacy/fl/join`, {
-            transactionId: assetRow.transaction_id,
-            sellerId: assetRow.seller_address,
-            sellerPublicKey: keyMaterial.publicKeyHex
-          })
-          flCrypto.downloadFlPrivateKeyFile({
-            role: 'seller',
-            transactionId: assetRow.transaction_id,
-            privateKeyPem: keyMaterial.privateKeyPem
-          })
-          await this.refreshFlStatus(assetRow, false)
         }
 
         const formData = new FormData()
         formData.append('transactionId', assetRow.transaction_id)
         formData.append('sellerId', assetRow.seller_address)
-        formData.append('batch_zip', this.flDialog.file, this.flDialog.file.name)
+        formData.append('batch_zip', this.flBatchDialog.file, this.flBatchDialog.file.name)
 
         const response = await axios.post(`${API_BASE}/api/privacy/fl/upload-batch`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
@@ -883,13 +1108,13 @@ export default {
         assetRow.flRecord = response.data?.item || assetRow.flRecord
         await this.refreshFlStatus(assetRow, false)
         this.$message?.success(response.data?.message || 'FL 训练已发起')
-        this.closeFlDialog()
+        this.closeFlBatchDialog()
       } catch (error) {
         const message = error?.response?.data?.message || error?.message || 'FL 提交失败'
         this.$message?.error(message)
       } finally {
-        this.flDialog.submitting = false
-        assetRow.processingFl = false
+        this.flBatchDialog.submitting = false
+        assetRow.uploadingFlBatch = false
       }
     },
 
@@ -961,11 +1186,17 @@ export default {
       this.preDialog.submitting = false
     },
 
-    closeFlDialog() {
-      this.flDialog.visible = false
-      this.flDialog.asset = null
-      this.flDialog.file = null
-      this.flDialog.submitting = false
+    closeFlJoinDialog() {
+      this.flJoinDialog.visible = false
+      this.flJoinDialog.asset = null
+      this.flJoinDialog.submitting = false
+    },
+
+    closeFlBatchDialog() {
+      this.flBatchDialog.visible = false
+      this.flBatchDialog.asset = null
+      this.flBatchDialog.file = null
+      this.flBatchDialog.submitting = false
     },
 
     async downloadFlSellerBottomModel(row) {
@@ -1047,6 +1278,10 @@ export default {
           batchIndex: this.getLatestSellerGradientPackage(this.flDecryptDialog.row)?.batch_index ?? 0
         })
 
+        if (this.flDecryptDialog.resultRole === 'fl_bottom_model') {
+          this.markFlBottomModelDownloaded(this.flDecryptDialog.row)
+        }
+
         this.$message?.success('FL 结果已在浏览器内解密并导出')
         this.closeFlDecryptDialog()
       } catch (error) {
@@ -1109,6 +1344,9 @@ export default {
           created_at: (tx.created_at && new Date(tx.created_at.replace(' ', 'T')).toISOString()) || new Date().toISOString(),
           token_id: assetId,
           product_name: assetInfo.asset_name || '未知产品',
+          delivery_method_label: this.getDeliveryMethodLabel(transaction),
+          seller_name: tx.seller_name || tx.seller_username || tx.seller_address || '未知卖家',
+          buyer_name: tx.buyer_name || tx.buyer_username || tx.buyer_address || '未知买家',
           seller_id: tx.seller_address ?? 'unknown-seller',
           buyer_id: tx.buyer_address ?? 'unknown-buyer',
           operations: ['所有'],
@@ -1330,6 +1568,19 @@ export default {
   border-color: var(--border-soft);
 }
 
+.action-cell :deep(.action-btn-disabled-primary.el-button.is-disabled) {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+  opacity: 0.65;
+}
+
+.action-cell :deep(.action-btn-disabled-primary.el-button.is-disabled:hover) {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+}
+
 .page-header :deep(.el-button--primary.is-plain) {
   border-color: var(--border-strong);
   background: var(--surface);
@@ -1437,20 +1688,50 @@ export default {
   gap: 14px;
 }
 
+.dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .dialog-row {
   display: flex;
   align-items: center;
   gap: 14px;
 }
 
+.dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .dialog-label {
-  min-width: 86px;
   color: #4b5563;
   font-size: 13px;
+  font-weight: 500;
+}
+
+.dialog-value {
+  color: var(--text-main);
+  font-size: 14px;
 }
 
 .file-row {
   align-items: flex-start;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.file-action-group {
+  display: flex;
+  align-items: center;
+}
+
+.inline-file-name {
+  margin-left: 0;
 }
 
 .file-name,
@@ -1459,6 +1740,10 @@ export default {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.compact-hint {
+  margin-left: 0;
 }
 
 .modal {
@@ -1480,25 +1765,40 @@ export default {
   padding: 24px;
 }
 
-.info-section + .info-section {
-  margin-top: 18px;
+.contract-info {
+  margin-top: 16px;
 }
 
-.info-grid {
+.contract-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-.info-item label {
-  display: block;
-  margin-bottom: 4px;
-  color: #6b7280;
-  font-size: 12px;
+.contract-item {
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-soft);
 }
 
-.description,
-.address {
+.contract-item label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.contract-item .value {
+  display: block;
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.contract-item .code,
+.contract-item .description {
   word-break: break-all;
 }
 
@@ -1529,7 +1829,11 @@ export default {
     align-items: stretch;
   }
 
-  .info-grid {
+  .contract-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dialog-grid {
     grid-template-columns: 1fr;
   }
 

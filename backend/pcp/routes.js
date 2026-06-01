@@ -1548,11 +1548,39 @@ function registerPreRoutes({
     const resultRole = detectResultNotificationRole(req.body, firstDefined);
 
     if (resultRole === 'he_result') {
-      return heResultNotificationHandler(req, res);
+      try {
+        const response = await axios.post(
+          `http://127.0.0.1:${process.env.PORT ? Number(process.env.PORT) : 3000}/api/privacy/he/result-notify`,
+          req.body
+        );
+        return res.status(response.status).json(response.data);
+      } catch (error) {
+        const status = error?.response?.status || 500;
+        return res.status(status).json(
+          error?.response?.data || {
+            success: false,
+            message: error.message || 'HE 结果通知转发失败'
+          }
+        );
+      }
     }
 
     if (resultRole === 'pre_result') {
-      return preResultNotificationHandler(req, res);
+      try {
+        const response = await axios.post(
+          `http://127.0.0.1:${process.env.PORT ? Number(process.env.PORT) : 3000}/api/privacy/pre/result-notify`,
+          req.body
+        );
+        return res.status(response.status).json(response.data);
+      } catch (error) {
+        const status = error?.response?.status || 500;
+        return res.status(status).json(
+          error?.response?.data || {
+            success: false,
+            message: error.message || 'PRE 结果通知转发失败'
+          }
+        );
+      }
     }
 
     if (resultRole && resultRole.startsWith('fl_')) {

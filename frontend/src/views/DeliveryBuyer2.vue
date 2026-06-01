@@ -134,20 +134,33 @@
           <div v-if="flDialog.row" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
-              <span>{{ flDialog.row.transaction_id }}</span>
+              <span class="dialog-value">{{ flDialog.row.transaction_id }}</span>
             </div>
-            <div class="dialog-row file-row">
-              <span class="dialog-label">Top 模型</span>
-              <input type="file" accept=".pt,.pth,.bin" @change="onFlBuyerFileChange('topModelFile', $event)" />
+            <div class="dialog-grid">
+              <div class="dialog-field">
+                <span class="dialog-label">Top 模型</span>
+                <div class="file-action-group">
+                  <input ref="buyerFlTopModelInput" class="hidden-file-input" type="file" accept=".pt,.pth,.bin" @change="onFlBuyerFileChange('topModelFile', $event)" />
+                  <el-button size="small" plain @click="openFileSelector('buyerFlTopModelInput')">
+                    选择文件
+                  </el-button>
+                </div>
+                <div v-if="flDialog.topModelFile" class="file-name inline-file-name">{{ flDialog.topModelFile.name }}</div>
+              </div>
+
+              <div class="dialog-field">
+                <span class="dialog-label">Bottom 模型</span>
+                <div class="file-action-group">
+                  <input ref="buyerFlBottomModelInput" class="hidden-file-input" type="file" accept=".pt,.pth,.bin" @change="onFlBuyerFileChange('bottomModelFile', $event)" />
+                  <el-button size="small" plain @click="openFileSelector('buyerFlBottomModelInput')">
+                    选择文件
+                  </el-button>
+                </div>
+                <div v-if="flDialog.bottomModelFile" class="file-name inline-file-name">{{ flDialog.bottomModelFile.name }}</div>
+              </div>
             </div>
-            <div v-if="flDialog.topModelFile" class="file-name">{{ flDialog.topModelFile.name }}</div>
-            <div class="dialog-row file-row">
-              <span class="dialog-label">Bottom 模型</span>
-              <input type="file" accept=".pt,.pth,.bin" @change="onFlBuyerFileChange('bottomModelFile', $event)" />
-            </div>
-            <div v-if="flDialog.bottomModelFile" class="file-name">{{ flDialog.bottomModelFile.name }}</div>
-            <div class="dialog-hint">
-              <span>当前仅支持单轮 FL 训练。浏览器会本地生成买方 RSA 密钥，并用 TEE 公钥加密 Top/Bottom 模型后创建合同。</span>
+            <div class="dialog-hint compact-hint">
+              <span>浏览器会本地生成买方 RSA 密钥，并用 TEE 公钥加密 Top / Bottom 模型后创建合同。</span>
             </div>
           </div>
 
@@ -171,10 +184,18 @@
             </div>
             <div class="dialog-row file-row">
               <span class="dialog-label">私钥文件</span>
-              <input type="file" accept=".json" @change="onPrivateKeyFileChange" />
+              <div class="file-action-group">
+                <input ref="hePrivateKeyInput" class="hidden-file-input" type="file" accept=".json" @change="onPrivateKeyFileChange" />
+                <el-button size="small" plain @click="openFileSelector('hePrivateKeyInput')">
+                  选择文件
+                </el-button>
+              </div>
             </div>
             <div v-if="decryptDialog.privateKeyFile" class="file-name">
               {{ decryptDialog.privateKeyFile.name }}
+            </div>
+            <div class="dialog-hint">
+              <span>请选择 `.json` 私钥文件，浏览器会在本地解密并直接导出结果。</span>
             </div>
           </div>
 
@@ -194,13 +215,18 @@
             </div>
             <div class="dialog-row file-row">
               <span class="dialog-label">PRE 私钥文件</span>
-              <input type="file" accept=".json" @change="onPrePrivateKeyFileChange" />
+              <div class="file-action-group">
+                <input ref="prePrivateKeyInput" class="hidden-file-input" type="file" accept=".json" @change="onPrePrivateKeyFileChange" />
+                <el-button size="small" plain @click="openFileSelector('prePrivateKeyInput')">
+                  选择文件
+                </el-button>
+              </div>
             </div>
             <div v-if="preDecryptDialog.privateKeyFile" class="file-name">
               {{ preDecryptDialog.privateKeyFile.name }}
             </div>
             <div class="dialog-hint">
-              <span>浏览器会在本地解密 PRE 结果，并直接导出原始压缩包。</span>
+              <span>请选择 `.json` 私钥文件，浏览器会在本地解密 PRE 结果，并直接导出原始压缩包。</span>
             </div>
           </div>
 
@@ -224,13 +250,18 @@
             </div>
             <div class="dialog-row file-row">
               <span class="dialog-label">FL 私钥文件</span>
-              <input type="file" accept=".json" @change="onFlPrivateKeyFileChange" />
+              <div class="file-action-group">
+                <input ref="flPrivateKeyInput" class="hidden-file-input" type="file" accept=".json" @change="onFlPrivateKeyFileChange" />
+                <el-button size="small" plain @click="openFileSelector('flPrivateKeyInput')">
+                  选择文件
+                </el-button>
+              </div>
             </div>
             <div v-if="flDecryptDialog.privateKeyFile" class="file-name">
               {{ flDecryptDialog.privateKeyFile.name }}
             </div>
             <div class="dialog-hint">
-              <span>浏览器会在本地解密 FL 结果，并直接导出原始文件。</span>
+              <span>请选择 `.json` 私钥文件，浏览器会在本地解密 FL 结果，并直接导出原始文件。</span>
             </div>
           </div>
 
@@ -244,56 +275,41 @@
 
         <div v-if="contractInfo.visible" class="modal" @click.self="closeContractInfo">
           <div class="modal-content wide-modal">
-            <h3>数字合约信息</h3>
+            <h3>数字合约</h3>
 
             <div class="contract-info" v-if="contractInfo.data">
-              <div class="info-section">
-                <h4>基本信息</h4>
-                <div class="info-grid">
-                  <div class="info-item">
-                    <label>合约ID:</label>
-                    <span>{{ contractInfo.data.contract_id }}</span>
-                  </div>
-                  <div class="info-item">
-                    <label>合约名称:</label>
-                    <span>{{ contractInfo.data.contract_name }}</span>
-                  </div>
-                  <div class="info-item">
-                    <label>创建时间:</label>
-                    <span>{{ formatDate(contractInfo.data.created_at) }}</span>
-                  </div>
+              <div class="contract-grid">
+                <div class="contract-item">
+                  <label>合约ID</label>
+                  <span class="value code">{{ contractInfo.data.contract_id }}</span>
                 </div>
-              </div>
-
-              <div class="info-section">
-                <h4>产品信息</h4>
-                <div class="info-grid">
-                  <div class="info-item">
-                    <label>产品名称:</label>
-                    <span>{{ contractInfo.data.product_name }}</span>
-                  </div>
-                  <div class="info-item">
-                    <label>Token ID:</label>
-                    <span>{{ contractInfo.data.token_id }}</span>
-                  </div>
-                  <div class="info-item">
-                    <label>合约描述:</label>
-                    <span class="description">{{ contractInfo.data.contract_description }}</span>
-                  </div>
+                <div class="contract-item">
+                  <label>合约名称</label>
+                  <span class="value">{{ contractInfo.data.contract_name }}</span>
                 </div>
-              </div>
-
-              <div class="info-section">
-                <h4>参与方</h4>
-                <div class="info-grid">
-                  <div class="info-item">
-                    <label>卖家:</label>
-                    <span class="address">{{ contractInfo.data.seller_id }}</span>
-                  </div>
-                  <div class="info-item">
-                    <label>买家:</label>
-                    <span class="address">{{ contractInfo.data.buyer_id }}</span>
-                  </div>
+                <div class="contract-item">
+                  <label>创建时间</label>
+                  <span class="value">{{ formatDate(contractInfo.data.created_at) }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>交付方法</label>
+                  <span class="value">{{ contractInfo.data.delivery_method_label }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>产品名称</label>
+                  <span class="value">{{ contractInfo.data.product_name }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>产品描述</label>
+                  <span class="value description">{{ contractInfo.data.contract_description }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>买家名称</label>
+                  <span class="value">{{ contractInfo.data.buyer_name }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>卖家名称</label>
+                  <span class="value">{{ contractInfo.data.seller_name }}</span>
                 </div>
               </div>
             </div>
@@ -470,7 +486,7 @@ export default {
           }
         }
 
-        this.resultList = rows
+        this.resultList = rows.sort((left, right) => this.compareTransactionIdDesc(left, right))
         await Promise.all(this.resultList.map((row) => (
           this.isHeRow(row)
             ? this.refreshHeStatus(row, false)
@@ -524,6 +540,19 @@ export default {
       }
 
       return ''
+    },
+
+    compareTransactionIdDesc(left, right) {
+      const leftId = String(left?.transaction_id || '')
+      const rightId = String(right?.transaction_id || '')
+      const leftNumber = Number.parseInt(leftId, 10)
+      const rightNumber = Number.parseInt(rightId, 10)
+
+      if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && leftNumber !== rightNumber) {
+        return rightNumber - leftNumber
+      }
+
+      return rightId.localeCompare(leftId, 'zh-CN')
     },
 
     async refreshHeStatus(row, showMessage = true) {
@@ -722,6 +751,10 @@ export default {
     onFlBuyerFileChange(field, event) {
       this.flDialog[field] = event.target.files?.[0] || null
       event.target.value = ''
+    },
+
+    openFileSelector(refName) {
+      this.$refs[refName]?.click?.()
     },
 
     async submitFlContract() {
@@ -1096,6 +1129,9 @@ export default {
             new Date().toISOString(),
           token_id: assetId,
           product_name: assetInfo.asset_name || '未知产品',
+          delivery_method_label: this.getDeliveryMethodLabel(row),
+          seller_name: tx.seller_name || tx.seller_username || tx.seller_address || '未知卖家',
+          buyer_name: tx.buyer_name || tx.buyer_username || tx.buyer_address || '未知买家',
           seller_id: tx.seller_address ?? 'unknown-seller',
           buyer_id: tx.buyer_address ?? 'unknown-buyer',
           operations: ['所有'],
@@ -1307,6 +1343,19 @@ export default {
   border-color: var(--border-soft);
 }
 
+.action-cell :deep(.action-btn-primary.el-button.is-disabled) {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+  opacity: 0.65;
+}
+
+.action-cell :deep(.action-btn-primary.el-button.is-disabled:hover) {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+}
+
 .page-header :deep(.el-button--primary.is-plain) {
   border-color: var(--border-strong);
   background: var(--surface);
@@ -1420,14 +1469,44 @@ export default {
   gap: 14px;
 }
 
+.dialog-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.dialog-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 .dialog-label {
-  min-width: 80px;
   color: #4b5563;
   font-size: 13px;
+  font-weight: 500;
+}
+
+.dialog-value {
+  color: var(--text-main);
+  font-size: 14px;
 }
 
 .file-row {
   align-items: flex-start;
+}
+
+.hidden-file-input {
+  display: none;
+}
+
+.file-action-group {
+  display: flex;
+  align-items: center;
+}
+
+.inline-file-name {
+  margin-left: 0;
 }
 
 .file-name {
@@ -1435,6 +1514,10 @@ export default {
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.compact-hint {
+  margin-left: 0;
 }
 
 .modal {
@@ -1456,25 +1539,40 @@ export default {
   padding: 24px;
 }
 
-.info-section + .info-section {
-  margin-top: 18px;
+.contract-info {
+  margin-top: 16px;
 }
 
-.info-grid {
+.contract-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
-.info-item label {
-  display: block;
-  margin-bottom: 4px;
-  color: #6b7280;
-  font-size: 12px;
+.contract-item {
+  padding: 14px 16px;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--surface-soft);
 }
 
-.description,
-.address {
+.contract-item label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.contract-item .value {
+  display: block;
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.contract-item .code,
+.contract-item .description {
   word-break: break-all;
 }
 
@@ -1510,11 +1608,15 @@ export default {
     align-items: flex-start;
   }
 
+  .dialog-grid {
+    grid-template-columns: 1fr;
+  }
+
   .file-name {
     margin-left: 0;
   }
 
-  .info-grid {
+  .contract-grid {
     grid-template-columns: 1fr;
   }
 }
