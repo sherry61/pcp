@@ -8,97 +8,86 @@
         <div class="page-header">
           <div>
             <h2 class="title">资产交付</h2>
-            <p class="subtitle">按数字合约约定的隐私计算方式进行交付</p>
           </div>
           <el-button type="primary" plain @click="fetchRequestedAssets" :loading="isLoadingTransactions">
-            刷新交易列表
+            刷新交付状态
           </el-button>
         </div>
 
         <div class="asset-upload-container">
-          <el-table :data="requestedAssets" border stripe v-loading="isLoadingTransactions" style="width: 100%">
-            <el-table-column prop="transaction_id" label="交易ID" min-width="180" />
+          <el-table class="delivery-table" :data="requestedAssets" border stripe v-loading="isLoadingTransactions" style="width: 100%">
+            <el-table-column
+              prop="transaction_id"
+              label="交易ID"
+              min-width="156"
+              align="center"
+              header-align="center"
+              show-overflow-tooltip
+            />
 
-            <el-table-column label="交付状态" width="180">
+            <el-table-column label="交付状态" width="200" align="center" header-align="center">
               <template #default="{ row }">
-                <el-tag :type="getStatusTagType(getCurrentStatus(row))">
-                  {{ getStatusText(getCurrentStatus(row)) }}
+                <el-tag :class="['status-pill', getStatusPillClass(row)]" effect="plain">
+                  {{ getStatusText(row) }}
                 </el-tag>
               </template>
             </el-table-column>
 
-            <el-table-column label="交付方法" width="120">
+            <el-table-column label="交付方法" width="200" align="center" header-align="center">
               <template #default="{ row }">
-                <span class="method-pill">{{ getDeliveryMethodLabel(row) }}</span>
+                <span :class="['method-pill', getDeliveryMethodClass(row)]">{{ getDeliveryMethodLabel(row) }}</span>
               </template>
             </el-table-column>
 
-            <el-table-column label="数字合约" width="140">
+            <el-table-column label="数字合约" width="200" align="center" header-align="center">
               <template #default="{ row }">
-                <el-button size="small" @click="viewContract(row)">查看合约</el-button>
+                <el-button size="small" text class="contract-link" @click="viewContract(row)">
+                  <span>查看合约</span>
+                </el-button>
               </template>
             </el-table-column>
 
-            <el-table-column label="交付" min-width="420">
+            <el-table-column label="操作" min-width="432" align="center" header-align="center">
               <template #default="{ row }">
                 <div class="action-cell">
-                  <el-button v-if="isHeRow(row)" size="small" type="primary" :loading="row.checkingHe" @click="openHeDelivery(row)">
-                    HE 交付
+                  <el-button v-if="isHeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.checkingHe" @click="openHeDelivery(row)">
+                    发起计算
                   </el-button>
-                  <el-button v-if="isFlRow(row)" size="small" type="success" :loading="row.processingFl" @click="openFlDelivery(row)">
-                    FL 交付
+                  <el-button v-if="isFlRow(row)" size="small" type="success" class="action-btn-primary" :loading="row.processingFl" @click="openFlDelivery(row)">
+                    发起训练
                   </el-button>
-                  <el-button v-if="isPreRow(row)" size="small" type="warning" :loading="row.processingPre" @click="openPreDelivery(row)">
-                    PRE 交付
-                  </el-button>
-                  <el-button v-if="isHeRow(row)" size="small" @click="refreshHeStatus(row)" :loading="row.syncingHe">
-                    刷新 HE
-                  </el-button>
-                  <el-button v-if="isFlRow(row)" size="small" @click="refreshFlStatus(row)" :loading="row.syncingFl">
-                    刷新 FL
-                  </el-button>
-                  <el-button v-if="isPreRow(row)" size="small" @click="refreshPreStatus(row)" :loading="row.syncingPre">
-                    刷新 PRE
+                  <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre" @click="openPreDelivery(row)">
+                    发起重加密
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
                     size="small"
                     type="primary"
+                    class="action-btn-secondary"
                     :loading="row.downloadingFlBottom"
                     :disabled="!getSellerBottomModelPackage(row)"
                     @click="downloadFlSellerBottomModel(row)"
                   >
-                    下载 Bottom
+                    下载 Bottom 模型
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
                     size="small"
                     type="warning"
+                    class="action-btn-secondary"
                     :loading="row.downloadingFlGradient"
                     :disabled="!getLatestSellerGradientPackage(row)"
                     @click="downloadFlSellerGradient(row)"
                   >
-                    下载 Gradient
+                    下载梯度结果
                   </el-button>
-                  <span class="helper-text" v-if="isHeRow(row) && row.heRecord?.public_keys_ready === false">
-                    等待买方上传 HE 公钥
-                  </span>
-                  <span class="helper-text" v-else-if="isHeRow(row) && row.heRecord?.selected_enc_type">
-                    {{ row.heRecord.selected_enc_type }} / {{ row.heRecord.selected_operation || '-' }}
-                  </span>
-                  <span class="helper-text" v-if="isFlRow(row)">
-                    {{ getFlSellerHint(row) }}
-                  </span>
-                  <span class="helper-text" v-if="isPreRow(row) && row.preRecord?.pcp_status">
-                    PRE: {{ getStatusText(row.preRecord.pcp_status) }}
-                  </span>
                 </div>
               </template>
             </el-table-column>
           </el-table>
         </div>
 
-        <el-dialog v-model="heDialog.visible" title="HE 交付" width="620px">
+        <el-dialog v-model="heDialog.visible" title="发起 HE 计算" width="620px">
           <div v-if="heDialog.asset" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
@@ -149,12 +138,12 @@
           <template #footer>
             <el-button @click="closeHeDialog">取消</el-button>
             <el-button type="primary" :loading="heDialog.submitting" @click="submitHeDelivery">
-              提交交付
+              发起计算
             </el-button>
           </template>
         </el-dialog>
 
-        <el-dialog v-model="preDialog.visible" title="PRE 交付" width="620px">
+        <el-dialog v-model="preDialog.visible" title="发起 PRE 重加密" width="620px">
           <div v-if="preDialog.asset" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
@@ -179,12 +168,12 @@
           <template #footer>
             <el-button @click="closePreDialog">取消</el-button>
             <el-button type="primary" :loading="preDialog.submitting" @click="submitPreDelivery">
-              提交 PRE 交付
+              发起重加密
             </el-button>
           </template>
         </el-dialog>
 
-        <el-dialog v-model="flDialog.visible" title="FL 交付" width="620px">
+        <el-dialog v-model="flDialog.visible" title="发起 FL 训练" width="620px">
           <div v-if="flDialog.asset" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
@@ -205,7 +194,7 @@
           <template #footer>
             <el-button @click="closeFlDialog">取消</el-button>
             <el-button type="primary" :loading="flDialog.submitting" @click="submitFlDelivery">
-              提交 FL 交付
+              发起训练
             </el-button>
           </template>
         </el-dialog>
@@ -513,6 +502,22 @@ export default {
       )
     },
 
+    getDeliveryMethodClass(row) {
+      if (this.isHeRow(row)) {
+        return 'method-pill-he'
+      }
+
+      if (this.isFlRow(row)) {
+        return 'method-pill-fl'
+      }
+
+      if (this.isPreRow(row)) {
+        return 'method-pill-pre'
+      }
+
+      return ''
+    },
+
     async refreshHeStatus(row, showMessage = true) {
       if (!row?.transaction_id) return
       row.syncingHe = true
@@ -534,8 +539,20 @@ export default {
       }
     },
 
-    getStatusText(status) {
-      return heConfig.getPcpStatusText(status)
+    getStatusText(rowOrStatus) {
+      if (typeof rowOrStatus === 'object' && rowOrStatus !== null) {
+        const businessStatus = this.getSellerDeliveryStatus(rowOrStatus)
+        const labelMap = {
+          WAIT_BUYER: '待买方创建',
+          WAIT_SELLER: '待卖方交付',
+          PROCESSING: '处理中',
+          COMPLETED: '已完成',
+          FAILED: '失败'
+        }
+        return labelMap[businessStatus] || '处理中'
+      }
+
+      return heConfig.getPcpStatusText(rowOrStatus)
     },
 
     getCurrentStatus(row) {
@@ -550,19 +567,84 @@ export default {
       return row.heRecord?.pcp_status || 'NOT_EXIST'
     },
 
-    getStatusTagType(status) {
-      switch (String(status || '').toUpperCase()) {
+    getSellerDeliveryStatus(row) {
+      const currentStatus = String(this.getCurrentStatus(row) || '').toUpperCase()
+
+      if (this.isFlRow(row) && !row?.flRecord?.pcp_contract_id) {
+        return 'WAIT_BUYER'
+      }
+
+      if (this.isPreRow(row) && !row?.preRecord?.pcp_contract_id) {
+        return 'WAIT_SELLER'
+      }
+
+      if (this.isHeRow(row) && row?.heRecord?.public_keys_ready === false) {
+        return 'WAIT_BUYER'
+      }
+
+      if (
+        currentStatus === 'NOT_EXIST' ||
+        currentStatus === 'CREATED' ||
+        currentStatus === 'WAITING_INPUT' ||
+        currentStatus === 'JOINED'
+      ) {
+        return 'WAIT_SELLER'
+      }
+
+      if (currentStatus === 'QUEUED' || currentStatus === 'RUNNING') {
+        return 'PROCESSING'
+      }
+
+      if (currentStatus === 'COMPLETED') {
+        return 'COMPLETED'
+      }
+
+      if (currentStatus === 'FAILED' || currentStatus === 'AUDIT_FAILED') {
+        return 'FAILED'
+      }
+
+      return 'PROCESSING'
+    },
+
+    getStatusTagType(rowOrStatus) {
+      const normalizedStatus =
+        typeof rowOrStatus === 'object' && rowOrStatus !== null
+          ? this.getSellerDeliveryStatus(rowOrStatus)
+          : String(rowOrStatus || '').toUpperCase()
+
+      switch (normalizedStatus) {
         case 'COMPLETED':
           return 'success'
         case 'FAILED':
         case 'AUDIT_FAILED':
           return 'danger'
-        case 'RUNNING':
-        case 'QUEUED':
-        case 'WAITING_INPUT':
+        case 'PROCESSING':
           return 'warning'
+        case 'WAIT_BUYER':
+        case 'WAIT_SELLER':
         default:
           return 'info'
+      }
+    },
+
+    getStatusPillClass(rowOrStatus) {
+      const normalizedStatus =
+        typeof rowOrStatus === 'object' && rowOrStatus !== null
+          ? this.getSellerDeliveryStatus(rowOrStatus)
+          : String(rowOrStatus || '').toUpperCase()
+
+      switch (normalizedStatus) {
+        case 'COMPLETED':
+          return 'status-pill-success'
+        case 'FAILED':
+        case 'AUDIT_FAILED':
+          return 'status-pill-danger'
+        case 'PROCESSING':
+          return 'status-pill-primary'
+        case 'WAIT_BUYER':
+        case 'WAIT_SELLER':
+        default:
+          return 'status-pill-warning'
       }
     },
 
@@ -625,29 +707,6 @@ export default {
         .filter((item) => item?.seller_id === row?.seller_address && item?.result_role === 'fl_gradient')
         .sort((a, b) => Number(b?.batch_index ?? -1) - Number(a?.batch_index ?? -1))
       return packages[0] || null
-    },
-
-    getFlSellerHint(row) {
-      const status = String(row?.flRecord?.pcp_status || 'NOT_EXIST').toUpperCase()
-      const joinPackage = this.getSellerJoinPackage(row)
-
-      if (!row?.flRecord?.pcp_contract_id) {
-        return '等待买方创建 FL 合同'
-      }
-
-      if (!joinPackage?.download_token) {
-        return '首次交付时会自动生成卖方密钥并完成 join'
-      }
-
-      if (status === 'COMPLETED' && this.getLatestSellerGradientPackage(row)) {
-        return 'FL 已完成，可下载 Gradient'
-      }
-
-      if (status === 'RUNNING' || status === 'QUEUED' || status === 'WAITING_INPUT' || status === 'JOINED') {
-        return `FL: ${this.getStatusText(status)}`
-      }
-
-      return `FL: ${this.getStatusText(status)}`
     },
 
     async openHeDelivery(row) {
@@ -742,7 +801,7 @@ export default {
         })
 
         this.heDialog.asset.heRecord = response.data?.item || this.heDialog.asset.heRecord
-        this.$message?.success(response.data?.message || 'HE 交付已提交')
+        this.$message?.success(response.data?.message || 'HE 计算已发起')
         this.closeHeDialog()
       } catch (error) {
         const message = error?.response?.data?.message || error?.message || 'HE 提交失败'
@@ -823,7 +882,7 @@ export default {
 
         assetRow.flRecord = response.data?.item || assetRow.flRecord
         await this.refreshFlStatus(assetRow, false)
-        this.$message?.success(response.data?.message || 'FL 交付已提交')
+        this.$message?.success(response.data?.message || 'FL 训练已发起')
         this.closeFlDialog()
       } catch (error) {
         const message = error?.response?.data?.message || error?.message || 'FL 提交失败'
@@ -876,7 +935,7 @@ export default {
         })
 
         assetRow.preRecord = response.data?.item || assetRow.preRecord
-        this.$message?.success(response.data?.message || 'PRE 交付已提交')
+        this.$message?.success(response.data?.message || 'PRE 重加密已发起')
         this.closePreDialog()
       } catch (error) {
         const message = error?.response?.data?.message || error?.message || 'PRE 提交失败'
@@ -1101,10 +1160,31 @@ export default {
 
 <style scoped>
 .delivery {
+  --page-bg: #ffffff;
+  --surface: #ffffff;
+  --surface-soft: #f5f7fa;
+  --border-soft: #ebeef5;
+  --border-strong: #dcdfe6;
+  --text-main: #303133;
+  --text-muted: #606266;
+  --accent-primary: #409eff;
+  --accent-primary-hover: #66b1ff;
+  --accent-he: #f4f4f5;
+  --accent-fl: #f0f9eb;
+  --accent-pre: #fdf6ec;
+  --status-warning-bg: #fdf6ec;
+  --status-warning-text: #e6a23c;
+  --status-primary-bg: #ecf5ff;
+  --status-primary-text: #409eff;
+  --status-success-bg: #f0f9eb;
+  --status-success-text: #67c23a;
+  --status-danger-bg: #fef0f0;
+  --status-danger-text: #f56c6c;
+  --shadow-soft: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: #f5f6fa;
+  background: #f5f7fa;
 }
 
 .main-content {
@@ -1114,66 +1194,241 @@ export default {
 
 .content {
   flex: 1;
-  padding: 20px;
+  padding: 24px;
 }
 
 .page-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin: 0 30px 16px;
+  margin: 0 12px 16px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
 .title {
   margin: 0;
-  font-size: 22px;
-  color: #1f2329;
+  font-size: 24px;
+  color: var(--text-main);
+  letter-spacing: 0;
+  line-height: 1.33;
+  font-weight: 600;
+}
+
+.title-note {
+  margin-left: 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+  font-weight: 400;
 }
 
 .subtitle {
   margin: 6px 0 0;
-  color: #7a7f87;
+  color: var(--text-muted);
   font-size: 13px;
+  line-height: 1.5;
 }
 
 .asset-upload-container {
-  background: #fff;
-  border-radius: 10px;
-  padding: 20px;
-  margin: 0 30px 20px;
-  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0;
+  margin: 0 12px 20px;
+  box-shadow: var(--shadow-soft);
 }
 
 .method-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 52px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: #edf7ee;
-  color: #217a3c;
+  min-width: auto;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
+  line-height: 22px;
 }
 
-.status-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.method-pill-he {
+  background: #f4f4f5;
+  color: #909399;
+  border-color: rgba(144, 147, 153, 0.2);
+}
+
+.method-pill-fl {
+  background: #f4f4f5;
+  color: #909399;
+  border-color: rgba(144, 147, 153, 0.2);
+}
+
+.method-pill-pre {
+  background: #f4f4f5;
+  color: #909399;
+  border-color: rgba(144, 147, 153, 0.2);
 }
 
 .action-cell {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-.helper-text {
+.action-cell :deep(.el-button) {
+  min-height: 32px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-weight: 500;
   font-size: 12px;
-  color: #7a7f87;
+}
+
+.action-cell :deep(.el-button--primary) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+.action-cell :deep(.action-btn-primary) {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+}
+
+.action-cell :deep(.el-button--primary:hover) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+.action-cell :deep(.action-btn-primary:hover) {
+  background: var(--accent-primary-hover);
+  border-color: var(--accent-primary-hover);
+  color: #fff;
+}
+
+.action-cell :deep(.action-btn-secondary) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+.action-cell :deep(.action-btn-secondary:hover) {
+  color: var(--accent-primary);
+  border-color: #c6e2ff;
+  background: #ecf5ff;
+}
+
+.action-cell :deep(.el-button.is-disabled) {
+  border-color: var(--border-soft);
+}
+
+.page-header :deep(.el-button--primary.is-plain) {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text-main);
+  border-radius: 4px;
+}
+
+.page-header :deep(.el-button--primary.is-plain:hover) {
+  color: var(--accent-primary);
+  border-color: #c6e2ff;
+  background: #ecf5ff;
+}
+
+.asset-upload-container :deep(.el-table) {
+  border-radius: 4px;
+}
+
+.asset-upload-container :deep(.el-table th.el-table__cell) {
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-weight: 500;
+  height: 40px;
+}
+
+.asset-upload-container :deep(.el-table td.el-table__cell),
+.asset-upload-container :deep(.el-table th.el-table__cell) {
+  border-bottom-color: var(--border-soft);
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+
+.asset-upload-container :deep(.el-table--border::before),
+.asset-upload-container :deep(.el-table--group::after),
+.asset-upload-container :deep(.el-table::before) {
+  background-color: var(--border-soft);
+}
+
+.asset-upload-container :deep(.el-table td.el-table__cell .cell),
+.asset-upload-container :deep(.el-table th.el-table__cell .cell) {
+  padding-left: 16px;
+  padding-right: 16px;
+}
+
+.delivery-table :deep(.el-table__row:hover > td.el-table__cell) {
+  background: #fff;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border-width: 1px;
+  border-style: solid;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+.status-pill-warning {
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+  border-color: rgba(230, 162, 60, 0.2);
+}
+
+.status-pill-primary {
+  background: var(--status-primary-bg);
+  color: var(--status-primary-text);
+  border-color: rgba(64, 158, 255, 0.2);
+}
+
+.status-pill-success {
+  background: var(--status-success-bg);
+  color: var(--status-success-text);
+  border-color: rgba(103, 194, 58, 0.2);
+}
+
+.status-pill-danger {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-text);
+  border-color: rgba(245, 108, 108, 0.2);
+}
+
+.asset-upload-container :deep(.contract-link.el-button),
+.asset-upload-container :deep(.contract-link.el-button.is-text) {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 400;
+  transition: color 0.2s ease;
+}
+
+.asset-upload-container :deep(.contract-link.el-button:hover),
+.asset-upload-container :deep(.contract-link.el-button.is-text:hover) {
+  color: var(--text-muted);
 }
 
 .dialog-body {
@@ -1201,8 +1456,9 @@ export default {
 .file-name,
 .dialog-hint {
   margin-left: 100px;
-  color: #6b7280;
+  color: var(--text-muted);
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .modal {

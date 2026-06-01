@@ -8,145 +8,130 @@
       <div class="content">
         <div class="page-header">
           <div>
-            <h2 class="page-title">资产交付（买家）</h2>
-            <p class="page-subtitle">按数字合约约定的隐私计算方式进行交付</p>
+            <div class="page-kicker">隐私计算交付</div>
+            <h2 class="page-title">买家交付台</h2>
+            <p class="page-subtitle">上传密钥、创建合同并领取结果，按当前合约状态完成买方侧操作。</p>
           </div>
           <el-button size="small" type="primary" plain @click="refreshResults" :loading="isLoading">
-            刷新
+            刷新交付状态
           </el-button>
         </div>
 
-        <el-table
-          :data="resultList"
-          border
-          stripe
-          v-loading="isLoading"
-          style="width: 100%"
-        >
-          <el-table-column prop="transaction_id" label="交易ID" min-width="180" />
+        <div class="asset-upload-container">
+          <div class="section-head">
+            <div>
+              <h3 class="section-title">待处理交易</h3>
+              <p class="section-meta">按交付状态查看当前买方需要执行的动作</p>
+            </div>
+          </div>
+          <el-table
+            class="delivery-table"
+            :data="resultList"
+            border
+            stripe
+            v-loading="isLoading"
+            style="width: 100%"
+          >
+            <el-table-column
+              prop="transaction_id"
+              label="交易ID"
+              min-width="156"
+              show-overflow-tooltip
+            />
 
-          <el-table-column label="交付状态" width="180">
-            <template #default="{ row }">
-              <el-tag :type="getRowTagType(getCurrentStatus(row))">
-                {{ getCurrentStatusText(row) }}
-              </el-tag>
-            </template>
-          </el-table-column>
+            <el-table-column label="交付状态" width="144" align="center" header-align="center">
+              <template #default="{ row }">
+                <el-tag :type="getRowTagType(getCurrentStatus(row))">
+                  {{ getCurrentStatusText(row) }}
+                </el-tag>
+              </template>
+            </el-table-column>
 
-          <el-table-column label="交付方法" width="120">
-            <template #default="{ row }">
-              <span class="method-pill">{{ getDeliveryMethodLabel(row) }}</span>
-            </template>
-          </el-table-column>
+            <el-table-column label="交付方法" width="126" align="center" header-align="center">
+              <template #default="{ row }">
+                <span :class="['method-pill', getDeliveryMethodClass(row)]">{{ getDeliveryMethodLabel(row) }}</span>
+              </template>
+            </el-table-column>
 
-          <el-table-column label="操作" min-width="420">
-            <template #default="{ row }">
-              <div class="action-cell">
-                <el-button size="small" @click="viewContract(row)">查看合约</el-button>
-                <el-button
-                  v-if="isHeRow(row)"
-                  size="small"
-                  type="primary"
-                  :loading="row.uploadingKeys"
-                  :disabled="row.heRecord?.public_keys_ready"
-                  @click="uploadHePublicKeys(row)"
-                >
-                  {{ row.heRecord?.public_keys_ready ? '已上传公钥' : '上传公钥' }}
-                </el-button>
-                <el-button
-                  v-if="isHeRow(row)"
-                  size="small"
-                  type="success"
-                  :loading="row.downloading"
-                  :disabled="!row.heRecord?.result_ready"
-                  @click="downloadResult(row)"
-                >
-                  下载结果
-                </el-button>
-                <el-button
-                  v-if="isHeRow(row)"
-                  size="small"
-                  :loading="row.syncingHe"
-                  @click="refreshHeStatus(row)"
-                >
-                  刷新 HE
-                </el-button>
-                <el-button
-                  v-if="isFlRow(row)"
-                  size="small"
-                  type="primary"
-                  :loading="row.creatingFlContract"
-                  :disabled="Boolean(row.flRecord?.pcp_contract_id)"
-                  @click="openFlContractDialog(row)"
-                >
-                  {{ row.flRecord?.pcp_contract_id ? '已创建 FL 合同' : '创建 FL 合同' }}
-                </el-button>
-                <el-button
-                  v-if="isFlRow(row)"
-                  size="small"
-                  type="success"
-                  :loading="row.downloadingFl"
-                  :disabled="!row.flRecord?.buyer_result_ready"
-                  @click="downloadFlResult(row)"
-                >
-                  下载 FL 结果
-                </el-button>
-                <el-button
-                  v-if="isFlRow(row)"
-                  size="small"
-                  :loading="row.syncingFl"
-                  @click="refreshFlStatus(row)"
-                >
-                  刷新 FL
-                </el-button>
-                <el-button
-                  v-if="isPreRow(row)"
-                  size="small"
-                  type="primary"
-                  :loading="row.uploadingPreKey"
-                  :disabled="row.preRecord?.buyer_public_key_ready"
-                  @click="uploadPrePublicKey(row)"
-                >
-                  {{ row.preRecord?.buyer_public_key_ready ? '已上传 PRE 公钥' : '上传 PRE 公钥' }}
-                </el-button>
-                <el-button
-                  v-if="isPreRow(row)"
-                  size="small"
-                  type="warning"
-                  :loading="row.processingPre"
-                  :disabled="!canManualTriggerPreReEncrypt(row)"
-                  @click="triggerPreReEncrypt(row)"
-                >
-                  {{ isPreRetryState(row) ? '重试 PRE 重加密' : '发起 PRE 重加密' }}
-                </el-button>
-                <el-button
-                  v-if="isPreRow(row)"
-                  size="small"
-                  type="success"
-                  :loading="row.downloadingPre"
-                  :disabled="!row.preRecord?.result_ready"
-                  @click="downloadPreResult(row)"
-                >
-                  下载 PRE 结果包
-                </el-button>
-                <el-button
-                  v-if="isPreRow(row)"
-                  size="small"
-                  :loading="row.syncingPre"
-                  @click="refreshPreStatus(row)"
-                >
-                  刷新 PRE
-                </el-button>
-                <span v-if="isPreRow(row)" class="helper-text">
-                  {{ getPreActionHint(row) }}
-                </span>
-                <span v-if="isFlRow(row)" class="helper-text">
-                  {{ getFlBuyerActionHint(row) }}
-                </span>
-              </div>
-            </template>
-          </el-table-column>
-        </el-table>
+            <el-table-column label="操作" min-width="432">
+              <template #default="{ row }">
+                <div class="action-cell">
+                  <el-button size="small" @click="viewContract(row)">查看合约</el-button>
+                  <el-button
+                    v-if="isHeRow(row)"
+                    size="small"
+                    type="primary"
+                    :loading="row.uploadingKeys"
+                    :disabled="row.heRecord?.public_keys_ready"
+                    @click="uploadHePublicKeys(row)"
+                  >
+                    {{ row.heRecord?.public_keys_ready ? '已上传公钥' : '上传公钥' }}
+                  </el-button>
+                  <el-button
+                    v-if="isHeRow(row)"
+                    size="small"
+                    type="success"
+                    :loading="row.downloading"
+                    :disabled="!row.heRecord?.result_ready"
+                    @click="downloadResult(row)"
+                  >
+                    下载结果
+                  </el-button>
+                  <el-button
+                    v-if="isFlRow(row)"
+                    size="small"
+                    type="primary"
+                    :loading="row.creatingFlContract"
+                    :disabled="Boolean(row.flRecord?.pcp_contract_id)"
+                    @click="openFlContractDialog(row)"
+                  >
+                    {{ row.flRecord?.pcp_contract_id ? '已创建 FL 合同' : '创建 FL 合同' }}
+                  </el-button>
+                  <el-button
+                    v-if="isFlRow(row)"
+                    size="small"
+                    type="success"
+                    :loading="row.downloadingFl"
+                    :disabled="!row.flRecord?.buyer_result_ready"
+                    @click="downloadFlResult(row)"
+                  >
+                    下载 Top 模型
+                  </el-button>
+                  <el-button
+                    v-if="isPreRow(row)"
+                    size="small"
+                    type="primary"
+                    :loading="row.uploadingPreKey"
+                    :disabled="row.preRecord?.buyer_public_key_ready"
+                    @click="uploadPrePublicKey(row)"
+                  >
+                    {{ row.preRecord?.buyer_public_key_ready ? '已上传 PRE 公钥' : '上传 PRE 公钥' }}
+                  </el-button>
+                  <el-button
+                    v-if="isPreRow(row)"
+                    size="small"
+                    type="warning"
+                    :loading="row.processingPre"
+                    :disabled="!canManualTriggerPreReEncrypt(row)"
+                    @click="triggerPreReEncrypt(row)"
+                  >
+                    {{ isPreRetryState(row) ? '重试 PRE 重加密' : '发起 PRE 重加密' }}
+                  </el-button>
+                  <el-button
+                    v-if="isPreRow(row)"
+                    size="small"
+                    type="success"
+                    :loading="row.downloadingPre"
+                    :disabled="!row.preRecord?.result_ready"
+                    @click="downloadPreResult(row)"
+                  >
+                    下载 PRE 结果包
+                  </el-button>
+                </div>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
 
         <el-dialog v-model="flDialog.visible" title="创建 FL 合同" width="680px">
           <div v-if="flDialog.row" class="dialog-body">
@@ -155,17 +140,17 @@
               <span>{{ flDialog.row.transaction_id }}</span>
             </div>
             <div class="dialog-row file-row">
-              <span class="dialog-label">Top Model</span>
+              <span class="dialog-label">Top 模型</span>
               <input type="file" accept=".pt,.pth,.bin" @change="onFlBuyerFileChange('topModelFile', $event)" />
             </div>
             <div v-if="flDialog.topModelFile" class="file-name">{{ flDialog.topModelFile.name }}</div>
             <div class="dialog-row file-row">
-              <span class="dialog-label">Bottom Model</span>
+              <span class="dialog-label">Bottom 模型</span>
               <input type="file" accept=".pt,.pth,.bin" @change="onFlBuyerFileChange('bottomModelFile', $event)" />
             </div>
             <div v-if="flDialog.bottomModelFile" class="file-name">{{ flDialog.bottomModelFile.name }}</div>
             <div class="dialog-hint">
-              <span>当前仅支持单轮 FL 训练。浏览器会本地生成 buyer RSA 密钥，并用 TEE 公钥加密 top/bottom model 后创建合同。</span>
+              <span>当前仅支持单轮 FL 训练。浏览器会本地生成买方 RSA 密钥，并用 TEE 公钥加密 Top/Bottom 模型后创建合同。</span>
             </div>
           </div>
 
@@ -528,6 +513,22 @@ export default {
       )
     },
 
+    getDeliveryMethodClass(row) {
+      if (this.isHeRow(row)) {
+        return 'method-pill-he'
+      }
+
+      if (this.isFlRow(row)) {
+        return 'method-pill-fl'
+      }
+
+      if (this.isPreRow(row)) {
+        return 'method-pill-pre'
+      }
+
+      return ''
+    },
+
     async refreshHeStatus(row, showMessage = true) {
       if (!row?.transaction_id) return
       row.syncingHe = true
@@ -636,32 +637,6 @@ export default {
       }
     },
 
-    getFlBuyerActionHint(row) {
-      const status = String(row?.flRecord?.pcp_status || 'NOT_EXIST').toUpperCase()
-
-      if (!row?.flRecord?.pcp_contract_id) {
-        return '请先创建 FL 合同并上传初始模型'
-      }
-
-      if (status === 'NOT_EXIST' || status === 'CREATED' || status === 'WAITING_INPUT') {
-        return '等待卖方 join 并上传 batch'
-      }
-
-      if (status === 'QUEUED' || status === 'RUNNING' || status === 'JOINED') {
-        return `FL: ${this.getPreStatusText(status)}`
-      }
-
-      if (status === 'COMPLETED' && row?.flRecord?.buyer_result_ready) {
-        return 'FL 已完成，可下载 top model 结果'
-      }
-
-      if (status === 'FAILED') {
-        return 'FL 执行失败，请联系卖方检查 batch 包'
-      }
-
-      return `FL: ${this.getPreStatusText(status)}`
-    },
-
     isPreRetryState(row) {
       return String(row?.preRecord?.pcp_status || '').toUpperCase() === 'FAILED'
     },
@@ -673,37 +648,6 @@ export default {
 
       const status = String(row.preRecord?.pcp_status || '').toUpperCase()
       return status === 'WAITING_INPUT' || status === 'FAILED'
-    },
-
-    getPreActionHint(row) {
-      const status = String(row?.preRecord?.pcp_status || 'NOT_EXIST').toUpperCase()
-      const buyerPublicKeyReady = Boolean(row?.preRecord?.buyer_public_key_ready)
-
-      if (!buyerPublicKeyReady) {
-        return '请先上传 PRE 公钥'
-      }
-
-      if (status === 'NOT_EXIST' || status === 'CREATED') {
-        return '已上传 PRE 公钥，等待卖方交付'
-      }
-
-      if (status === 'WAITING_INPUT') {
-        return '卖方已完成 PRE 交付，可发起重加密'
-      }
-
-      if (status === 'QUEUED' || status === 'RUNNING') {
-        return 'PRE 重加密进行中，请等待结果'
-      }
-
-      if (status === 'COMPLETED') {
-        return 'PRE 重加密已完成，可下载结果包'
-      }
-
-      if (status === 'FAILED') {
-        return 'PRE 重加密失败，可重试'
-      }
-
-      return `PRE: ${this.getPreStatusText(status)}`
     },
 
     async uploadHePublicKeys(row) {
@@ -755,7 +699,7 @@ export default {
     async submitFlContract() {
       if (!this.flDialog.row) return
       if (!this.flDialog.topModelFile || !this.flDialog.bottomModelFile) {
-        this.$message?.warning('请先选择 top model 和 bottom model 文件')
+        this.$message?.warning('请先选择 Top 模型和 Bottom 模型文件')
         return
       }
 
@@ -939,7 +883,7 @@ export default {
 
     async downloadFlResult(row) {
       if (!row?.transaction_id || !row.flRecord?.buyer_result_ready) {
-        this.$message?.warning('当前 FL 结果尚不可下载')
+        this.$message?.warning('当前 Top 模型尚不可下载')
         return
       }
 
@@ -962,7 +906,7 @@ export default {
         this.flDecryptDialog.resultRole = 'fl_top_model'
         this.flDecryptDialog.filename = ''
       } catch (error) {
-        const message = await this.resolveBlobErrorMessage(error, '下载 FL 结果失败')
+        const message = await this.resolveBlobErrorMessage(error, '下载 Top 模型失败')
         this.$message?.error(message)
       } finally {
         row.downloadingFl = false
@@ -1206,23 +1150,35 @@ export default {
 .delivery {
   --header-height: 60px;
   --sidebar-width: 280px;
+  --page-bg: #ffffff;
+  --surface: #ffffff;
+  --surface-soft: #f7f7f5;
+  --border-soft: #e7e6e4;
+  --border-strong: #d6d3d1;
+  --text-main: #191711;
+  --text-muted: #6b6963;
+  --accent-primary: #7c3aed;
+  --accent-primary-soft: #f2eaff;
+  --accent-he: #eef2ff;
+  --accent-fl: #edf7f1;
+  --accent-pre: #fff1e7;
+  --shadow-soft: none;
 
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: #f5f6fa;
+  background: var(--page-bg);
 }
 
 .main-content {
   display: flex;
   flex: 1;
-  background: #f5f6fa;
   min-height: calc(100vh - var(--header-height));
 }
 
 .content {
   flex: 1;
-  padding: 20px;
+  padding: 24px 28px;
 }
 
 .page-header {
@@ -1230,31 +1186,97 @@ export default {
   align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 16px;
+  margin: 0 12px 16px;
+  padding: 18px 20px;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--shadow-soft);
+}
+
+.page-kicker {
+  margin-bottom: 8px;
+  color: var(--accent-primary);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
 }
 
 .page-title {
   margin: 0;
-  font-size: 22px;
+  font-size: 28px;
+  color: var(--text-main);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .page-subtitle {
   margin: 6px 0 0;
-  color: #6b7280;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.asset-upload-container {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  padding: 12px;
+  margin: 0 12px 20px;
+  box-shadow: var(--shadow-soft);
+}
+
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 4px 14px;
+}
+
+.section-title {
+  margin: 0;
+  color: var(--text-main);
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.section-meta {
+  margin: 4px 0 0;
+  color: var(--text-muted);
   font-size: 13px;
+  line-height: 1.45;
 }
 
 .method-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 52px;
+  min-width: 92px;
   padding: 4px 10px;
-  border-radius: 999px;
-  background: #edf7ee;
-  color: #217a3c;
-  font-size: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-soft);
+  font-size: 13px;
   font-weight: 600;
+}
+
+.method-pill-he {
+  background: var(--accent-he);
+  color: #4c51bf;
+  border-color: #d9ddff;
+}
+
+.method-pill-fl {
+  background: var(--accent-fl);
+  color: #216e4d;
+  border-color: #d7e9dd;
+}
+
+.method-pill-pre {
+  background: var(--accent-pre);
+  color: #a16207;
+  border-color: #f1ddc8;
 }
 
 .status-stack {
@@ -1266,13 +1288,75 @@ export default {
 .action-cell {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
-.helper-text {
-  color: #6b7280;
-  font-size: 12px;
+.action-cell :deep(.el-button) {
+  min-height: 34px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-weight: 500;
+}
+
+.action-cell :deep(.el-button--primary) {
+  background: var(--accent-primary);
+  border-color: var(--accent-primary);
+  color: #fff;
+}
+
+.action-cell :deep(.el-button--success),
+.action-cell :deep(.el-button--warning),
+.action-cell :deep(.el-button:not(.el-button--primary)) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+.action-cell :deep(.el-button.is-disabled) {
+  border-color: var(--border-soft);
+}
+
+.page-header :deep(.el-button--primary.is-plain) {
+  border-color: var(--border-strong);
+  background: var(--surface);
+  color: var(--text-main);
+}
+
+.asset-upload-container :deep(.el-table) {
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.asset-upload-container :deep(.el-table th.el-table__cell) {
+  background: var(--surface-soft);
+  color: var(--text-muted);
+  font-weight: 600;
+  height: 44px;
+}
+
+.asset-upload-container :deep(.el-table td.el-table__cell),
+.asset-upload-container :deep(.el-table th.el-table__cell) {
+  border-bottom-color: var(--border-soft);
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.asset-upload-container :deep(.el-table--border::before),
+.asset-upload-container :deep(.el-table--group::after),
+.asset-upload-container :deep(.el-table::before) {
+  background-color: var(--border-soft);
+}
+
+.asset-upload-container :deep(.el-table td.el-table__cell .cell),
+.asset-upload-container :deep(.el-table th.el-table__cell .cell) {
+  padding-left: 14px;
+  padding-right: 14px;
+}
+
+.delivery-table :deep(.el-tag) {
+  border-radius: 999px;
+  font-weight: 600;
 }
 
 .dialog-body {
@@ -1299,8 +1383,9 @@ export default {
 
 .file-name {
   margin-left: 94px;
-  color: #6b7280;
+  color: var(--text-muted);
   font-size: 12px;
+  line-height: 1.5;
 }
 
 .modal {
@@ -1360,6 +1445,12 @@ export default {
 }
 
 @media (max-width: 900px) {
+  .page-header,
+  .asset-upload-container {
+    margin-left: 16px;
+    margin-right: 16px;
+  }
+
   .page-header {
     flex-direction: column;
     align-items: stretch;

@@ -3,9 +3,9 @@ const DELIVERY_METHOD_FL = 'fl';
 const DELIVERY_METHOD_PRE = 'pre';
 
 const ENABLED_DELIVERY_METHODS = Object.freeze([DELIVERY_METHOD_HE, DELIVERY_METHOD_FL, DELIVERY_METHOD_PRE]);
-const HE_METHOD_LABEL = 'HE';
-const FL_METHOD_LABEL = 'FL';
-const PRE_METHOD_LABEL = 'PRE';
+const HE_METHOD_LABEL = '同态加密';
+const FL_METHOD_LABEL = '联邦学习';
+const PRE_METHOD_LABEL = '代理重加密';
 const HE_ENC_TYPE_OPTIONS = Object.freeze(['Paillier', 'ElGamal']);
 const HE_OPERATION_OPTIONS = Object.freeze(['ADD']);
 const PCP_STATUS_TEXT_MAP = Object.freeze({
