@@ -8,22 +8,14 @@
       <div class="content">
         <div class="page-header">
           <div>
-            <div class="page-kicker">隐私计算交付</div>
-            <h2 class="page-title">买家交付台</h2>
-            <p class="page-subtitle">上传密钥、创建合同并领取结果，按当前合约状态完成买方侧操作。</p>
+            <h2 class="title">资产交付</h2>
           </div>
-          <el-button size="small" type="primary" plain @click="refreshResults" :loading="isLoading">
+          <el-button type="primary" plain @click="refreshResults" :loading="isLoading">
             刷新交付状态
           </el-button>
         </div>
 
         <div class="asset-upload-container">
-          <div class="section-head">
-            <div>
-              <h3 class="section-title">待处理交易</h3>
-              <p class="section-meta">按交付状态查看当前买方需要执行的动作</p>
-            </div>
-          </div>
           <el-table
             class="delivery-table"
             :data="resultList"
@@ -36,41 +28,52 @@
               prop="transaction_id"
               label="交易ID"
               min-width="156"
+              align="center"
+              header-align="center"
               show-overflow-tooltip
             />
 
-            <el-table-column label="交付状态" width="144" align="center" header-align="center">
+            <el-table-column label="交付状态" width="200" align="center" header-align="center">
               <template #default="{ row }">
-                <el-tag :type="getRowTagType(getCurrentStatus(row))">
+                <el-tag :class="['status-pill', getStatusPillClass(row)]" effect="plain">
                   {{ getCurrentStatusText(row) }}
                 </el-tag>
               </template>
             </el-table-column>
 
-            <el-table-column label="交付方法" width="126" align="center" header-align="center">
+            <el-table-column label="交付方法" width="200" align="center" header-align="center">
               <template #default="{ row }">
                 <span :class="['method-pill', getDeliveryMethodClass(row)]">{{ getDeliveryMethodLabel(row) }}</span>
               </template>
             </el-table-column>
 
-            <el-table-column label="操作" min-width="432">
+            <el-table-column label="数字合约" width="200" align="center" header-align="center">
+              <template #default="{ row }">
+                <el-button size="small" text class="contract-link" @click="viewContract(row)">
+                  <span>查看合约</span>
+                </el-button>
+              </template>
+            </el-table-column>
+
+            <el-table-column label="操作" min-width="432" align="center" header-align="center">
               <template #default="{ row }">
                 <div class="action-cell">
-                  <el-button size="small" @click="viewContract(row)">查看合约</el-button>
                   <el-button
                     v-if="isHeRow(row)"
                     size="small"
                     type="primary"
+                    class="action-btn-primary"
                     :loading="row.uploadingKeys"
                     :disabled="row.heRecord?.public_keys_ready"
                     @click="uploadHePublicKeys(row)"
                   >
-                    {{ row.heRecord?.public_keys_ready ? '已上传公钥' : '上传公钥' }}
+                    {{ row.heRecord?.public_keys_ready ? '已提交材料' : '提交材料' }}
                   </el-button>
                   <el-button
                     v-if="isHeRow(row)"
                     size="small"
                     type="success"
+                    class="action-btn-secondary"
                     :loading="row.downloading"
                     :disabled="!row.heRecord?.result_ready"
                     @click="downloadResult(row)"
@@ -81,51 +84,45 @@
                     v-if="isFlRow(row)"
                     size="small"
                     type="primary"
+                    class="action-btn-primary"
                     :loading="row.creatingFlContract"
                     :disabled="Boolean(row.flRecord?.pcp_contract_id)"
                     @click="openFlContractDialog(row)"
                   >
-                    {{ row.flRecord?.pcp_contract_id ? '已创建 FL 合同' : '创建 FL 合同' }}
+                    {{ row.flRecord?.pcp_contract_id ? '已提交材料' : '提交材料' }}
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
                     size="small"
                     type="success"
+                    class="action-btn-secondary"
                     :loading="row.downloadingFl"
                     :disabled="!row.flRecord?.buyer_result_ready"
                     @click="downloadFlResult(row)"
                   >
-                    下载 Top 模型
+                    下载结果
                   </el-button>
                   <el-button
                     v-if="isPreRow(row)"
                     size="small"
                     type="primary"
+                    class="action-btn-primary"
                     :loading="row.uploadingPreKey"
                     :disabled="row.preRecord?.buyer_public_key_ready"
                     @click="uploadPrePublicKey(row)"
                   >
-                    {{ row.preRecord?.buyer_public_key_ready ? '已上传 PRE 公钥' : '上传 PRE 公钥' }}
-                  </el-button>
-                  <el-button
-                    v-if="isPreRow(row)"
-                    size="small"
-                    type="warning"
-                    :loading="row.processingPre"
-                    :disabled="!canManualTriggerPreReEncrypt(row)"
-                    @click="triggerPreReEncrypt(row)"
-                  >
-                    {{ isPreRetryState(row) ? '重试 PRE 重加密' : '发起 PRE 重加密' }}
+                    {{ row.preRecord?.buyer_public_key_ready ? '已提交材料' : '提交材料' }}
                   </el-button>
                   <el-button
                     v-if="isPreRow(row)"
                     size="small"
                     type="success"
+                    class="action-btn-secondary"
                     :loading="row.downloadingPre"
                     :disabled="!row.preRecord?.result_ready"
                     @click="downloadPreResult(row)"
                   >
-                    下载 PRE 结果包
+                    下载结果
                   </el-button>
                 </div>
               </template>
@@ -570,25 +567,69 @@ export default {
       return row.heRecord?.pcp_status || 'NOT_EXIST'
     },
 
-    getCurrentStatusText(row) {
-      return this.isPreRow(row)
-        ? this.getPreStatusText(this.getCurrentStatus(row))
-        : this.getRowStatusText(this.getCurrentStatus(row))
+    getBuyerDeliveryStatus(row) {
+      const currentStatus = String(this.getCurrentStatus(row) || '').toUpperCase()
+
+      if (this.isHeRow(row) && !row?.heRecord?.public_keys_ready) {
+        return 'WAIT_BUYER'
+      }
+
+      if (this.isFlRow(row) && !row?.flRecord?.pcp_contract_id) {
+        return 'WAIT_BUYER'
+      }
+
+      if (this.isPreRow(row) && !row?.preRecord?.buyer_public_key_ready) {
+        return 'WAIT_BUYER'
+      }
+
+      if (
+        currentStatus === 'NOT_EXIST' ||
+        currentStatus === 'CREATED' ||
+        currentStatus === 'JOINED' ||
+        currentStatus === 'WAITING_INPUT'
+      ) {
+        return 'WAIT_SELLER'
+      }
+
+      if (currentStatus === 'QUEUED' || currentStatus === 'RUNNING') {
+        return 'PROCESSING'
+      }
+
+      if (currentStatus === 'COMPLETED') {
+        return 'COMPLETED'
+      }
+
+      if (currentStatus === 'FAILED' || currentStatus === 'AUDIT_FAILED') {
+        return 'FAILED'
+      }
+
+      return 'PROCESSING'
     },
 
-    getRowTagType(status) {
-      switch (String(status || '').toUpperCase()) {
+    getCurrentStatusText(row) {
+      const labelMap = {
+        WAIT_BUYER: '待买方操作',
+        WAIT_SELLER: '待卖方交付',
+        PROCESSING: '处理中',
+        COMPLETED: '已完成',
+        FAILED: '失败'
+      }
+
+      return labelMap[this.getBuyerDeliveryStatus(row)] || '处理中'
+    },
+
+    getStatusPillClass(row) {
+      switch (this.getBuyerDeliveryStatus(row)) {
         case 'COMPLETED':
-          return 'success'
+          return 'status-pill-success'
         case 'FAILED':
-        case 'AUDIT_FAILED':
-          return 'danger'
-        case 'RUNNING':
-        case 'QUEUED':
-        case 'WAITING_INPUT':
-          return 'warning'
+          return 'status-pill-danger'
+        case 'PROCESSING':
+          return 'status-pill-primary'
+        case 'WAIT_BUYER':
+        case 'WAIT_SELLER':
         default:
-          return 'info'
+          return 'status-pill-warning'
       }
     },
 
@@ -635,19 +676,6 @@ export default {
       } finally {
         row.syncingFl = false
       }
-    },
-
-    isPreRetryState(row) {
-      return String(row?.preRecord?.pcp_status || '').toUpperCase() === 'FAILED'
-    },
-
-    canManualTriggerPreReEncrypt(row) {
-      if (!this.isPreRow(row) || !row?.preRecord?.buyer_public_key_ready) {
-        return false
-      }
-
-      const status = String(row.preRecord?.pcp_status || '').toUpperCase()
-      return status === 'WAITING_INPUT' || status === 'FAILED'
     },
 
     async uploadHePublicKeys(row) {
@@ -824,35 +852,6 @@ export default {
         this.$message?.error(message)
       } finally {
         row.uploadingPreKey = false
-      }
-    },
-
-    async triggerPreReEncrypt(row) {
-      if (!row?.transaction_id) return
-
-      if (!row.preRecord?.buyer_public_key_ready) {
-        this.$message?.warning('请先上传 PRE 公钥')
-        return
-      }
-
-      if (!this.canManualTriggerPreReEncrypt(row)) {
-        this.$message?.warning('卖方尚未完成 PRE 交付，请等待交付后再发起重加密')
-        return
-      }
-
-      row.processingPre = true
-      try {
-        await axios.post(`${API_BASE}/api/privacy/pre/re-encrypt`, {
-          transactionId: row.transaction_id
-        })
-
-        await this.refreshPreStatus(row, false)
-        this.$message?.success('PRE 重加密任务已提交')
-      } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'PRE 提交失败'
-        this.$message?.error(message)
-      } finally {
-        row.processingPre = false
       }
     },
 
@@ -1152,22 +1151,30 @@ export default {
   --sidebar-width: 280px;
   --page-bg: #ffffff;
   --surface: #ffffff;
-  --surface-soft: #f7f7f5;
-  --border-soft: #e7e6e4;
-  --border-strong: #d6d3d1;
-  --text-main: #191711;
-  --text-muted: #6b6963;
-  --accent-primary: #7c3aed;
-  --accent-primary-soft: #f2eaff;
-  --accent-he: #eef2ff;
-  --accent-fl: #edf7f1;
-  --accent-pre: #fff1e7;
-  --shadow-soft: none;
+  --surface-soft: #f5f7fa;
+  --border-soft: #ebeef5;
+  --border-strong: #dcdfe6;
+  --text-main: #303133;
+  --text-muted: #606266;
+  --accent-primary: #409eff;
+  --accent-primary-hover: #66b1ff;
+  --accent-he: #f4f4f5;
+  --accent-fl: #f0f9eb;
+  --accent-pre: #fdf6ec;
+  --status-warning-bg: #fdf6ec;
+  --status-warning-text: #e6a23c;
+  --status-primary-bg: #ecf5ff;
+  --status-primary-text: #409eff;
+  --status-success-bg: #f0f9eb;
+  --status-success-text: #67c23a;
+  --status-danger-bg: #fef0f0;
+  --status-danger-text: #f56c6c;
+  --shadow-soft: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
 
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  background: var(--page-bg);
+  background: #f5f7fa;
 }
 
 .main-content {
@@ -1178,139 +1185,122 @@ export default {
 
 .content {
   flex: 1;
-  padding: 24px 28px;
+  padding: 24px;
 }
 
 .page-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 16px;
   margin: 0 12px 16px;
-  padding: 18px 20px;
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  background: var(--surface);
-  box-shadow: var(--shadow-soft);
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.page-kicker {
-  margin-bottom: 8px;
-  color: var(--accent-primary);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-}
-
-.page-title {
+.title {
   margin: 0;
-  font-size: 28px;
+  font-size: 24px;
   color: var(--text-main);
-  letter-spacing: -0.02em;
-  line-height: 1.2;
-}
-
-.page-subtitle {
-  margin: 6px 0 0;
-  color: var(--text-muted);
-  font-size: 14px;
-  line-height: 1.5;
+  letter-spacing: 0;
+  line-height: 1.33;
+  font-weight: 600;
 }
 
 .asset-upload-container {
   background: var(--surface);
-  border: 1px solid var(--border-soft);
-  border-radius: 12px;
-  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  padding: 0;
   margin: 0 12px 20px;
   box-shadow: var(--shadow-soft);
-}
-
-.section-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 4px 4px 14px;
-}
-
-.section-title {
-  margin: 0;
-  color: var(--text-main);
-  font-size: 18px;
-  font-weight: 600;
-  line-height: 1.35;
-}
-
-.section-meta {
-  margin: 4px 0 0;
-  color: var(--text-muted);
-  font-size: 13px;
-  line-height: 1.45;
 }
 
 .method-pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 92px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  border: 1px solid var(--border-soft);
-  font-size: 13px;
-  font-weight: 600;
+  min-width: auto;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 22px;
 }
 
 .method-pill-he {
-  background: var(--accent-he);
-  color: #4c51bf;
-  border-color: #d9ddff;
+  background: #f4f4f5;
+  color: #909399;
+  border-color: rgba(144, 147, 153, 0.2);
 }
 
 .method-pill-fl {
-  background: var(--accent-fl);
-  color: #216e4d;
-  border-color: #d7e9dd;
+  background: #f4f4f5;
+  color: #909399;
+  border-color: rgba(144, 147, 153, 0.2);
 }
 
 .method-pill-pre {
-  background: var(--accent-pre);
-  color: #a16207;
-  border-color: #f1ddc8;
-}
-
-.status-stack {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  background: #f4f4f5;
+  color: #909399;
+  border-color: rgba(144, 147, 153, 0.2);
 }
 
 .action-cell {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 8px;
   flex-wrap: wrap;
 }
 
 .action-cell :deep(.el-button) {
-  min-height: 34px;
+  min-height: 32px;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: 4px;
   font-weight: 500;
+  font-size: 12px;
 }
 
 .action-cell :deep(.el-button--primary) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+.action-cell :deep(.action-btn-primary) {
   background: var(--accent-primary);
   border-color: var(--accent-primary);
   color: #fff;
 }
 
-.action-cell :deep(.el-button--success),
-.action-cell :deep(.el-button--warning),
-.action-cell :deep(.el-button:not(.el-button--primary)) {
+.action-cell :deep(.el-button--primary:hover) {
   background: var(--surface);
   border-color: var(--border-strong);
   color: var(--text-main);
+}
+
+.action-cell :deep(.action-btn-primary:hover) {
+  background: var(--accent-primary-hover);
+  border-color: var(--accent-primary-hover);
+  color: #fff;
+}
+
+.action-cell :deep(.action-btn-secondary) {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text-main);
+}
+
+.action-cell :deep(.action-btn-secondary:hover) {
+  color: var(--accent-primary);
+  border-color: #c6e2ff;
+  background: #ecf5ff;
 }
 
 .action-cell :deep(.el-button.is-disabled) {
@@ -1321,25 +1311,31 @@ export default {
   border-color: var(--border-strong);
   background: var(--surface);
   color: var(--text-main);
+  border-radius: 4px;
+}
+
+.page-header :deep(.el-button--primary.is-plain:hover) {
+  color: var(--accent-primary);
+  border-color: #c6e2ff;
+  background: #ecf5ff;
 }
 
 .asset-upload-container :deep(.el-table) {
-  border-radius: 10px;
-  overflow: hidden;
+  border-radius: 4px;
 }
 
 .asset-upload-container :deep(.el-table th.el-table__cell) {
   background: var(--surface-soft);
   color: var(--text-muted);
-  font-weight: 600;
-  height: 44px;
+  font-weight: 500;
+  height: 40px;
 }
 
 .asset-upload-container :deep(.el-table td.el-table__cell),
 .asset-upload-container :deep(.el-table th.el-table__cell) {
   border-bottom-color: var(--border-soft);
-  padding-top: 10px;
-  padding-bottom: 10px;
+  padding-top: 12px;
+  padding-bottom: 12px;
 }
 
 .asset-upload-container :deep(.el-table--border::before),
@@ -1350,13 +1346,66 @@ export default {
 
 .asset-upload-container :deep(.el-table td.el-table__cell .cell),
 .asset-upload-container :deep(.el-table th.el-table__cell .cell) {
-  padding-left: 14px;
-  padding-right: 14px;
+  padding-left: 16px;
+  padding-right: 16px;
 }
 
-.delivery-table :deep(.el-tag) {
-  border-radius: 999px;
-  font-weight: 600;
+.delivery-table :deep(.el-table__row:hover > td.el-table__cell) {
+  background: #fff;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  padding: 0 8px;
+  border-radius: 4px;
+  border-width: 1px;
+  border-style: solid;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 22px;
+}
+
+.status-pill-warning {
+  background: var(--status-warning-bg);
+  color: var(--status-warning-text);
+  border-color: rgba(230, 162, 60, 0.2);
+}
+
+.status-pill-primary {
+  background: var(--status-primary-bg);
+  color: var(--status-primary-text);
+  border-color: rgba(64, 158, 255, 0.2);
+}
+
+.status-pill-success {
+  background: var(--status-success-bg);
+  color: var(--status-success-text);
+  border-color: rgba(103, 194, 58, 0.2);
+}
+
+.status-pill-danger {
+  background: var(--status-danger-bg);
+  color: var(--status-danger-text);
+  border-color: rgba(245, 108, 108, 0.2);
+}
+
+.asset-upload-container :deep(.contract-link.el-button),
+.asset-upload-container :deep(.contract-link.el-button.is-text) {
+  display: inline-flex;
+  align-items: center;
+  padding: 0;
+  color: var(--text-main);
+  font-size: 13px;
+  font-weight: 400;
+  transition: color 0.2s ease;
+}
+
+.asset-upload-container :deep(.contract-link.el-button:hover),
+.asset-upload-container :deep(.contract-link.el-button.is-text:hover) {
+  color: var(--text-muted);
 }
 
 .dialog-body {
