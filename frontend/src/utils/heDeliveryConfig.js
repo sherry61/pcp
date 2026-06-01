@@ -1,8 +1,10 @@
 const DELIVERY_METHOD_HE = 'he';
+const DELIVERY_METHOD_FL = 'fl';
 const DELIVERY_METHOD_PRE = 'pre';
 
-const ENABLED_DELIVERY_METHODS = Object.freeze([DELIVERY_METHOD_HE, DELIVERY_METHOD_PRE]);
+const ENABLED_DELIVERY_METHODS = Object.freeze([DELIVERY_METHOD_HE, DELIVERY_METHOD_FL, DELIVERY_METHOD_PRE]);
 const HE_METHOD_LABEL = 'HE';
+const FL_METHOD_LABEL = 'FL';
 const PRE_METHOD_LABEL = 'PRE';
 const HE_ENC_TYPE_OPTIONS = Object.freeze(['Paillier', 'ElGamal']);
 const HE_OPERATION_OPTIONS = Object.freeze(['ADD']);
@@ -25,9 +27,17 @@ function isPreDeliveryMethod(method) {
   return String(method || '').trim().toLowerCase() === DELIVERY_METHOD_PRE;
 }
 
+function isFlDeliveryMethod(method) {
+  return String(method || '').trim().toLowerCase() === DELIVERY_METHOD_FL;
+}
+
 function getDeliveryMethodLabel(method) {
   if (isHeDeliveryMethod(method)) {
     return HE_METHOD_LABEL;
+  }
+
+  if (isFlDeliveryMethod(method)) {
+    return FL_METHOD_LABEL;
   }
 
   if (isPreDeliveryMethod(method)) {
@@ -48,14 +58,17 @@ function getHeStatusText(status) {
 
 module.exports = {
   DELIVERY_METHOD_HE,
+  DELIVERY_METHOD_FL,
   DELIVERY_METHOD_PRE,
   ENABLED_DELIVERY_METHODS,
   HE_METHOD_LABEL,
+  FL_METHOD_LABEL,
   PRE_METHOD_LABEL,
   HE_ENC_TYPE_OPTIONS,
   HE_OPERATION_OPTIONS,
   PCP_STATUS_TEXT_MAP,
   isHeDeliveryMethod,
+  isFlDeliveryMethod,
   isPreDeliveryMethod,
   getDeliveryMethodLabel,
   getPcpStatusText,

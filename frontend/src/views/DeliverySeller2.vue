@@ -45,20 +45,49 @@
                   <el-button v-if="isHeRow(row)" size="small" type="primary" :loading="row.checkingHe" @click="openHeDelivery(row)">
                     HE 交付
                   </el-button>
+                  <el-button v-if="isFlRow(row)" size="small" type="success" :loading="row.processingFl" @click="openFlDelivery(row)">
+                    FL 交付
+                  </el-button>
                   <el-button v-if="isPreRow(row)" size="small" type="warning" :loading="row.processingPre" @click="openPreDelivery(row)">
                     PRE 交付
                   </el-button>
                   <el-button v-if="isHeRow(row)" size="small" @click="refreshHeStatus(row)" :loading="row.syncingHe">
                     刷新 HE
                   </el-button>
+                  <el-button v-if="isFlRow(row)" size="small" @click="refreshFlStatus(row)" :loading="row.syncingFl">
+                    刷新 FL
+                  </el-button>
                   <el-button v-if="isPreRow(row)" size="small" @click="refreshPreStatus(row)" :loading="row.syncingPre">
                     刷新 PRE
+                  </el-button>
+                  <el-button
+                    v-if="isFlRow(row)"
+                    size="small"
+                    type="primary"
+                    :loading="row.downloadingFlBottom"
+                    :disabled="!getSellerBottomModelPackage(row)"
+                    @click="downloadFlSellerBottomModel(row)"
+                  >
+                    下载 Bottom
+                  </el-button>
+                  <el-button
+                    v-if="isFlRow(row)"
+                    size="small"
+                    type="warning"
+                    :loading="row.downloadingFlGradient"
+                    :disabled="!getLatestSellerGradientPackage(row)"
+                    @click="downloadFlSellerGradient(row)"
+                  >
+                    下载 Gradient
                   </el-button>
                   <span class="helper-text" v-if="isHeRow(row) && row.heRecord?.public_keys_ready === false">
                     等待买方上传 HE 公钥
                   </span>
                   <span class="helper-text" v-else-if="isHeRow(row) && row.heRecord?.selected_enc_type">
                     {{ row.heRecord.selected_enc_type }} / {{ row.heRecord.selected_operation || '-' }}
+                  </span>
+                  <span class="helper-text" v-if="isFlRow(row)">
+                    {{ getFlSellerHint(row) }}
                   </span>
                   <span class="helper-text" v-if="isPreRow(row) && row.preRecord?.pcp_status">
                     PRE: {{ getStatusText(row.preRecord.pcp_status) }}
@@ -155,6 +184,62 @@
           </template>
         </el-dialog>
 
+        <el-dialog v-model="flDialog.visible" title="FL 交付" width="620px">
+          <div v-if="flDialog.asset" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">交易ID</span>
+              <span>{{ flDialog.asset.transaction_id }}</span>
+            </div>
+
+            <div class="dialog-row file-row">
+              <span class="dialog-label">Seller Batch ZIP</span>
+              <input type="file" accept=".zip,application/zip" @change="onFlZipFileChange" />
+            </div>
+            <div v-if="flDialog.file" class="file-name">{{ flDialog.file.name }}</div>
+
+            <div class="dialog-hint">
+              <span>当前仅支持单轮 FL 训练。ZIP 内需包含 smashed/ 与 label/ 两组加密包，每组包含 cipher.bin、wrapped_key.bin、meta.json。</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closeFlDialog">取消</el-button>
+            <el-button type="primary" :loading="flDialog.submitting" @click="submitFlDelivery">
+              提交 FL 交付
+            </el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="flDecryptDialog.visible" title="本地解密 FL 结果" width="620px">
+          <div v-if="flDecryptDialog.row" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">交易ID</span>
+              <span>{{ flDecryptDialog.row.transaction_id }}</span>
+            </div>
+            <div class="dialog-row">
+              <span class="dialog-label">结果类型</span>
+              <span>{{ flDecryptDialog.resultRole }}</span>
+            </div>
+            <div class="dialog-row file-row">
+              <span class="dialog-label">FL 私钥文件</span>
+              <input type="file" accept=".json" @change="onFlPrivateKeyFileChange" />
+            </div>
+            <div v-if="flDecryptDialog.privateKeyFile" class="file-name">
+              {{ flDecryptDialog.privateKeyFile.name }}
+            </div>
+            <div class="dialog-hint">
+              <span>浏览器会在本地解密 FL 结果，并直接导出原始文件。</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closeFlDecryptDialog">取消</el-button>
+            <el-button type="primary" :loading="flDecryptDialog.processing" @click="confirmDecryptFlResult">
+              解密并导出
+            </el-button>
+          </template>
+        </el-dialog>
+
         <div v-if="contractInfo.visible" class="modal" @click.self="closeContractInfo">
           <div class="modal-content wide-modal">
             <h3>数字合约信息</h3>
@@ -230,6 +315,8 @@ import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import heConfig from '@/utils/heDeliveryConfig'
 import heCrypto from '@/utils/heCrypto'
+import heCsv from '@/utils/heCsv'
+import flCrypto from '@/utils/flCrypto'
 import preCrypto from '@/utils/preCrypto'
 
 const API_BASE = 'http://10.112.47.214:3000'
@@ -258,6 +345,21 @@ export default {
         asset: null,
         file: null,
         submitting: false
+      },
+      flDialog: {
+        visible: false,
+        asset: null,
+        file: null,
+        submitting: false
+      },
+      flDecryptDialog: {
+        visible: false,
+        row: null,
+        encryptedBlob: null,
+        privateKeyFile: null,
+        processing: false,
+        resultRole: '',
+        filename: ''
       }
     }
   },
@@ -356,12 +458,17 @@ export default {
                   seller_address: item.seller_address,
                   buyer_address: item.buyer_address,
                   quantity: item.quantity,
+                  flRecord: null,
                   heRecord: null,
                   preRecord: null,
                   checkingHe: false,
                   syncingHe: false,
+                  syncingFl: false,
                   syncingPre: false,
-                  processingPre: false
+                  processingPre: false,
+                  processingFl: false,
+                  downloadingFlBottom: false,
+                  downloadingFlGradient: false
                 })
               })
           } catch (error) {
@@ -373,7 +480,9 @@ export default {
         await Promise.all(this.requestedAssets.map((row) => (
           this.isHeRow(row)
             ? this.refreshHeStatus(row, false)
-            : this.refreshPreStatus(row, false)
+            : (this.isFlRow(row)
+              ? this.refreshFlStatus(row, false)
+              : this.refreshPreStatus(row, false))
         )))
       } finally {
         this.isLoadingTransactions = false
@@ -392,8 +501,16 @@ export default {
       return this.normalizePcType(row?.pc_type) === 'PRE'
     },
 
+    isFlRow(row) {
+      return this.normalizePcType(row?.pc_type) === 'FL'
+    },
+
     getDeliveryMethodLabel(row) {
-      return heConfig.getDeliveryMethodLabel(this.isPreRow(row) ? heConfig.DELIVERY_METHOD_PRE : heConfig.DELIVERY_METHOD_HE)
+      return heConfig.getDeliveryMethodLabel(
+        this.isPreRow(row)
+          ? heConfig.DELIVERY_METHOD_PRE
+          : (this.isFlRow(row) ? heConfig.DELIVERY_METHOD_FL : heConfig.DELIVERY_METHOD_HE)
+      )
     },
 
     async refreshHeStatus(row, showMessage = true) {
@@ -422,9 +539,15 @@ export default {
     },
 
     getCurrentStatus(row) {
-      return this.isPreRow(row)
-        ? row.preRecord?.pcp_status || 'NOT_EXIST'
-        : row.heRecord?.pcp_status || 'NOT_EXIST'
+      if (this.isPreRow(row)) {
+        return row.preRecord?.pcp_status || 'NOT_EXIST'
+      }
+
+      if (this.isFlRow(row)) {
+        return row.flRecord?.pcp_status || 'NOT_EXIST'
+      }
+
+      return row.heRecord?.pcp_status || 'NOT_EXIST'
     },
 
     getStatusTagType(status) {
@@ -462,6 +585,69 @@ export default {
       } finally {
         row.syncingPre = false
       }
+    },
+
+    async refreshFlStatus(row, showMessage = true) {
+      if (!row?.transaction_id) return
+      row.syncingFl = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/fl/status`, {
+          params: {
+            transactionId: row.transaction_id,
+            entityId: row.seller_address
+          }
+        })
+        row.flRecord = response.data?.item || null
+        if (showMessage) {
+          this.$message?.success('FL 状态已刷新')
+        }
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'FL 状态刷新失败'
+        if (showMessage) {
+          this.$message?.error(message)
+        }
+      } finally {
+        row.syncingFl = false
+      }
+    },
+
+    getSellerJoinPackage(row) {
+      return row?.flRecord?.seller_join_packages?.[row?.seller_address] || null
+    },
+
+    getSellerBottomModelPackage(row) {
+      const joinPackage = this.getSellerJoinPackage(row)
+      return joinPackage?.download_token ? joinPackage : null
+    },
+
+    getLatestSellerGradientPackage(row) {
+      const packages = Object.values(row?.flRecord?.seller_result_packages || {})
+        .filter((item) => item?.seller_id === row?.seller_address && item?.result_role === 'fl_gradient')
+        .sort((a, b) => Number(b?.batch_index ?? -1) - Number(a?.batch_index ?? -1))
+      return packages[0] || null
+    },
+
+    getFlSellerHint(row) {
+      const status = String(row?.flRecord?.pcp_status || 'NOT_EXIST').toUpperCase()
+      const joinPackage = this.getSellerJoinPackage(row)
+
+      if (!row?.flRecord?.pcp_contract_id) {
+        return '等待买方创建 FL 合同'
+      }
+
+      if (!joinPackage?.download_token) {
+        return '首次交付时会自动生成卖方密钥并完成 join'
+      }
+
+      if (status === 'COMPLETED' && this.getLatestSellerGradientPackage(row)) {
+        return 'FL 已完成，可下载 Gradient'
+      }
+
+      if (status === 'RUNNING' || status === 'QUEUED' || status === 'WAITING_INPUT' || status === 'JOINED') {
+        return `FL: ${this.getStatusText(status)}`
+      }
+
+      return `FL: ${this.getStatusText(status)}`
     },
 
     async openHeDelivery(row) {
@@ -578,6 +764,76 @@ export default {
       event.target.value = ''
     },
 
+    openFlDelivery(row) {
+      if (!row?.transaction_id) return
+      this.flDialog.visible = true
+      this.flDialog.asset = row
+      this.flDialog.file = null
+    },
+
+    onFlZipFileChange(event) {
+      this.flDialog.file = event.target.files?.[0] || null
+      event.target.value = ''
+    },
+
+    async submitFlDelivery() {
+      if (!this.flDialog.asset) return
+      if (!this.flDialog.file) {
+        this.$message?.warning('请先选择 seller batch ZIP')
+        return
+      }
+
+      const assetRow = this.flDialog.asset
+      if (!assetRow.flRecord?.pcp_contract_id) {
+        this.$message?.warning('买方尚未创建 FL 合同')
+        return
+      }
+
+      this.flDialog.submitting = true
+      assetRow.processingFl = true
+
+      try {
+        if (!String(this.flDialog.file.name || '').toLowerCase().endsWith('.zip')) {
+          throw new Error('仅支持上传 zip 压缩包')
+        }
+
+        if (!this.getSellerJoinPackage(assetRow)) {
+          const keyMaterial = await flCrypto.generateFlKeyPair()
+          await axios.post(`${API_BASE}/api/privacy/fl/join`, {
+            transactionId: assetRow.transaction_id,
+            sellerId: assetRow.seller_address,
+            sellerPublicKey: keyMaterial.publicKeyHex
+          })
+          flCrypto.downloadFlPrivateKeyFile({
+            role: 'seller',
+            transactionId: assetRow.transaction_id,
+            privateKeyPem: keyMaterial.privateKeyPem
+          })
+          await this.refreshFlStatus(assetRow, false)
+        }
+
+        const formData = new FormData()
+        formData.append('transactionId', assetRow.transaction_id)
+        formData.append('sellerId', assetRow.seller_address)
+        formData.append('batch_zip', this.flDialog.file, this.flDialog.file.name)
+
+        const response = await axios.post(`${API_BASE}/api/privacy/fl/upload-batch`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+
+        assetRow.flRecord = response.data?.item || assetRow.flRecord
+        await this.refreshFlStatus(assetRow, false)
+        this.$message?.success(response.data?.message || 'FL 交付已提交')
+        this.closeFlDialog()
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'FL 提交失败'
+        this.$message?.error(message)
+      } finally {
+        this.flDialog.submitting = false
+        assetRow.processingFl = false
+      }
+    },
+
     async submitPreDelivery() {
       if (!this.preDialog.asset) return
       if (!this.preDialog.file) {
@@ -644,6 +900,134 @@ export default {
       this.preDialog.asset = null
       this.preDialog.file = null
       this.preDialog.submitting = false
+    },
+
+    closeFlDialog() {
+      this.flDialog.visible = false
+      this.flDialog.asset = null
+      this.flDialog.file = null
+      this.flDialog.submitting = false
+    },
+
+    async downloadFlSellerBottomModel(row) {
+      await this.downloadFlSellerResult(row, {
+        resultRole: 'fl_bottom_model',
+        rowLoadingKey: 'downloadingFlBottom',
+        filename: ''
+      })
+    },
+
+    async downloadFlSellerGradient(row) {
+      const gradientPackage = this.getLatestSellerGradientPackage(row)
+      await this.downloadFlSellerResult(row, {
+        resultRole: 'fl_gradient',
+        batchIndex: gradientPackage?.batch_index ?? 0,
+        rowLoadingKey: 'downloadingFlGradient',
+        filename: ''
+      })
+    },
+
+    async downloadFlSellerResult(row, {
+      resultRole,
+      batchIndex = null,
+      rowLoadingKey,
+      filename
+    }) {
+      row[rowLoadingKey] = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/fl/result`, {
+          params: {
+            transactionId: row.transaction_id,
+            receiverRole: 'seller',
+            sellerId: row.seller_address,
+            resultRole,
+            batchIndex
+          },
+          responseType: 'blob'
+        })
+
+        this.flDecryptDialog.visible = true
+        this.flDecryptDialog.row = row
+        this.flDecryptDialog.encryptedBlob = response.data
+        this.flDecryptDialog.privateKeyFile = null
+        this.flDecryptDialog.processing = false
+        this.flDecryptDialog.resultRole = resultRole
+        this.flDecryptDialog.filename = filename
+      } catch (error) {
+        const message = await this.resolveBlobErrorMessage(error, '下载 FL 结果失败')
+        this.$message?.error(message)
+      } finally {
+        row[rowLoadingKey] = false
+      }
+    },
+
+    onFlPrivateKeyFileChange(event) {
+      this.flDecryptDialog.privateKeyFile = event.target.files?.[0] || null
+      event.target.value = ''
+    },
+
+    async confirmDecryptFlResult() {
+      if (!this.flDecryptDialog.privateKeyFile || !this.flDecryptDialog.encryptedBlob) {
+        this.$message?.warning('请先选择 FL 私钥文件')
+        return
+      }
+
+      this.flDecryptDialog.processing = true
+      try {
+        const [privateKeyText, encryptedTarBuffer] = await Promise.all([
+          this.flDecryptDialog.privateKeyFile.text(),
+          this.flDecryptDialog.encryptedBlob.arrayBuffer()
+        ])
+
+        await flCrypto.downloadDecryptedFlResult({
+          encryptedTarBuffer,
+          privateKeyText,
+          filename: this.flDecryptDialog.filename,
+          resultRole: this.flDecryptDialog.resultRole,
+          transactionId: this.flDecryptDialog.row?.transaction_id,
+          batchIndex: this.getLatestSellerGradientPackage(this.flDecryptDialog.row)?.batch_index ?? 0
+        })
+
+        this.$message?.success('FL 结果已在浏览器内解密并导出')
+        this.closeFlDecryptDialog()
+      } catch (error) {
+        this.$message?.error(error?.message || 'FL 本地解密失败')
+      } finally {
+        this.flDecryptDialog.processing = false
+      }
+    },
+
+    async resolveBlobErrorMessage(error, fallbackMessage) {
+      const blobPayload = error?.response?.data
+      if (!blobPayload || typeof Blob === 'undefined' || !(blobPayload instanceof Blob)) {
+        return error?.response?.data?.message || error?.message || fallbackMessage
+      }
+
+      try {
+        const text = await heCsv.blobToText(blobPayload)
+        if (!text) {
+          return fallbackMessage
+        }
+
+        try {
+          const parsed = JSON.parse(text)
+          return parsed?.message || fallbackMessage
+        } catch (parseError) {
+          return text
+        }
+      } catch (blobError) {
+        return fallbackMessage
+      }
+    },
+
+    closeFlDecryptDialog() {
+      this.flDecryptDialog.visible = false
+      this.flDecryptDialog.row = null
+      this.flDecryptDialog.encryptedBlob = null
+      this.flDecryptDialog.privateKeyFile = null
+      this.flDecryptDialog.processing = false
+      this.flDecryptDialog.resultRole = ''
+      this.flDecryptDialog.filename = ''
     },
 
     async generateContractInfo(transaction) {

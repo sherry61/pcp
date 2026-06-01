@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "payload_alg": "AES-256-GCM",
+  "wrapped_key_alg": "RSA-OAEP-SHA256",
+  "iv": "fvKk5YiQeYWZNSCl",
+  "content_type": "torchscript",
+  "recipient_type": "TEE",
+  "recipient_key_id": "tee-key-current",
+  "producer_id": "backend-self-test",
+  "task_id": "CONTRACT-200",
+  "batch_index": null
+}

@@ -72,6 +72,34 @@
                   刷新 HE
                 </el-button>
                 <el-button
+                  v-if="isFlRow(row)"
+                  size="small"
+                  type="primary"
+                  :loading="row.creatingFlContract"
+                  :disabled="Boolean(row.flRecord?.pcp_contract_id)"
+                  @click="openFlContractDialog(row)"
+                >
+                  {{ row.flRecord?.pcp_contract_id ? '已创建 FL 合同' : '创建 FL 合同' }}
+                </el-button>
+                <el-button
+                  v-if="isFlRow(row)"
+                  size="small"
+                  type="success"
+                  :loading="row.downloadingFl"
+                  :disabled="!row.flRecord?.buyer_result_ready"
+                  @click="downloadFlResult(row)"
+                >
+                  下载 FL 结果
+                </el-button>
+                <el-button
+                  v-if="isFlRow(row)"
+                  size="small"
+                  :loading="row.syncingFl"
+                  @click="refreshFlStatus(row)"
+                >
+                  刷新 FL
+                </el-button>
+                <el-button
                   v-if="isPreRow(row)"
                   size="small"
                   type="primary"
@@ -112,10 +140,42 @@
                 <span v-if="isPreRow(row)" class="helper-text">
                   {{ getPreActionHint(row) }}
                 </span>
+                <span v-if="isFlRow(row)" class="helper-text">
+                  {{ getFlBuyerActionHint(row) }}
+                </span>
               </div>
             </template>
           </el-table-column>
         </el-table>
+
+        <el-dialog v-model="flDialog.visible" title="创建 FL 合同" width="680px">
+          <div v-if="flDialog.row" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">交易ID</span>
+              <span>{{ flDialog.row.transaction_id }}</span>
+            </div>
+            <div class="dialog-row file-row">
+              <span class="dialog-label">Top Model</span>
+              <input type="file" accept=".pt,.pth,.bin" @change="onFlBuyerFileChange('topModelFile', $event)" />
+            </div>
+            <div v-if="flDialog.topModelFile" class="file-name">{{ flDialog.topModelFile.name }}</div>
+            <div class="dialog-row file-row">
+              <span class="dialog-label">Bottom Model</span>
+              <input type="file" accept=".pt,.pth,.bin" @change="onFlBuyerFileChange('bottomModelFile', $event)" />
+            </div>
+            <div v-if="flDialog.bottomModelFile" class="file-name">{{ flDialog.bottomModelFile.name }}</div>
+            <div class="dialog-hint">
+              <span>当前仅支持单轮 FL 训练。浏览器会本地生成 buyer RSA 密钥，并用 TEE 公钥加密 top/bottom model 后创建合同。</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closeFlContractDialog">取消</el-button>
+            <el-button type="primary" :loading="flDialog.submitting" @click="submitFlContract">
+              创建 FL 合同
+            </el-button>
+          </template>
+        </el-dialog>
 
         <el-dialog v-model="decryptDialog.visible" title="本地解密 HE 结果" width="620px">
           <div v-if="decryptDialog.row" class="dialog-body">
@@ -166,6 +226,36 @@
             <el-button @click="closePreDecryptDialog">取消</el-button>
             <el-button type="primary" :loading="preDecryptDialog.processing" @click="confirmDecryptPreResult">
               解密并导出压缩包
+            </el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="flDecryptDialog.visible" title="本地解密 FL 结果" width="620px">
+          <div v-if="flDecryptDialog.row" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">交易ID</span>
+              <span>{{ flDecryptDialog.row.transaction_id }}</span>
+            </div>
+            <div class="dialog-row">
+              <span class="dialog-label">结果类型</span>
+              <span>{{ flDecryptDialog.resultRole }}</span>
+            </div>
+            <div class="dialog-row file-row">
+              <span class="dialog-label">FL 私钥文件</span>
+              <input type="file" accept=".json" @change="onFlPrivateKeyFileChange" />
+            </div>
+            <div v-if="flDecryptDialog.privateKeyFile" class="file-name">
+              {{ flDecryptDialog.privateKeyFile.name }}
+            </div>
+            <div class="dialog-hint">
+              <span>浏览器会在本地解密 FL 结果，并直接导出原始文件。</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closeFlDecryptDialog">取消</el-button>
+            <el-button type="primary" :loading="flDecryptDialog.processing" @click="confirmDecryptFlResult">
+              解密并导出
             </el-button>
           </template>
         </el-dialog>
@@ -242,6 +332,7 @@ import axios from 'axios'
 import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import heConfig from '@/utils/heDeliveryConfig'
+import flCrypto from '@/utils/flCrypto'
 import heCrypto from '@/utils/heCrypto'
 import heCsv from '@/utils/heCsv'
 import preCrypto from '@/utils/preCrypto'
@@ -272,6 +363,22 @@ export default {
         encryptedBlob: null,
         privateKeyFile: null,
         processing: false
+      },
+      flDialog: {
+        visible: false,
+        row: null,
+        topModelFile: null,
+        bottomModelFile: null,
+        submitting: false
+      },
+      flDecryptDialog: {
+        visible: false,
+        row: null,
+        encryptedBlob: null,
+        privateKeyFile: null,
+        processing: false,
+        resultRole: '',
+        filename: ''
       }
     }
   },
@@ -361,13 +468,17 @@ export default {
                   buyer_address: item.buyer_address,
                   seller_address: item.seller_address,
                   quantity: item.quantity,
+                  flRecord: null,
                   heRecord: null,
                   preRecord: null,
                   uploadingKeys: false,
+                  creatingFlContract: false,
                   downloading: false,
+                  downloadingFl: false,
                   downloadingPre: false,
                   uploadingPreKey: false,
                   syncingHe: false,
+                  syncingFl: false,
                   syncingPre: false,
                   processingPre: false
                 })
@@ -381,7 +492,9 @@ export default {
         await Promise.all(this.resultList.map((row) => (
           this.isHeRow(row)
             ? this.refreshHeStatus(row, false)
-            : this.refreshPreStatus(row, false)
+            : (this.isFlRow(row)
+              ? this.refreshFlStatus(row, false)
+              : this.refreshPreStatus(row, false))
         )))
       } catch (error) {
         console.error('加载结果失败:', error)
@@ -403,8 +516,16 @@ export default {
       return this.normalizePcType(row?.pc_type) === 'PRE'
     },
 
+    isFlRow(row) {
+      return this.normalizePcType(row?.pc_type) === 'FL'
+    },
+
     getDeliveryMethodLabel(row) {
-      return heConfig.getDeliveryMethodLabel(this.isPreRow(row) ? heConfig.DELIVERY_METHOD_PRE : heConfig.DELIVERY_METHOD_HE)
+      return heConfig.getDeliveryMethodLabel(
+        this.isPreRow(row)
+          ? heConfig.DELIVERY_METHOD_PRE
+          : (this.isFlRow(row) ? heConfig.DELIVERY_METHOD_FL : heConfig.DELIVERY_METHOD_HE)
+      )
     },
 
     async refreshHeStatus(row, showMessage = true) {
@@ -437,9 +558,15 @@ export default {
     },
 
     getCurrentStatus(row) {
-      return this.isPreRow(row)
-        ? row.preRecord?.pcp_status || 'NOT_EXIST'
-        : row.heRecord?.pcp_status || 'NOT_EXIST'
+      if (this.isPreRow(row)) {
+        return row.preRecord?.pcp_status || 'NOT_EXIST'
+      }
+
+      if (this.isFlRow(row)) {
+        return row.flRecord?.pcp_status || 'NOT_EXIST'
+      }
+
+      return row.heRecord?.pcp_status || 'NOT_EXIST'
     },
 
     getCurrentStatusText(row) {
@@ -483,6 +610,56 @@ export default {
       } finally {
         row.syncingPre = false
       }
+    },
+
+    async refreshFlStatus(row, showMessage = true) {
+      if (!row?.transaction_id) return
+      row.syncingFl = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/fl/status`, {
+          params: {
+            transactionId: row.transaction_id,
+            entityId: row.buyer_address
+          }
+        })
+        row.flRecord = response.data?.item || null
+        if (showMessage) {
+          this.$message?.success('FL 状态已刷新')
+        }
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'FL 状态刷新失败'
+        if (showMessage) {
+          this.$message?.error(message)
+        }
+      } finally {
+        row.syncingFl = false
+      }
+    },
+
+    getFlBuyerActionHint(row) {
+      const status = String(row?.flRecord?.pcp_status || 'NOT_EXIST').toUpperCase()
+
+      if (!row?.flRecord?.pcp_contract_id) {
+        return '请先创建 FL 合同并上传初始模型'
+      }
+
+      if (status === 'NOT_EXIST' || status === 'CREATED' || status === 'WAITING_INPUT') {
+        return '等待卖方 join 并上传 batch'
+      }
+
+      if (status === 'QUEUED' || status === 'RUNNING' || status === 'JOINED') {
+        return `FL: ${this.getPreStatusText(status)}`
+      }
+
+      if (status === 'COMPLETED' && row?.flRecord?.buyer_result_ready) {
+        return 'FL 已完成，可下载 top model 结果'
+      }
+
+      if (status === 'FAILED') {
+        return 'FL 执行失败，请联系卖方检查 batch 包'
+      }
+
+      return `FL: ${this.getPreStatusText(status)}`
     },
 
     isPreRetryState(row) {
@@ -559,6 +736,96 @@ export default {
         this.$message?.error(message)
       } finally {
         row.uploadingKeys = false
+      }
+    },
+
+    openFlContractDialog(row) {
+      if (!row?.transaction_id) return
+      this.flDialog.visible = true
+      this.flDialog.row = row
+      this.flDialog.topModelFile = null
+      this.flDialog.bottomModelFile = null
+    },
+
+    onFlBuyerFileChange(field, event) {
+      this.flDialog[field] = event.target.files?.[0] || null
+      event.target.value = ''
+    },
+
+    async submitFlContract() {
+      if (!this.flDialog.row) return
+      if (!this.flDialog.topModelFile || !this.flDialog.bottomModelFile) {
+        this.$message?.warning('请先选择 top model 和 bottom model 文件')
+        return
+      }
+
+      const row = this.flDialog.row
+      row.creatingFlContract = true
+      this.flDialog.submitting = true
+      try {
+        const [keyMaterial, teeResp] = await Promise.all([
+          flCrypto.generateFlKeyPair(),
+          axios.get(`${API_BASE}/api/privacy/fl/tee-materials`, {
+            params: { buyerId: row.buyer_address }
+          })
+        ])
+        const teeMaterials = teeResp.data?.item || {}
+        if (!teeMaterials.public_key || !teeMaterials.key_id) {
+          throw new Error('TEE 材料返回不完整')
+        }
+
+        const [topPayload, bottomPayload] = await Promise.all([
+          flCrypto.createFlPackagePayload({
+            file: this.flDialog.topModelFile,
+            teePublicKeyHex: teeMaterials.public_key,
+            teeKeyId: teeMaterials.key_id,
+            producerId: row.buyer_address,
+            taskId: `CONTRACT-${row.transaction_id}`,
+            contentType: 'torchscript',
+            logicalName: 'top_model'
+          }),
+          flCrypto.createFlPackagePayload({
+            file: this.flDialog.bottomModelFile,
+            teePublicKeyHex: teeMaterials.public_key,
+            teeKeyId: teeMaterials.key_id,
+            producerId: row.buyer_address,
+            taskId: `CONTRACT-${row.transaction_id}`,
+            contentType: 'model-bytes',
+            logicalName: 'bottom_model'
+          })
+        ])
+
+        const formData = new FormData()
+        formData.append('transactionId', row.transaction_id)
+        formData.append('sellerIds', row.seller_address)
+        formData.append('buyerResultPublicKey', keyMaterial.publicKeyHex)
+        formData.append('top_model_cipher_file', topPayload.cipherFile, topPayload.filenames.cipherFile)
+        formData.append('top_model_wrapped_key_file', topPayload.wrappedKeyFile, topPayload.filenames.wrappedKeyFile)
+        formData.append('top_model_meta_file', topPayload.metaFile, topPayload.filenames.metaFile)
+        formData.append('bottom_model_cipher_file', bottomPayload.cipherFile, bottomPayload.filenames.cipherFile)
+        formData.append('bottom_model_wrapped_key_file', bottomPayload.wrappedKeyFile, bottomPayload.filenames.wrappedKeyFile)
+        formData.append('bottom_model_meta_file', bottomPayload.metaFile, bottomPayload.filenames.metaFile)
+
+        const response = await axios.post(`${API_BASE}/api/privacy/fl/create-contract`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+
+        flCrypto.downloadFlPrivateKeyFile({
+          role: 'buyer',
+          transactionId: row.transaction_id,
+          privateKeyPem: keyMaterial.privateKeyPem
+        })
+
+        row.flRecord = response.data?.item || row.flRecord
+        await this.refreshFlStatus(row, false)
+        this.$message?.success(response.data?.message || 'FL 合同已创建，私钥已下载到本地')
+        this.closeFlContractDialog()
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || '创建 FL 合同失败'
+        this.$message?.error(message)
+      } finally {
+        row.creatingFlContract = false
+        this.flDialog.submitting = false
       }
     },
 
@@ -670,6 +937,38 @@ export default {
       }
     },
 
+    async downloadFlResult(row) {
+      if (!row?.transaction_id || !row.flRecord?.buyer_result_ready) {
+        this.$message?.warning('当前 FL 结果尚不可下载')
+        return
+      }
+
+      row.downloadingFl = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/fl/result`, {
+          params: {
+            transactionId: row.transaction_id,
+            receiverRole: 'buyer',
+            resultRole: 'fl_top_model'
+          },
+          responseType: 'blob'
+        })
+
+        this.flDecryptDialog.visible = true
+        this.flDecryptDialog.row = row
+        this.flDecryptDialog.encryptedBlob = response.data
+        this.flDecryptDialog.privateKeyFile = null
+        this.flDecryptDialog.processing = false
+        this.flDecryptDialog.resultRole = 'fl_top_model'
+        this.flDecryptDialog.filename = ''
+      } catch (error) {
+        const message = await this.resolveBlobErrorMessage(error, '下载 FL 结果失败')
+        this.$message?.error(message)
+      } finally {
+        row.downloadingFl = false
+      }
+    },
+
     onPrivateKeyFileChange(event) {
       this.decryptDialog.privateKeyFile = event.target.files?.[0] || null
       event.target.value = ''
@@ -677,6 +976,11 @@ export default {
 
     onPrePrivateKeyFileChange(event) {
       this.preDecryptDialog.privateKeyFile = event.target.files?.[0] || null
+      event.target.value = ''
+    },
+
+    onFlPrivateKeyFileChange(event) {
+      this.flDecryptDialog.privateKeyFile = event.target.files?.[0] || null
       event.target.value = ''
     },
 
@@ -769,12 +1073,60 @@ export default {
       }
     },
 
+    async confirmDecryptFlResult() {
+      if (!this.flDecryptDialog.privateKeyFile || !this.flDecryptDialog.encryptedBlob) {
+        this.$message?.warning('请先选择 FL 私钥文件')
+        return
+      }
+
+      this.flDecryptDialog.processing = true
+      try {
+        const [privateKeyText, encryptedTarBuffer] = await Promise.all([
+          this.flDecryptDialog.privateKeyFile.text(),
+          this.flDecryptDialog.encryptedBlob.arrayBuffer()
+        ])
+
+        await flCrypto.downloadDecryptedFlResult({
+          encryptedTarBuffer,
+          privateKeyText,
+          filename: this.flDecryptDialog.filename,
+          resultRole: this.flDecryptDialog.resultRole,
+          transactionId: this.flDecryptDialog.row?.transaction_id
+        })
+
+        this.$message?.success('FL 结果已在浏览器内解密并导出')
+        this.closeFlDecryptDialog()
+      } catch (error) {
+        this.$message?.error(error?.message || 'FL 本地解密失败')
+      } finally {
+        this.flDecryptDialog.processing = false
+      }
+    },
+
     closePreDecryptDialog() {
       this.preDecryptDialog.visible = false
       this.preDecryptDialog.row = null
       this.preDecryptDialog.encryptedBlob = null
       this.preDecryptDialog.privateKeyFile = null
       this.preDecryptDialog.processing = false
+    },
+
+    closeFlContractDialog() {
+      this.flDialog.visible = false
+      this.flDialog.row = null
+      this.flDialog.topModelFile = null
+      this.flDialog.bottomModelFile = null
+      this.flDialog.submitting = false
+    },
+
+    closeFlDecryptDialog() {
+      this.flDecryptDialog.visible = false
+      this.flDecryptDialog.row = null
+      this.flDecryptDialog.encryptedBlob = null
+      this.flDecryptDialog.privateKeyFile = null
+      this.flDecryptDialog.processing = false
+      this.flDecryptDialog.resultRole = ''
+      this.flDecryptDialog.filename = ''
     },
 
     async generateContractInfo(row) {

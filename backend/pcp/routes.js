@@ -1,5 +1,6 @@
 const fs = require('fs').promises;
 const path = require('path');
+const axios = require('axios');
 const FormData = require('form-data');
 
 const {
@@ -1554,9 +1555,27 @@ function registerPreRoutes({
       return preResultNotificationHandler(req, res);
     }
 
+    if (resultRole && resultRole.startsWith('fl_')) {
+      try {
+        const response = await axios.post(
+          `http://127.0.0.1:${process.env.PORT ? Number(process.env.PORT) : 3000}/api/privacy/fl/result-notify`,
+          req.body
+        );
+        return res.status(response.status).json(response.data);
+      } catch (error) {
+        const status = error?.response?.status || 500;
+        return res.status(status).json(
+          error?.response?.data || {
+            success: false,
+            message: error.message || 'FL 结果通知转发失败'
+          }
+        );
+      }
+    }
+
     return res.status(400).json({
       success: false,
-      message: '无法识别 result_role，仅支持 he_result / pre_result'
+      message: '无法识别 result_role，仅支持 he_result / pre_result / fl_*'
     });
   });
 

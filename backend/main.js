@@ -16,7 +16,7 @@ const { sm4 } = require('sm-crypto');
 
 const { spawn } = require('child_process');
 const FormData = require('form-data');
-const { registerHeRoutes, registerPreRoutes } = require('./pcp');
+const { registerFlRoutes, registerHeRoutes, registerPreRoutes } = require('./pcp');
 
 
 // ====== 基础实例与常量（确保在后面使用之前就定义好）======
@@ -506,6 +506,15 @@ registerHeRoutes({
 });
 
 registerPreRoutes({
+  app,
+  upload,
+  dbQuery,
+  firstDefined,
+  safeBaseName,
+  pickContentType
+});
+
+registerFlRoutes({
   app,
   upload,
   dbQuery,
