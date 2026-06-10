@@ -1,11 +1,13 @@
 const DELIVERY_METHOD_HE = 'he';
 const DELIVERY_METHOD_FL = 'fl';
 const DELIVERY_METHOD_PRE = 'pre';
+const DELIVERY_METHOD_MPC = 'mpc';
 
-const ENABLED_DELIVERY_METHODS = Object.freeze([DELIVERY_METHOD_HE, DELIVERY_METHOD_FL, DELIVERY_METHOD_PRE]);
+const ENABLED_DELIVERY_METHODS = Object.freeze([DELIVERY_METHOD_HE, DELIVERY_METHOD_FL, DELIVERY_METHOD_PRE, DELIVERY_METHOD_MPC]);
 const HE_METHOD_LABEL = '同态加密';
 const FL_METHOD_LABEL = '联邦学习';
 const PRE_METHOD_LABEL = '代理重加密';
+const MPC_METHOD_LABEL = '安全多方计算';
 const HE_ENC_TYPE_OPTIONS = Object.freeze(['Paillier', 'ElGamal']);
 const HE_OPERATION_OPTIONS = Object.freeze(['ADD']);
 const PCP_STATUS_TEXT_MAP = Object.freeze({
@@ -31,6 +33,10 @@ function isFlDeliveryMethod(method) {
   return String(method || '').trim().toLowerCase() === DELIVERY_METHOD_FL;
 }
 
+function isMpcDeliveryMethod(method) {
+  return String(method || '').trim().toLowerCase() === DELIVERY_METHOD_MPC;
+}
+
 function getDeliveryMethodLabel(method) {
   if (isHeDeliveryMethod(method)) {
     return HE_METHOD_LABEL;
@@ -42,6 +48,10 @@ function getDeliveryMethodLabel(method) {
 
   if (isPreDeliveryMethod(method)) {
     return PRE_METHOD_LABEL;
+  }
+
+  if (isMpcDeliveryMethod(method)) {
+    return MPC_METHOD_LABEL;
   }
 
   return String(method || '').trim();
@@ -60,16 +70,19 @@ module.exports = {
   DELIVERY_METHOD_HE,
   DELIVERY_METHOD_FL,
   DELIVERY_METHOD_PRE,
+  DELIVERY_METHOD_MPC,
   ENABLED_DELIVERY_METHODS,
   HE_METHOD_LABEL,
   FL_METHOD_LABEL,
   PRE_METHOD_LABEL,
+  MPC_METHOD_LABEL,
   HE_ENC_TYPE_OPTIONS,
   HE_OPERATION_OPTIONS,
   PCP_STATUS_TEXT_MAP,
   isHeDeliveryMethod,
   isFlDeliveryMethod,
   isPreDeliveryMethod,
+  isMpcDeliveryMethod,
   getDeliveryMethodLabel,
   getPcpStatusText,
   getHeStatusText,

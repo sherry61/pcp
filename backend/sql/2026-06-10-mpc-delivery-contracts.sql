@@ -1,0 +1,21 @@
+CREATE TABLE IF NOT EXISTS mpc_delivery_contracts (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  transaction_id VARCHAR(128) NOT NULL,
+  business_contract_id VARCHAR(128) NOT NULL,
+  remote_task_id VARCHAR(128) DEFAULT NULL,
+  mpc_task_type VARCHAR(32) NOT NULL DEFAULT 'gc',
+  buyer_id VARCHAR(255) NOT NULL,
+  seller_id VARCHAR(255) NOT NULL,
+  compute_params_json JSON DEFAULT NULL,
+  seller_input_json JSON DEFAULT NULL,
+  seller_filename VARCHAR(255) DEFAULT NULL,
+  task_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  remote_status VARCHAR(32) DEFAULT NULL,
+  result_json JSON DEFAULT NULL,
+  last_error TEXT DEFAULT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_mpc_tx (transaction_id),
+  UNIQUE KEY uniq_mpc_remote_task (remote_task_id),
+  KEY idx_mpc_business_contract (business_contract_id)
+);

@@ -20,7 +20,6 @@
             class="delivery-table"
             :data="resultList"
             border
-            stripe
             v-loading="isLoading"
             style="width: 100%"
           >
@@ -123,6 +122,28 @@
                     @click="downloadPreResult(row)"
                   >
                     下载结果
+                  </el-button>
+                  <el-button
+                    v-if="isMpcRow(row)"
+                    size="small"
+                    type="primary"
+                    class="action-btn-primary"
+                    :loading="row.processingMpc"
+                    :disabled="!canTriggerMpcBuyerAction(row)"
+                    @click="openMpcDialog(row)"
+                  >
+                    {{ getBuyerMpcActionLabel(row) }}
+                  </el-button>
+                  <el-button
+                    v-if="isMpcRow(row)"
+                    size="small"
+                    type="success"
+                    class="action-btn-secondary"
+                    :loading="row.viewingMpcResult"
+                    :disabled="row.mpcRecord?.task_status !== 'done'"
+                    @click="viewMpcResult(row)"
+                  >
+                    查看结果
                   </el-button>
                 </div>
               </template>
@@ -273,6 +294,49 @@
           </template>
         </el-dialog>
 
+        <el-dialog v-model="mpcDialog.visible" title="发起 MPC 计算" width="520px">
+          <div v-if="mpcDialog.row" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">交易ID</span>
+              <span>{{ mpcDialog.row.transaction_id }}</span>
+            </div>
+            <div class="dialog-field">
+              <span class="dialog-label">目标阈值</span>
+              <el-input v-model="mpcDialog.threshold" placeholder="请输入本次比较的目标阈值" />
+            </div>
+            <div class="dialog-hint compact-hint">
+              <span>买方设置比较门槛，卖方提交待比较数据后系统会自动完成计算并返回是否达到要求。</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closeMpcDialog">取消</el-button>
+            <el-button type="primary" :loading="mpcDialog.submitting" @click="submitMpcTask()">
+              发起MPC
+            </el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="mpcResultDialog.visible" title="计算结果" width="720px">
+          <div v-if="mpcResultDialog.row && mpcResultDialog.result" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">比较结果</span>
+              <span>{{ getMpcResultText(mpcResultDialog.result.output_value) }}</span>
+            </div>
+            <div class="dialog-row">
+              <span class="dialog-label">目标阈值</span>
+              <span>{{ formatMpcThreshold(mpcResultDialog.row) }}</span>
+            </div>
+            <div class="dialog-hint compact-hint">
+              <span>系统已基于卖方提交的数据完成隐私计算，返回本次比较是否达到要求，过程中不会展示对方原始值。</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closeMpcResultDialog">关闭</el-button>
+          </template>
+        </el-dialog>
+
         <div v-if="contractInfo.visible" class="modal" @click.self="closeContractInfo">
           <div class="modal-content wide-modal">
             <h3>数字合约</h3>
@@ -377,6 +441,17 @@ export default {
         processing: false,
         resultRole: '',
         filename: ''
+      },
+      mpcDialog: {
+        visible: false,
+        row: null,
+        threshold: '',
+        submitting: false
+      },
+      mpcResultDialog: {
+        visible: false,
+        row: null,
+        result: null
       }
     }
   },
@@ -469,6 +544,7 @@ export default {
                   flRecord: null,
                   heRecord: null,
                   preRecord: null,
+                  mpcRecord: null,
                   uploadingKeys: false,
                   creatingFlContract: false,
                   downloading: false,
@@ -478,7 +554,10 @@ export default {
                   syncingHe: false,
                   syncingFl: false,
                   syncingPre: false,
-                  processingPre: false
+                  syncingMpc: false,
+                  processingPre: false,
+                  processingMpc: false,
+                  viewingMpcResult: false
                 })
               })
           } catch (error) {
@@ -492,7 +571,9 @@ export default {
             ? this.refreshHeStatus(row, false)
             : (this.isFlRow(row)
               ? this.refreshFlStatus(row, false)
-              : this.refreshPreStatus(row, false))
+              : (this.isPreRow(row)
+                ? this.refreshPreStatus(row, false)
+                : this.refreshMpcStatus(row, false)))
         )))
       } catch (error) {
         console.error('加载结果失败:', error)
@@ -518,12 +599,24 @@ export default {
       return this.normalizePcType(row?.pc_type) === 'FL'
     },
 
+    isMpcRow(row) {
+      return this.normalizePcType(row?.pc_type) === 'MPC'
+    },
+
     getDeliveryMethodLabel(row) {
-      return heConfig.getDeliveryMethodLabel(
-        this.isPreRow(row)
-          ? heConfig.DELIVERY_METHOD_PRE
-          : (this.isFlRow(row) ? heConfig.DELIVERY_METHOD_FL : heConfig.DELIVERY_METHOD_HE)
-      )
+      if (this.isPreRow(row)) {
+        return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_PRE)
+      }
+
+      if (this.isFlRow(row)) {
+        return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_FL)
+      }
+
+      if (this.isMpcRow(row)) {
+        return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_MPC)
+      }
+
+      return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_HE)
     },
 
     getDeliveryMethodClass(row) {
@@ -537,6 +630,10 @@ export default {
 
       if (this.isPreRow(row)) {
         return 'method-pill-pre'
+      }
+
+      if (this.isMpcRow(row)) {
+        return 'method-pill-mpc'
       }
 
       return ''
@@ -585,6 +682,10 @@ export default {
     },
 
     getCurrentStatus(row) {
+      if (this.isMpcRow(row)) {
+        return row.mpcRecord?.task_status || 'not_created'
+      }
+
       if (this.isPreRow(row)) {
         return row.preRecord?.pcp_status || 'NOT_EXIST'
       }
@@ -597,6 +698,36 @@ export default {
     },
 
     getBuyerDeliveryStatus(row) {
+      if (this.isMpcRow(row)) {
+        const currentStatus = String(this.getCurrentStatus(row) || '').toLowerCase()
+
+        if (!row?.mpcRecord?.remote_task_id) {
+          return 'WAIT_BUYER'
+        }
+
+        if (currentStatus === 'pending' || currentStatus === 'waiting_seller_data') {
+          return 'WAIT_SELLER'
+        }
+
+        if (currentStatus === 'ready') {
+          return 'WAIT_BUYER'
+        }
+
+        if (currentStatus === 'computing') {
+          return 'PROCESSING'
+        }
+
+        if (currentStatus === 'done') {
+          return 'COMPLETED'
+        }
+
+        if (currentStatus === 'failed') {
+          return 'FAILED'
+        }
+
+        return 'PROCESSING'
+      }
+
       const currentStatus = String(this.getCurrentStatus(row) || '').toUpperCase()
 
       if (this.isHeRow(row) && !row?.heRecord?.public_keys_ready) {
@@ -705,6 +836,133 @@ export default {
       } finally {
         row.syncingFl = false
       }
+    },
+
+    async refreshMpcStatus(row, showMessage = true) {
+      if (!row?.transaction_id) return
+      row.syncingMpc = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/mpc/status`, {
+          params: { transaction_id: row.transaction_id }
+        })
+        row.mpcRecord = response.data?.data || null
+        if (showMessage) {
+          this.$message?.success('MPC 状态已刷新')
+        }
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'MPC 状态刷新失败'
+        if (showMessage) {
+          this.$message?.error(message)
+        }
+      } finally {
+        row.syncingMpc = false
+      }
+    },
+
+    getBuyerMpcActionLabel(row) {
+      if (!row?.mpcRecord?.remote_task_id) {
+        return '发起MPC'
+      }
+
+      switch (String(row?.mpcRecord?.task_status || '').toLowerCase()) {
+        case 'failed':
+          return '重新发起'
+        case 'pending':
+        case 'waiting_seller_data':
+          return '等待卖方'
+        case 'ready':
+        case 'computing':
+          return '处理中'
+        case 'done':
+          return '已完成'
+        default:
+          return '处理中'
+      }
+    },
+
+    canTriggerMpcBuyerAction(row) {
+      const status = String(row?.mpcRecord?.task_status || '').toLowerCase()
+      return !row?.mpcRecord?.remote_task_id || status === 'failed'
+    },
+
+    openMpcDialog(row) {
+      if (!row?.transaction_id) return
+      this.mpcDialog.visible = true
+      this.mpcDialog.row = row
+      this.mpcDialog.threshold = row?.mpcRecord?.compute_params?.threshold ?? ''
+      this.mpcDialog.submitting = false
+    },
+
+    async submitMpcTask() {
+      const row = this.mpcDialog.row
+      if (!row?.transaction_id) return
+
+      const threshold = Number(this.mpcDialog.threshold)
+      if (!Number.isFinite(threshold) || threshold < 0) {
+        this.$message?.warning('目标阈值必须是非负数字')
+        return
+      }
+
+      row.processingMpc = true
+      this.mpcDialog.submitting = true
+      try {
+        const formData = new FormData()
+        formData.append('transaction_id', row.transaction_id)
+        formData.append('threshold', String(threshold))
+
+        await axios.post(`${API_BASE}/api/privacy/mpc/create-task`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+
+        await this.refreshMpcStatus(row, false)
+        this.$message?.success('MPC 任务已创建，等待卖方提交材料')
+        this.closeMpcDialog()
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'MPC 任务创建失败'
+        this.$message?.error(message)
+      } finally {
+        row.processingMpc = false
+        this.mpcDialog.submitting = false
+      }
+    },
+
+    async viewMpcResult(row) {
+      if (!row?.transaction_id) return
+
+      row.viewingMpcResult = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/mpc/result`, {
+          params: { transaction_id: row.transaction_id }
+        })
+        this.mpcResultDialog.visible = true
+        this.mpcResultDialog.row = row
+        this.mpcResultDialog.result = response.data?.data?.result || null
+        await this.refreshMpcStatus(row, false)
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'MPC 结果查询失败'
+        this.$message?.error(message)
+      } finally {
+        row.viewingMpcResult = false
+      }
+    },
+
+    formatMpcBoolean(value) {
+      if (typeof value === 'boolean') {
+        return value ? '是' : '否'
+      }
+      return '-'
+    },
+
+    getMpcResultText(value) {
+      if (typeof value === 'boolean') {
+        return value ? '达到要求' : '未达到要求'
+      }
+      return '-'
+    },
+
+    formatMpcThreshold(row) {
+      const threshold = row?.mpcRecord?.compute_params?.threshold
+      return threshold === undefined || threshold === null || threshold === '' ? '-' : String(threshold)
     },
 
     async uploadHePublicKeys(row) {
@@ -1105,6 +1363,19 @@ export default {
       this.flDecryptDialog.filename = ''
     },
 
+    closeMpcDialog() {
+      this.mpcDialog.visible = false
+      this.mpcDialog.row = null
+      this.mpcDialog.threshold = ''
+      this.mpcDialog.submitting = false
+    },
+
+    closeMpcResultDialog() {
+      this.mpcResultDialog.visible = false
+      this.mpcResultDialog.row = null
+      this.mpcResultDialog.result = null
+    },
+
     async generateContractInfo(row) {
       try {
         const transactionId = row.transaction_id
@@ -1282,6 +1553,12 @@ export default {
 }
 
 .method-pill-pre {
+  background: #f4f4f5;
+  color: #909399;
+  border-color: rgba(144, 147, 153, 0.2);
+}
+
+.method-pill-mpc {
   background: #f4f4f5;
   color: #909399;
   border-color: rgba(144, 147, 153, 0.2);

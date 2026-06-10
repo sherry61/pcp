@@ -15,7 +15,7 @@
         </div>
 
         <div class="asset-upload-container">
-          <el-table class="delivery-table" :data="requestedAssets" border stripe v-loading="isLoadingTransactions" style="width: 100%">
+          <el-table class="delivery-table" :data="requestedAssets" border v-loading="isLoadingTransactions" style="width: 100%">
             <el-table-column
               prop="transaction_id"
               label="交易ID"
@@ -85,6 +85,17 @@
                   </el-button>
                   <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)">
                     发起重加密
+                  </el-button>
+                  <el-button
+                    v-if="isMpcRow(row)"
+                    size="small"
+                    type="primary"
+                    :class="['action-btn-primary', { 'action-btn-disabled-primary': !canOpenMpcSellerDialog(row) }]"
+                    :loading="row.uploadingMpc"
+                    :disabled="!canOpenMpcSellerDialog(row)"
+                    @click="openMpcSellerDialog(row)"
+                  >
+                    {{ getSellerMpcActionLabel(row) }}
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
@@ -317,6 +328,37 @@
           </template>
         </el-dialog>
 
+        <el-dialog v-model="mpcDialog.visible" title="提交 MPC 材料" width="560px">
+          <div v-if="mpcDialog.row" class="dialog-body">
+            <div class="dialog-row">
+              <span class="dialog-label">交易ID</span>
+              <span>{{ mpcDialog.row.transaction_id }}</span>
+            </div>
+
+            <div class="dialog-field">
+              <span class="dialog-label">卖方 JSON 文件</span>
+              <div class="file-action-group">
+                <input ref="mpcSellerJsonInput" class="hidden-file-input" type="file" accept=".json,application/json" @change="onMpcFileChange" />
+                <el-button size="small" plain @click="openFileSelector('mpcSellerJsonInput')">
+                  选择文件
+                </el-button>
+              </div>
+              <div v-if="mpcDialog.file" class="file-name inline-file-name">{{ mpcDialog.file.name }}</div>
+            </div>
+
+            <div class="dialog-hint compact-hint">
+              <span>前端不做额外加密，按约定上传明文 JSON，由当前后端作为中间层转发给对方 MPC 服务。</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button @click="closeMpcSellerDialog">取消</el-button>
+            <el-button type="primary" :loading="mpcDialog.submitting" @click="submitMpcSellerData">
+              提交材料
+            </el-button>
+          </template>
+        </el-dialog>
+
         <div v-if="contractInfo.visible" class="modal" @click.self="closeContractInfo">
           <div class="modal-content wide-modal">
             <h3>数字合约</h3>
@@ -427,6 +469,12 @@ export default {
         processing: false,
         resultRole: '',
         filename: ''
+      },
+      mpcDialog: {
+        visible: false,
+        row: null,
+        file: null,
+        submitting: false
       }
     }
   },
@@ -528,12 +576,15 @@ export default {
                   flRecord: null,
                   heRecord: null,
                   preRecord: null,
+                  mpcRecord: null,
                   checkingHe: false,
                   syncingHe: false,
                   syncingFl: false,
                   syncingPre: false,
+                  syncingMpc: false,
                   processingPre: false,
                   processingFl: false,
+                  uploadingMpc: false,
                   flBottomModelDownloaded: false,
                   downloadingFlBottom: false,
                   downloadingFlGradient: false
@@ -550,7 +601,9 @@ export default {
             ? this.refreshHeStatus(row, false)
             : (this.isFlRow(row)
               ? this.refreshFlStatus(row, false)
-              : this.refreshPreStatus(row, false))
+              : (this.isPreRow(row)
+                ? this.refreshPreStatus(row, false)
+                : this.refreshMpcStatus(row, false)))
         )))
       } finally {
         this.isLoadingTransactions = false
@@ -573,12 +626,24 @@ export default {
       return this.normalizePcType(row?.pc_type) === 'FL'
     },
 
+    isMpcRow(row) {
+      return this.normalizePcType(row?.pc_type) === 'MPC'
+    },
+
     getDeliveryMethodLabel(row) {
-      return heConfig.getDeliveryMethodLabel(
-        this.isPreRow(row)
-          ? heConfig.DELIVERY_METHOD_PRE
-          : (this.isFlRow(row) ? heConfig.DELIVERY_METHOD_FL : heConfig.DELIVERY_METHOD_HE)
-      )
+      if (this.isPreRow(row)) {
+        return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_PRE)
+      }
+
+      if (this.isFlRow(row)) {
+        return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_FL)
+      }
+
+      if (this.isMpcRow(row)) {
+        return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_MPC)
+      }
+
+      return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_HE)
     },
 
     getDeliveryMethodClass(row) {
@@ -592,6 +657,10 @@ export default {
 
       if (this.isPreRow(row)) {
         return 'method-pill-pre'
+      }
+
+      if (this.isMpcRow(row)) {
+        return 'method-pill-mpc'
       }
 
       return ''
@@ -635,6 +704,10 @@ export default {
     },
 
     getCurrentStatus(row) {
+      if (this.isMpcRow(row)) {
+        return row.mpcRecord?.task_status || 'not_created'
+      }
+
       if (this.isPreRow(row)) {
         return row.preRecord?.pcp_status || 'NOT_EXIST'
       }
@@ -647,6 +720,28 @@ export default {
     },
 
     getSellerDeliveryStatus(row) {
+      if (this.isMpcRow(row)) {
+        const currentStatus = String(this.getCurrentStatus(row) || '').toLowerCase()
+
+        if (!row?.mpcRecord?.remote_task_id) {
+          return 'WAIT_BUYER'
+        }
+
+        if (currentStatus === 'pending' || currentStatus === 'waiting_seller_data' || currentStatus === 'failed') {
+          return 'WAIT_SELLER'
+        }
+
+        if (currentStatus === 'ready' || currentStatus === 'computing') {
+          return 'PROCESSING'
+        }
+
+        if (currentStatus === 'done') {
+          return 'COMPLETED'
+        }
+
+        return 'PROCESSING'
+      }
+
       const currentStatus = String(this.getCurrentStatus(row) || '').toUpperCase()
 
       if (this.isFlRow(row) && !row?.flRecord?.pcp_contract_id) {
@@ -770,6 +865,118 @@ export default {
         }
       } finally {
         row.syncingFl = false
+      }
+    },
+
+    async refreshMpcStatus(row, showMessage = true) {
+      if (!row?.transaction_id) return
+      row.syncingMpc = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/mpc/status`, {
+          params: { transaction_id: row.transaction_id }
+        })
+        row.mpcRecord = response.data?.data || null
+        if (showMessage) {
+          this.$message?.success('MPC 状态已刷新')
+        }
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'MPC 状态刷新失败'
+        if (showMessage) {
+          this.$message?.error(message)
+        }
+      } finally {
+        row.syncingMpc = false
+      }
+    },
+
+    getSellerMpcActionLabel(row) {
+      if (!row?.mpcRecord?.remote_task_id) {
+        return '等待买方创建'
+      }
+
+      switch (String(row?.mpcRecord?.task_status || '').toLowerCase()) {
+        case 'failed':
+          return '重新提交'
+        case 'pending':
+        case 'waiting_seller_data':
+          return '提交材料'
+        case 'ready':
+        case 'computing':
+        case 'done':
+          return '已提交材料'
+        default:
+          return '处理中'
+      }
+    },
+
+    canOpenMpcSellerDialog(row) {
+      if (!row?.mpcRecord?.remote_task_id) {
+        return false
+      }
+
+      const status = String(row?.mpcRecord?.task_status || '').toLowerCase()
+      return status === 'pending' || status === 'waiting_seller_data' || status === 'failed'
+    },
+
+    async openMpcSellerDialog(row) {
+      if (!row?.transaction_id) return
+
+      await this.refreshMpcStatus(row, false)
+
+      if (!row?.mpcRecord?.remote_task_id) {
+        this.$message?.warning('请等待买方先创建 MPC 任务')
+        return
+      }
+
+      if (!this.canOpenMpcSellerDialog(row)) {
+        this.$message?.warning('当前状态无需重复提交卖方材料')
+        return
+      }
+
+      this.mpcDialog.visible = true
+      this.mpcDialog.row = row
+      this.mpcDialog.file = null
+      this.mpcDialog.submitting = false
+    },
+
+    onMpcFileChange(event) {
+      this.mpcDialog.file = event.target.files?.[0] || null
+      event.target.value = ''
+    },
+
+    async submitMpcSellerData() {
+      const row = this.mpcDialog.row
+      if (!row?.transaction_id) return
+      if (!this.mpcDialog.file) {
+        this.$message?.warning('请先选择 JSON 文件')
+        return
+      }
+
+      if (!String(this.mpcDialog.file.name || '').toLowerCase().endsWith('.json')) {
+        this.$message?.warning('仅支持上传 JSON 文件')
+        return
+      }
+
+      row.uploadingMpc = true
+      this.mpcDialog.submitting = true
+      try {
+        const formData = new FormData()
+        formData.append('transaction_id', row.transaction_id)
+        formData.append('file', this.mpcDialog.file, this.mpcDialog.file.name)
+
+        await axios.post(`${API_BASE}/api/privacy/mpc/upload-seller-data`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' }
+        })
+
+        await this.refreshMpcStatus(row, false)
+        this.$message?.success('MPC 卖方材料已提交')
+        this.closeMpcSellerDialog()
+      } catch (error) {
+        const message = error?.response?.data?.message || error?.message || 'MPC 材料提交失败'
+        this.$message?.error(message)
+      } finally {
+        row.uploadingMpc = false
+        this.mpcDialog.submitting = false
       }
     },
 
@@ -1199,6 +1406,13 @@ export default {
       this.flBatchDialog.submitting = false
     },
 
+    closeMpcSellerDialog() {
+      this.mpcDialog.visible = false
+      this.mpcDialog.row = null
+      this.mpcDialog.file = null
+      this.mpcDialog.submitting = false
+    },
+
     async downloadFlSellerBottomModel(row) {
       await this.downloadFlSellerResult(row, {
         resultRole: 'fl_bottom_model',
@@ -1507,6 +1721,12 @@ export default {
 }
 
 .method-pill-pre {
+  background: #f4f4f5;
+  color: #909399;
+  border-color: rgba(144, 147, 153, 0.2);
+}
+
+.method-pill-mpc {
   background: #f4f4f5;
   color: #909399;
   border-color: rgba(144, 147, 153, 0.2);

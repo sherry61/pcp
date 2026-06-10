@@ -17,6 +17,7 @@ const { sm4 } = require('sm-crypto');
 const { spawn } = require('child_process');
 const FormData = require('form-data');
 const { registerFlRoutes, registerHeRoutes, registerPreRoutes } = require('./pcp');
+const { registerMpcRoutes } = require('./mpc');
 
 
 // ====== 基础实例与常量（确保在后面使用之前就定义好）======
@@ -521,6 +522,12 @@ registerFlRoutes({
   firstDefined,
   safeBaseName,
   pickContentType
+});
+
+registerMpcRoutes({
+  app,
+  upload,
+  dbQuery
 });
 
 
@@ -2706,6 +2713,27 @@ app.post('/api/classify-asset', async (req, res) => {
     }
 });
 
+app.get('/api/get-total-transaction-stats', (req, res) => {
+  const sql = `
+    SELECT COUNT(*) AS total_transaction_count
+    FROM transactions
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error('获取总交易量失败:', err);
+      return res.status(500).json({
+        success: false,
+        message: '获取总交易量失败'
+      });
+    }
+
+    return res.json({
+      success: true,
+      total_transaction_count: results[0].total_transaction_count || 0
+    });
+  });
+});
 
 
   // 定义定时任务，每天检查一次过期代币
