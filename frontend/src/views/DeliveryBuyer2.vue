@@ -26,13 +26,13 @@
             <el-table-column
               prop="transaction_id"
               label="交易ID"
-              min-width="156"
+              width="250"
               align="center"
               header-align="center"
               show-overflow-tooltip
             />
 
-            <el-table-column label="交付状态" width="200" align="center" header-align="center">
+            <el-table-column label="交付状态" width="250" align="center" header-align="center">
               <template #default="{ row }">
                 <el-tag :class="['status-pill', getStatusPillClass(row)]" effect="plain">
                   {{ getCurrentStatusText(row) }}
@@ -40,13 +40,7 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="交付方法" width="200" align="center" header-align="center">
-              <template #default="{ row }">
-                <span :class="['method-pill', getDeliveryMethodClass(row)]">{{ getDeliveryMethodLabel(row) }}</span>
-              </template>
-            </el-table-column>
-
-            <el-table-column label="数字合约" width="200" align="center" header-align="center">
+            <el-table-column label="数字合约" width="250" align="center" header-align="center">
               <template #default="{ row }">
                 <el-button size="small" text class="contract-link" @click="viewContract(row)">
                   <span>查看合约</span>
@@ -66,7 +60,7 @@
                     :disabled="row.heRecord?.public_keys_ready"
                     @click="uploadHePublicKeys(row)"
                   >
-                    {{ row.heRecord?.public_keys_ready ? '已提交材料' : '提交材料' }}
+                    {{ row.heRecord?.public_keys_ready ? '已完成' : '发起交付' }}
                   </el-button>
                   <el-button
                     v-if="isHeRow(row)"
@@ -88,7 +82,7 @@
                     :disabled="Boolean(row.flRecord?.pcp_contract_id)"
                     @click="openFlContractDialog(row)"
                   >
-                    {{ row.flRecord?.pcp_contract_id ? '已提交材料' : '提交材料' }}
+                    {{ row.flRecord?.pcp_contract_id ? '已完成' : '发起交付' }}
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
@@ -110,7 +104,7 @@
                     :disabled="row.preRecord?.buyer_public_key_ready"
                     @click="uploadPrePublicKey(row)"
                   >
-                    {{ row.preRecord?.buyer_public_key_ready ? '已提交材料' : '提交材料' }}
+                    {{ row.preRecord?.buyer_public_key_ready ? '已完成' : '发起交付' }}
                   </el-button>
                   <el-button
                     v-if="isPreRow(row)"
@@ -312,7 +306,7 @@
           <template #footer>
             <el-button @click="closeMpcDialog">取消</el-button>
             <el-button type="primary" :loading="mpcDialog.submitting" @click="submitMpcTask()">
-              发起MPC
+              发起交付
             </el-button>
           </template>
         </el-dialog>
@@ -861,12 +855,12 @@ export default {
 
     getBuyerMpcActionLabel(row) {
       if (!row?.mpcRecord?.remote_task_id) {
-        return '发起MPC'
+        return '发起交付'
       }
 
       switch (String(row?.mpcRecord?.task_status || '').toLowerCase()) {
         case 'failed':
-          return '重新发起'
+          return '发起交付'
         case 'pending':
         case 'waiting_seller_data':
           return '等待卖方'

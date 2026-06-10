@@ -19,13 +19,13 @@
             <el-table-column
               prop="transaction_id"
               label="交易ID"
-              min-width="156"
+              width="250"
               align="center"
               header-align="center"
               show-overflow-tooltip
             />
 
-            <el-table-column label="交付状态" width="200" align="center" header-align="center">
+            <el-table-column label="交付状态" width="250" align="center" header-align="center">
               <template #default="{ row }">
                 <el-tag :class="['status-pill', getStatusPillClass(row)]" effect="plain">
                   {{ getStatusText(row) }}
@@ -33,13 +33,7 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="交付方法" width="200" align="center" header-align="center">
-              <template #default="{ row }">
-                <span :class="['method-pill', getDeliveryMethodClass(row)]">{{ getDeliveryMethodLabel(row) }}</span>
-              </template>
-            </el-table-column>
-
-            <el-table-column label="数字合约" width="200" align="center" header-align="center">
+            <el-table-column label="数字合约" width="250" align="center" header-align="center">
               <template #default="{ row }">
                 <el-button size="small" text class="contract-link" @click="viewContract(row)">
                   <span>查看合约</span>
@@ -51,7 +45,7 @@
               <template #default="{ row }">
                 <div class="action-cell">
                   <el-button v-if="isHeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.checkingHe" @click="openHeDelivery(row)">
-                    发起计算
+                    提交交付
                   </el-button>
                   <el-button
                     v-if="isFlRow(row) && !getSellerJoinPackage(row)"
@@ -61,7 +55,7 @@
                     :loading="row.processingFl || row.checkingFl"
                     @click="openFlJoinDialog(row)"
                   >
-                    提交材料
+                    提交交付
                   </el-button>
                   <el-button
                     v-else-if="isFlRow(row)"
@@ -70,7 +64,7 @@
                     class="action-btn-primary action-btn-disabled-primary"
                     disabled
                   >
-                    已提交材料
+                    已完成
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
@@ -84,7 +78,7 @@
                     发起训练
                   </el-button>
                   <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)">
-                    发起重加密
+                    提交交付
                   </el-button>
                   <el-button
                     v-if="isMpcRow(row)"
@@ -328,7 +322,7 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="mpcDialog.visible" title="提交 MPC 材料" width="560px">
+        <el-dialog v-model="mpcDialog.visible" title="提交材料" width="560px">
           <div v-if="mpcDialog.row" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
@@ -344,10 +338,6 @@
                 </el-button>
               </div>
               <div v-if="mpcDialog.file" class="file-name inline-file-name">{{ mpcDialog.file.name }}</div>
-            </div>
-
-            <div class="dialog-hint compact-hint">
-              <span>前端不做额外加密，按约定上传明文 JSON，由当前后端作为中间层转发给对方 MPC 服务。</span>
             </div>
           </div>
 
@@ -896,14 +886,14 @@ export default {
 
       switch (String(row?.mpcRecord?.task_status || '').toLowerCase()) {
         case 'failed':
-          return '重新提交'
+          return '提交交付'
         case 'pending':
         case 'waiting_seller_data':
-          return '提交材料'
+          return '提交交付'
         case 'ready':
         case 'computing':
         case 'done':
-          return '已提交材料'
+          return '已完成'
         default:
           return '处理中'
       }
