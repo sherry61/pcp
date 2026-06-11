@@ -85,9 +85,11 @@ export default {
         console.log("登录成功", response.data);
         localStorage.setItem("token", response.data.token);
         localStorage.setItem( "login_role", this.loginRole);
-        if (!localStorage.getItem('user_role')) {
-  localStorage.setItem('user_role', 'seller'); // 默认买家
-}
+        if (this.loginRole === 'regulator') {
+          localStorage.setItem('user_role', 'buyer');
+        } else if (!localStorage.getItem('user_role')) {
+          localStorage.setItem('user_role', 'seller');
+        }
 
         // 2. 获取公网 IP
         await this.getUserIP();
@@ -119,7 +121,7 @@ export default {
 ) {
 
   window.location.href =
-    'http://10.112.47.214:32768/auth/ssologin';
+    'http://10.112.47.214:32771/auth/ssologin';
 
 }
       } catch (error) {

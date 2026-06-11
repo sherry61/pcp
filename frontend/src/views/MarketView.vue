@@ -716,8 +716,12 @@ toBalance: '0',
     await this.fetchCertificates();
 this.fetchAssets();
 
-// ✅ 先判定角色
-await this.detectRoleByPending();
+// ✅ 监管方固定使用买方视角，其它身份再走自动判定
+if (this.isRegulatorView) {
+  this.role = 'buyer';
+} else {
+  await this.detectRoleByPending();
+}
 
 // ✅ 根据角色只加载需要的购物车数据
 if (this.role === 'buyer') {
@@ -735,6 +739,9 @@ if (this.role === 'buyer') {
 },
 
   computed: {
+    isRegulatorView() {
+      return localStorage.getItem('login_role') === 'regulator';
+    },
     paginatedAssets() {
       const start = (this.currentPage - 1) * this.itemsPerPage;
       const end = start + this.itemsPerPage;

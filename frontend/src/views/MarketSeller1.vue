@@ -184,8 +184,14 @@ export default {
 
             allPendingTx.push(...formatted);
           } catch (err) {
-            console.error("fetchPendingAssets item error:", err);
-          }
+  console.warn("跳过无效或过期证书，不影响其他证书:", {
+    cert,
+    org,
+    error: err.response?.data || err.message
+  });
+
+  continue;
+}
         }
 
         this.awaitingAssets = allPendingTx;
@@ -350,13 +356,45 @@ export default {
         if (res.status === 200 && Array.isArray(res.data.certificates)) {
           for (const { cert } of res.data.certificates) {
             const certPath = `/home/super/r/GoSDK/crypto-config/${orgName}/user/${cert}/${cert}.sign.crt`;
-            const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
-              cert_path: certPath,
-            });
-            const addr = addrRes?.data?.ethereum?.address;
-            if (addr) {
-              allCerts.push({ cert, orgName, addr });
-            }
+           try {
+  const addrRes = await axios.post(
+    'http://10.112.47.214:9092/cert-to-addr',
+    {
+      cert_path: certPath,
+    }
+  );
+
+  const addr = addrRes?.data?.ethereum?.address;
+
+  if (addr) {
+    allCerts.push({
+      cert,
+      orgName,
+      addr
+    });
+
+    console.log('证书有效:', {
+      cert,
+      orgName,
+      addr
+    });
+  } else {
+    console.warn('证书未解析出地址，跳过:', {
+      cert,
+      orgName,
+      certPath
+    });
+  }
+} catch (err) {
+  console.warn('跳过无效或过期证书:', {
+    cert,
+    orgName,
+    certPath,
+    error: err.response?.data || err.message
+  });
+
+  continue;
+}
           }
         }
       } catch (e) {
@@ -409,12 +447,14 @@ export default {
         assetId: asset.file_hash,
         newOwner: asset.buyer_address
       });
+      return true;
     } else {
       throw new Error('❌ 链上转移失败，返回值异常');
     }
   } catch (error) {
     console.error('❌ 资产转移流程异常:', error);
     alert('资产转移失败，请稍后重试。');
+    return false;
   }
 }
   },

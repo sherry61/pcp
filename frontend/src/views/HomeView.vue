@@ -8,19 +8,13 @@
         <div class="dashboard">
           <div class="dashboard-item">
             <div class="header">
-              <h3>已注册用户</h3>
-              <img src="@/assets/user-icon.png" alt="User Icon" class="dashboard-icon">
-            </div>
-            <p class="main-number">{{ userCount }}</p>
-          </div>
-          <div class="dashboard-item">
-            <div class="header">
-              <h3>今日交易量</h3>
+              <h3>交易量</h3>
               <img src="@/assets/transaction-icon.png" alt="Transaction Icon" class="dashboard-icon">
             </div>
-            <p class="main-number">{{ transactionVolume }}</p>
-            <p class="details">较昨日{{ trend }} <span class="detail-increase">{{ transactionChangePercent }}</span></p>
-
+            <p class="main-number">{{ todayTransactionVolume }}</p>
+            <p class="main-label">今日交易量</p>
+            <p class="sub-metric">总交易量 <span class="sub-metric-value">{{ totalTransactionVolume }}</span></p>
+            <p class="details">较昨日{{ trend }} <span :class="trendClass">{{ transactionChangePercent }}</span></p>
           </div>
           <div class="dashboard-item">
             <div class="header">
@@ -67,8 +61,8 @@ export default {
   },
 data() {
   return {
-    userCount: 1,
-    transactionVolume: 0,
+    todayTransactionVolume: 0,
+    totalTransactionVolume: 0,
     transactionLoad: '10000+',
     auditedTransactions: 1,
     transactionChangePercent: '0%', // 新增字段，用于展示提升百分比
@@ -80,7 +74,7 @@ data() {
 
 mounted() {
   this.fetchTodayTransaction();
-  this.fetchUser();
+  this.fetchTotalTransaction();
   this.fetchTransactionHistory();
 },
 
@@ -93,31 +87,32 @@ mounted() {
     try {
       const response = await axios.get('http://10.112.47.214:3000/api/get-today-transaction-stats');
       if (response.status === 200 && response.data) {
-        this.transactionVolume = response.data.today_transaction_count || 0;
+        this.todayTransactionVolume = response.data.today_transaction_count || 0;
         
         const rawPercent = response.data.percent_change || '0%';
         this.transactionChangePercent = Math.abs(parseFloat(rawPercent)) + '%';
 
-        this.trend = response.data.trend;
+        this.trend = response.data.trend || '持平';
       }
-      console.log("交易量", this.transactionVolume);
+      console.log("今日交易量", this.todayTransactionVolume);
       console.log("交易变化", this.transactionChangePercent);
     } catch (error) {
       console.error('获取今日交易数据失败:', error);
     }
   },
-  async fetchUser(){
-    try{
-      const response = await axios.get('http://10.112.47.214:3000/api/get-user');
-      if(response.status === 200 && response.data){
-        this.userCount = response.data.total_users || 0;
+
+  async fetchTotalTransaction() {
+    try {
+      const response = await axios.get('http://10.112.47.214:3000/api/get-total-transaction-stats');
+      if (response.status === 200 && response.data) {
+        this.totalTransactionVolume = response.data.total_transaction_count || 0;
       }
-       console.log("已注册用户数量", this.userCount);
-      }catch(error){
-        console.error('获取已注册用户失败',error);
-   }
+      console.log('总交易量', this.totalTransactionVolume);
+    } catch (error) {
+      console.error('获取总交易量失败:', error);
+    }
   },
-  
+
   async fetchTransactionHistory() {
     try {
       const response = await axios.get('http://10.112.47.214:3000/api/get-transaction-history');
@@ -132,6 +127,20 @@ mounted() {
 
 
 
+},
+
+computed: {
+  trendClass() {
+    if (this.trend === '下降') {
+      return 'detail-decrease';
+    }
+
+    if (this.trend === '持平') {
+      return 'detail-neutral';
+    }
+
+    return 'detail-increase';
+  }
 }
 
 }
@@ -224,7 +233,27 @@ body {
 .main-number {
   font-size: 28px;
   color: #000;
-  margin: 5px 0;
+  margin: 6px 0 2px;
+}
+
+.main-label {
+  margin: 0 0 14px;
+  font-size: 13px;
+  color: #666;
+}
+
+.sub-metric {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: #888;
+  text-align: left;
+}
+
+.sub-metric-value {
+  margin-left: 8px;
+  font-size: 18px;
+  font-weight: 600;
+  color: #222;
 }
 
 .details {
@@ -247,6 +276,14 @@ body {
 
 .detail-increase {
   color: #00bfa5;
+}
+
+.detail-decrease {
+  color: #ff5252;
+}
+
+.detail-neutral {
+  color: #666;
 }
 
 .detail-overload {

@@ -3,130 +3,366 @@
     <AppHeader :username="username" :userId="userId" />
     <div class="main-content">
       <AppSidebar />
-      <div class="content">
+      <main class="content">
         <section class="supervision-page">
-          <header class="supervision-header">
-            <div class="header-copy">
-              <p class="eyebrow">穿透式监管组件</p>
-              <h2>账户交易关系检测分析</h2>
-              <span>输入链上账户地址后，系统将采样交易子图并执行交易分析。</span>
+          <header class="page-header">
+            <div>
+              <p class="eyebrow">自动监管分析平台</p>
+              <h2>穿透式账户监管工作台</h2>
+              <span>持续发现、排队检测并沉淀账户风险快照。</span>
             </div>
-            <div class="search-panel">
-              <div class="search-box-main">
-                <input
-                  v-model.trim="searchValue"
-                  class="search-input"
-                  type="text"
-                  placeholder="输入账户 address，例如 0x..."
-                  :disabled="isBusy"
-                  @keyup.enter="startTracking"
-                />
-                <button class="track-btn" :disabled="isBusy" @click="startTracking">
-                  {{ isBusy ? '处理中' : '检索账户' }}
-                </button>
-              </div>
-              <div class="header-actions">
-                <button class="ghost-btn" :disabled="isBusy" @click="resetWorkspace">重置</button>
-                <button class="ghost-btn" @click="refreshData">刷新</button>
-                <button class="ghost-btn" @click="exportData">导出</button>
-              </div>
+            <div class="manual-check">
+              <input
+                v-model.trim="manualAddress"
+                type="text"
+                placeholder="人工补检账户 0x..."
+                :disabled="submitting"
+                @keyup.enter="submitManualTask"
+              />
+              <button :disabled="submitting" @click="submitManualTask">
+                {{ submitting ? '提交中' : '提交补检' }}
+              </button>
             </div>
           </header>
 
-          <main class="workspace">
-            <section class="graph-card">
-              <div class="card-title-row">
-                <div>
-                  <p class="section-kicker">交易子图</p>
-                  <h3>{{ graphTitle }}</h3>
-                </div>
-                <span class="state-pill" :class="statusClass">{{ statusText }}</span>
-              </div>
-              <div class="chart-wrap">
-                <div id="main" class="graph-canvas"></div>
-                <div v-if="showIdleOverlay" class="idle-overlay">
-                  <strong>等待检索中</strong>
-                  <span>请输入账户地址，系统会先进行 B38 子图采样，再执行异常检测。</span>
-                </div>
-              </div>
-            </section>
+          <div v-if="!serviceStatus.api_ready" class="service-warning">
+            <strong>模型 API 当前未运行</strong>
+            <span>监管数据暂停刷新，打开下方“模型 API”开关即可恢复服务。</span>
+          </div>
 
-            <aside class="side-panel">
-              <section class="status-card">
-                <p class="section-kicker">流程状态</p>
-                <h3>{{ workflowTitle }}</h3>
-                <div class="steps">
-                  <div v-for="step in steps" :key="step.key" class="step" :class="step.state">
-                    <i></i>
-                    <span>{{ step.label }}</span>
-                  </div>
-                </div>
-                <div v-if="inferenceVisible" class="inference-box">
-                  <div class="progress-head">
-                    <span>模型正在推理</span>
-                    <b>{{ inferenceProgress }}%</b>
-                  </div>
-                  <div class="progress-track">
-                    <div class="progress-bar" :style="{ width: inferenceProgress + '%' }"></div>
-                  </div>
-                </div>
-                <p class="message-line">{{ processMessage }}</p>
-              </section>
+          <section class="kpi-grid">
+            <article v-for="item in kpis" :key="item.label" class="kpi-card">
+              <span>{{ item.label }}</span>
+              <strong>{{ item.value }}</strong>
+              <small>{{ item.note }}</small>
+            </article>
+          </section>
 
-              <section class="summary-card" :class="{ danger: isAnomaly, normal: detectionDone && !isAnomaly }">
-                <p class="section-kicker">账户状态</p>
-                <h3>{{ verdictTitle }}</h3>
-                <div class="address-text">{{ activeAddress || '未选择账户' }}</div>
-                <div class="summary-grid">
-                  <div>
-                    <span>异常概率</span>
-                    <b>{{ formatPercent(accountSummary.anomalyProbability) }}</b>
-                  </div>
-                  <div>
-                    <span>检测结果</span>
-                    <b>{{ accountSummary.predLabel || '-' }}</b>
-                  </div>
-                  <div>
-                    <span>入账次数</span>
-                    <b>{{ formatNumber(accountSummary.inCount) }}</b>
-                  </div>
-                  <div>
-                    <span>出账次数</span>
-                    <b>{{ formatNumber(accountSummary.outCount) }}</b>
-                  </div>
-                  <div>
-                    <span>入账金额</span>
-                    <b>{{ formatCompact(accountSummary.inAmount) }}</b>
-                  </div>
-                  <div>
-                    <span>出账金额</span>
-                    <b>{{ formatCompact(accountSummary.outAmount) }}</b>
-                  </div>
-                </div>
-              </section>
-            </aside>
-          </main>
-
-          <section class="log-card">
-            <div class="card-title-row compact">
+          <section class="status-band">
+            <div class="section-heading">
               <div>
-                <p class="section-kicker">交易信息摘要</p>
-                <h3>目标账户关联交易</h3>
+                <p class="section-kicker">自动监管状态</p>
+                <h3>监管流水线</h3>
               </div>
-              <span>{{ tableData.length }} 条</span>
+              <div class="toolbar">
+                <div class="service-control">
+                  <span>模型 API</span>
+                  <el-switch
+                    v-model="modelApiSwitch"
+                    :loading="serviceActionBusy"
+                    inline-prompt
+                    active-text="开"
+                    inactive-text="关"
+                    @change="toggleModelApi"
+                  />
+                  <b :class="{ online: serviceStatus.api_ready }">
+                    {{ serviceStatus.api_ready ? '服务正常' : '服务停止' }}
+                  </b>
+                </div>
+                <span class="auto-state" :class="autoStatus.status">
+                  {{ autoStatusText }}
+                </span>
+                <el-radio-group v-model="autoMode" size="small" :disabled="autoStatus.status === 'running'">
+                  <el-radio-button label="continuous">持续监管</el-radio-button>
+                  <el-radio-button label="scan_once">单次扫描</el-radio-button>
+                </el-radio-group>
+                <button class="secondary" :disabled="autoActionBusy" @click="discoverAccounts">发现账户</button>
+                <button
+                  v-if="autoStatus.status !== 'running'"
+                  :disabled="autoActionBusy"
+                  @click="startAutoSupervision"
+                >
+                  启动自动监管
+                </button>
+                <button v-else class="danger-btn" :disabled="autoActionBusy" @click="stopAutoSupervision">
+                  停止自动监管
+                </button>
+              </div>
             </div>
-            <el-table :data="tableData" stripe height="220" style="width: 100%">
-              <el-table-column prop="direction" label="方向" width="90" />
-              <el-table-column prop="from" label="From" min-width="220" show-overflow-tooltip />
-              <el-table-column prop="to" label="To" min-width="220" show-overflow-tooltip />
-              <el-table-column prop="count" label="次数" width="90" />
-              <el-table-column prop="amount" label="金额" width="140" />
-              <el-table-column prop="fee" label="手续费" width="120" />
+            <div class="agent-grid">
+              <div v-for="agent in agentStates" :key="agent.name" class="agent-item">
+                <i :class="agent.state"></i>
+                <div>
+                  <strong>{{ agent.name }}</strong>
+                  <span>{{ agent.description }}</span>
+                </div>
+                <b>{{ agent.metric }}</b>
+              </div>
+            </div>
+          </section>
+
+          <section class="data-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">任务队列</p>
+                <h3>正在检测与最近任务</h3>
+              </div>
+              <button class="secondary" @click="refreshDashboard">刷新</button>
+            </div>
+            <el-table :data="tasks" stripe height="280" empty-text="暂无检测任务">
+              <el-table-column prop="address" label="账户地址" min-width="280" show-overflow-tooltip />
+              <el-table-column prop="source" label="来源" width="120">
+                <template #default="{ row }">{{ sourceText(row.source) }}</template>
+              </el-table-column>
+              <el-table-column label="状态" width="120">
+                <template #default="{ row }">
+                  <el-tag :type="taskTagType(row.status)" effect="plain">{{ taskStatusText(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="进度" width="180">
+                <template #default="{ row }">
+                  <el-progress :percentage="Math.round((row.progress || 0) * 100)" :stroke-width="8" />
+                </template>
+              </el-table-column>
+              <el-table-column prop="num_nodes" label="节点" width="80" />
+              <el-table-column prop="num_edges" label="边" width="80" />
+              <el-table-column label="排队时间" width="180">
+                <template #default="{ row }">{{ formatTime(row.queued_at) }}</template>
+              </el-table-column>
+              <el-table-column label="错误" min-width="180" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.error_message || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="检测过程" width="110" fixed="right">
+                <template #default="{ row }">
+                  <button class="table-action" @click.stop="openTaskProcess(row)">查看过程</button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </section>
+
+          <section class="data-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">风险交易提示</p>
+                <h3>中高风险交易事件</h3>
+              </div>
+              <span>{{ riskTransactions.length }} 条</span>
+            </div>
+            <el-table :data="riskTransactions" stripe height="280" empty-text="暂无风险交易">
+              <el-table-column label="等级" width="90">
+                <template #default="{ row }">
+                  <el-tag :type="row.risk_level === 'high' ? 'danger' : 'warning'">
+                    {{ riskLevelText(row.risk_level) }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="tx_hash" label="交易哈希" min-width="190" show-overflow-tooltip />
+              <el-table-column prop="from_address" label="From" min-width="190" show-overflow-tooltip />
+              <el-table-column prop="to_address" label="To" min-width="190" show-overflow-tooltip />
+              <el-table-column prop="value" label="金额" width="110" />
+              <el-table-column prop="related_account" label="关联异常账户" min-width="190" show-overflow-tooltip />
+              <el-table-column label="类别" width="120">
+                <template #default="{ row }">{{ labelText(row.related_account_label) }}</template>
+              </el-table-column>
+              <el-table-column label="风险原因" min-width="220" show-overflow-tooltip>
+                <template #default="{ row }">{{ (row.risk_reasons || []).join('；') || '-' }}</template>
+              </el-table-column>
+              <el-table-column label="处置状态" width="110">
+                <template #default="{ row }">{{ row.action_status === 'unhandled' ? '待处置' : row.action_status }}</template>
+              </el-table-column>
+            </el-table>
+          </section>
+
+          <section class="data-section">
+            <div class="section-heading">
+              <div>
+                <p class="section-kicker">账户状态库</p>
+                <h3>已检测账户</h3>
+              </div>
+              <span>点击账户查看检测快照和交易子图</span>
+            </div>
+            <el-table
+              :data="accounts"
+              stripe
+              height="360"
+              empty-text="暂无已检测账户"
+              row-class-name="clickable-row"
+              @row-click="openAccountDetail"
+            >
+              <el-table-column prop="address" label="账户地址" min-width="300" show-overflow-tooltip />
+              <el-table-column label="检测类别" width="130">
+                <template #default="{ row }">{{ labelText(row.current_label) }}</template>
+              </el-table-column>
+              <el-table-column label="异常状态" width="110">
+                <template #default="{ row }">
+                  <el-tag :type="row.is_anomaly ? 'danger' : 'success'">
+                    {{ row.is_anomaly ? '异常' : '正常' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="异常概率" width="120">
+                <template #default="{ row }">{{ formatPercent(row.anomaly_probability) }}</template>
+              </el-table-column>
+              <el-table-column label="风险等级" width="110">
+                <template #default="{ row }">{{ riskLevelText(row.risk_level) }}</template>
+              </el-table-column>
+              <el-table-column prop="detection_count" label="检测次数" width="100" />
+              <el-table-column prop="num_nodes" label="节点" width="80" />
+              <el-table-column prop="num_edges" label="边" width="80" />
+              <el-table-column label="最后检测" width="180">
+                <template #default="{ row }">{{ formatTime(row.last_detected_at) }}</template>
+              </el-table-column>
             </el-table>
           </section>
         </section>
-      </div>
+      </main>
     </div>
+
+    <el-drawer
+      v-model="processDrawerVisible"
+      size="72%"
+      :destroy-on-close="true"
+      @closed="closeTaskProcess"
+    >
+      <template #header>
+        <div class="drawer-title">
+          <div>
+            <p class="section-kicker">检测过程</p>
+            <h3>{{ processTask.address || '账户检测任务' }}</h3>
+          </div>
+          <el-tag :type="taskTagType(processTask.status)" effect="plain">
+            {{ taskStatusText(processTask.status) }}
+          </el-tag>
+        </div>
+      </template>
+      <div class="process-content">
+        <section class="process-steps">
+          <div v-for="step in processSteps" :key="step.key" class="process-step" :class="step.state">
+            <i></i>
+            <div>
+              <strong>{{ step.label }}</strong>
+              <span>{{ step.description }}</span>
+            </div>
+          </div>
+        </section>
+        <section class="process-progress">
+          <div>
+            <span>{{ processProgressText }}</span>
+            <b>{{ processVisualProgress }}%</b>
+          </div>
+          <el-progress :percentage="processVisualProgress" :show-text="false" :stroke-width="10" />
+        </section>
+        <section class="process-result">
+          <div class="process-verdict">
+            <span>异常类别</span>
+            <strong>{{ processCategoryText }}</strong>
+          </div>
+          <div class="process-verdict">
+            <span>异常概率</span>
+            <strong>{{ processResultSnapshot.anomaly_probability == null ? '分析中' : formatPercent(processResultSnapshot.anomaly_probability) }}</strong>
+          </div>
+          <div class="process-probabilities">
+            <div v-for="(value, key) in processResultSnapshot.class_probabilities || {}" :key="key">
+              <span>{{ labelText(key) }}</span>
+              <b>{{ formatPercent(value) }}</b>
+              <el-progress
+                :percentage="Math.round((value || 0) * 100)"
+                :show-text="false"
+                :status="processResultSnapshot.pass_threshold?.[key] ? 'exception' : ''"
+              />
+            </div>
+            <span v-if="!Object.keys(processResultSnapshot.class_probabilities || {}).length" class="result-pending">
+              模型完成分析后显示四类账户概率。
+            </span>
+          </div>
+        </section>
+        <section class="process-graph-panel">
+          <div class="section-heading">
+            <div>
+              <p class="section-kicker">{{ processShouldAnimate ? '动态构图' : '采样结果' }}</p>
+              <h3>{{ processShouldAnimate ? '分析过程中逐步展开节点' : '账户交易子图' }}</h3>
+            </div>
+            <span>{{ processDisplayedNodes.length }} / {{ processGraphData?.nodes?.length || processTask.num_nodes || 0 }} 节点</span>
+          </div>
+          <div ref="processGraph" class="process-graph"></div>
+          <div v-if="!processTask.subgraph_path" class="process-waiting">
+            <strong>{{ processTask.status === 'queued' ? '等待采样任务启动' : '正在生成账户交易子图' }}</strong>
+            <span>子图文件生成后，节点会以 2.5 秒间隔逐步显示。</span>
+          </div>
+        </section>
+      </div>
+    </el-drawer>
+
+    <el-drawer v-model="drawerVisible" size="78%" :destroy-on-close="true" @closed="disposeDetailChart">
+      <template #header>
+        <div class="drawer-title">
+          <div>
+            <p class="section-kicker">账户详情</p>
+            <h3>{{ detailAddress }}</h3>
+          </div>
+          <button class="secondary" :disabled="submitting" @click="rescanDetail">重新检测</button>
+        </div>
+      </template>
+      <div v-loading="detailLoading" class="drawer-content">
+        <section class="detail-summary">
+          <div>
+            <span>当前类别</span>
+            <strong>{{ labelText(detailState.current_label) }}</strong>
+          </div>
+          <div>
+            <span>异常概率</span>
+            <strong>{{ formatPercent(detailState.anomaly_probability) }}</strong>
+          </div>
+          <div>
+            <span>风险等级</span>
+            <strong>{{ riskLevelText(detailState.risk_level) }}</strong>
+          </div>
+          <div>
+            <span>子图规模</span>
+            <strong>{{ detailState.num_nodes || 0 }} / {{ detailState.num_edges || 0 }}</strong>
+          </div>
+          <div>
+            <span>模型版本</span>
+            <strong>{{ detailState.last_model_version || '-' }}</strong>
+          </div>
+        </section>
+        <section class="detail-grid">
+          <div class="graph-panel">
+            <div class="section-heading">
+              <h3>账户交易关系子图</h3>
+              <span>{{ graphSummary }}</span>
+            </div>
+            <div ref="detailGraph" class="detail-graph"></div>
+            <p v-if="!detailState.subgraph_path && !detailLoading" class="empty-hint">该账户暂无可用子图。</p>
+          </div>
+          <aside class="probability-panel">
+            <h3>分类结果</h3>
+            <div v-for="(value, key) in detailSnapshot.class_probabilities || {}" :key="key" class="probability-row">
+              <div>
+                <span>{{ labelText(key) }}</span>
+                <b>{{ formatPercent(value) }}</b>
+              </div>
+              <el-progress
+                :percentage="Math.round((value || 0) * 100)"
+                :show-text="false"
+                :status="detailSnapshot.pass_threshold?.[key] ? 'exception' : ''"
+              />
+            </div>
+            <h3>目标账户摘要</h3>
+            <dl>
+              <dt>入账次数</dt><dd>{{ formatNumber(anchorSummary.inCount) }}</dd>
+              <dt>出账次数</dt><dd>{{ formatNumber(anchorSummary.outCount) }}</dd>
+              <dt>入账金额</dt><dd>{{ formatCompact(anchorSummary.inAmount) }}</dd>
+              <dt>出账金额</dt><dd>{{ formatCompact(anchorSummary.outAmount) }}</dd>
+            </dl>
+          </aside>
+        </section>
+        <section class="detail-transactions">
+          <div class="section-heading">
+            <h3>目标账户关联交易</h3>
+            <span>{{ detailTransactions.length }} 条</span>
+          </div>
+          <el-table :data="detailTransactions" stripe height="260" empty-text="暂无交易边">
+            <el-table-column prop="direction" label="方向" width="90" />
+            <el-table-column prop="from" label="From" min-width="220" show-overflow-tooltip />
+            <el-table-column prop="to" label="To" min-width="220" show-overflow-tooltip />
+            <el-table-column prop="count" label="次数" width="90" />
+            <el-table-column prop="amount" label="金额" width="140" />
+            <el-table-column prop="fee" label="手续费" width="120" />
+          </el-table>
+        </section>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -135,68 +371,163 @@ import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import axios from 'axios'
 import * as echarts from 'echarts'
+import { ElMessage } from 'element-plus'
 
 const MODEL_API_BASE = process.env.VUE_APP_MODEL_API_BASE || 'http://10.112.47.214:8000'
+const SERVICE_CONTROL_BASE = process.env.VUE_APP_SERVICE_CONTROL_BASE || MODEL_API_BASE.replace(/:8000$/, ':8001')
+const POLL_INTERVAL_MS = 5000
+const GET_TIMEOUT = 30000
+const POST_TIMEOUT = 120000
 const GRAPH_NODE_REVEAL_MS = 2500
-const MIN_INFERENCE_MS = 5500
+const INFERENCE_DURATION_MS = 5500
 
 export default {
   name: 'PenetrableSupervision',
-  components: {
-    AppHeader,
-    AppSidebar
-  },
+  components: { AppHeader, AppSidebar },
   data() {
     return {
       username: localStorage.getItem('username') || 'user',
       userId: localStorage.getItem('userId') || '-',
-      myChart: null,
-      searchValue: '',
-      activeAddress: '',
-      graphData: null,
-      displayedNodes: [],
-      displayedLinks: [],
-      selectedNode: null,
-      tableData: [],
-      sampleResult: null,
-      predictResult: null,
-      isBusy: false,
-      detectionDone: false,
-      isAnomaly: false,
-      inferenceVisible: false,
-      inferenceProgress: 0,
-      processMessage: '等待检索账户地址。',
-      statusText: '待检索',
-      workflowTitle: '等待输入',
-      graphTitle: '实时账户关系网络',
-      showIdleOverlay: true,
-      animationTimer: null,
-      progressTimer: null,
-      steps: [
-        { key: 'sample', label: '子图采样', state: 'idle' },
-        { key: 'draw', label: '图谱渲染', state: 'idle' },
-        { key: 'infer', label: '异常检测', state: 'idle' }
-      ]
+      overview: {},
+      tasks: [],
+      accounts: [],
+      riskTransactions: [],
+      autoStatus: { status: 'stopped' },
+      autoMode: 'continuous',
+      serviceStatus: { status: 'stopped', active: false, api_ready: false },
+      modelApiSwitch: false,
+      manualAddress: '',
+      submitting: false,
+      autoActionBusy: false,
+      serviceActionBusy: false,
+      pollingTimer: null,
+      refreshing: false,
+      drawerVisible: false,
+      detailLoading: false,
+      detailAddress: '',
+      detail: {},
+      detailGraphData: null,
+      detailChart: null,
+      detailTransactions: [],
+      processDrawerVisible: false,
+      processTask: {},
+      processGraphData: null,
+      processResultDetail: {},
+      processChart: null,
+      processDisplayedNodes: [],
+      processDisplayedLinks: [],
+      processAnimationTimer: null,
+      processProgressTimer: null,
+      processInferenceProgress: 0,
+      processGraphLoadedPath: ''
     }
   },
   computed: {
-    statusClass() {
-      if (this.isAnomaly) return 'danger'
-      if (this.detectionDone) return 'success'
-      if (this.isBusy) return 'running'
-      return 'idle'
+    kpis() {
+      return [
+        { label: '已检测账户数', value: this.overview.detected_accounts || 0, note: '账户状态库' },
+        { label: '异常账户数', value: this.overview.anomaly_accounts || 0, note: '通过分类阈值' },
+        { label: '异常账户占比', value: this.formatPercent(this.overview.anomaly_ratio), note: '异常 / 已检测' },
+        { label: '正在检测账户数', value: this.overview.running_tasks || 0, note: '采样、推理或保存' },
+        { label: '待检测账户数', value: this.overview.pending_tasks || 0, note: '任务队列' },
+        { label: '高风险交易数', value: this.overview.high_risk_transactions || 0, note: '待监管处置' }
+      ]
     },
-    verdictTitle() {
-      if (!this.detectionDone) return '尚未检测'
-      return this.isAnomaly ? '异常账户' : '账户正常'
+    agentStates() {
+      const running = this.autoStatus.status === 'running'
+      return [
+        {
+          name: 'Observer',
+          state: running ? 'active' : 'idle',
+          description: running ? '正在发现预生成子图账户' : '等待启动自动发现',
+          metric: `${this.overview.pending_tasks || 0} 待检`
+        },
+        {
+          name: 'Analysis',
+          state: (this.overview.running_tasks || 0) > 0 ? 'active' : 'idle',
+          description: '执行子图采样与异常模型推理',
+          metric: `${this.overview.running_tasks || 0} 运行`
+        },
+        {
+          name: 'Governance',
+          state: (this.overview.high_risk_transactions || 0) > 0 ? 'warning' : 'idle',
+          description: '汇总异常账户和风险交易事件',
+          metric: `${this.overview.high_risk_transactions || 0} 高风险`
+        }
+      ]
     },
-    accountSummary() {
-      const pred = this.predictResult?.results?.[0]
-      const anchorNode = this.findNodeByAddress(this.activeAddress)
-      const raw = anchorNode?.raw || {}
+    autoStatusText() {
+      if (this.autoStatus.status === 'running') {
+        return this.autoStatus.mode === 'scan_once' ? '单次扫描执行中' : '持续监管运行中'
+      }
+      if (this.autoStatus.completion_reason === 'scan_completed') return '单次扫描已完成'
+      return '自动监管已停止'
+    },
+    processSteps() {
+      const order = ['queued', 'sampling', 'inferencing', 'saving', 'done']
+      const currentIndex = order.indexOf(this.processTask.status)
+      const failed = this.processTask.status === 'failed'
+      return [
+        { key: 'sampling', label: '子图采样', description: '提取目标账户交易邻域', index: 1 },
+        { key: 'drawing', label: '动态构图', description: '逐步展开节点和交易关系', index: 2 },
+        { key: 'inferencing', label: '模型分析', description: '执行四类异常账户检测', index: 2 },
+        { key: 'saving', label: '结果保存', description: '写入快照和账户状态', index: 3 }
+      ].map((step) => ({
+        ...step,
+        state: failed
+          ? 'failed'
+          : currentIndex > step.index
+            ? 'done'
+            : currentIndex === step.index
+              ? 'active'
+              : 'pending'
+      }))
+    },
+    processVisualProgress() {
+      if (this.processInferenceProgress > 0 && this.processInferenceProgress < 100) {
+        return Math.max(65, Math.round(65 + this.processInferenceProgress * 0.25))
+      }
+      return Math.round((this.processTask.progress || 0) * 100)
+    },
+    processProgressText() {
+      if (this.processInferenceProgress > 0 && this.processInferenceProgress < 100) return '模型正在分析账户行为特征'
       return {
-        anomalyProbability: pred?.anomaly_probability || 0,
-        predLabel: this.detectionDone && !this.isAnomaly ? 'normal' : (pred?.pred_label || ''),
+        queued: '任务等待执行',
+        sampling: '正在采样账户交易子图',
+        inferencing: '正在执行异常模型分析',
+        saving: '正在保存检测结果',
+        done: '检测与结果保存已完成',
+        failed: this.processTask.error_message || '检测任务失败'
+      }[this.processTask.status] || '等待任务状态'
+    },
+    processShouldAnimate() {
+      return ['sampling', 'inferencing', 'saving'].includes(this.processTask.status)
+    },
+    processResultSnapshot() {
+      return this.processResultDetail.latest_snapshot || {}
+    },
+    processCategoryText() {
+      const snapshot = this.processResultSnapshot
+      if (!snapshot.pred_label) return '模型分析中'
+      return snapshot.is_anomaly
+        ? `${this.labelText(snapshot.display_label || snapshot.pred_label)}（异常）`
+        : '正常账户'
+    },
+    detailState() {
+      return this.detail.current_state || {}
+    },
+    detailSnapshot() {
+      return this.detail.latest_snapshot || {}
+    },
+    graphSummary() {
+      const summary = this.detailGraphData?.summary
+      if (!summary) return '等待加载'
+      return `${summary.num_nodes_returned} 节点 / ${summary.num_links_returned} 边`
+    },
+    anchorSummary() {
+      const node = this.findNodeByAddress(this.detailAddress)
+      const raw = node?.raw || {}
+      return {
         inCount: raw.N_in_cnt || 0,
         outCount: raw.N_out_cnt || 0,
         inAmount: raw.N_in_sum_amt || 0,
@@ -205,339 +536,415 @@ export default {
     }
   },
   mounted() {
-    this.initChart()
-    this.renderIdleGraph()
-    window.addEventListener('resize', this.resizeChart)
+    this.refreshDashboard()
+    this.pollingTimer = window.setInterval(this.refreshDashboard, POLL_INTERVAL_MS)
+    window.addEventListener('resize', this.resizeDetailChart)
+    window.addEventListener('resize', this.resizeProcessChart)
   },
   beforeUnmount() {
-    this.clearTimers()
-    window.removeEventListener('resize', this.resizeChart)
-    if (this.myChart) this.myChart.dispose()
+    if (this.pollingTimer) window.clearInterval(this.pollingTimer)
+    window.removeEventListener('resize', this.resizeDetailChart)
+    window.removeEventListener('resize', this.resizeProcessChart)
+    this.disposeDetailChart()
+    this.closeTaskProcess()
   },
   methods: {
-    initChart() {
-      const chartDom = document.getElementById('main')
-      this.myChart = echarts.init(chartDom)
-      this.myChart.on('click', (params) => {
-        if (params.dataType === 'node') this.handleNodeClick(params)
-      })
+    async refreshDashboard() {
+      if (this.refreshing) return
+      this.refreshing = true
+      const requests = [
+        axios.get(`${MODEL_API_BASE}/api/supervision/overview`, { timeout: GET_TIMEOUT }),
+        axios.get(`${MODEL_API_BASE}/api/supervision/tasks`, { params: { page: 1, page_size: 50 }, timeout: GET_TIMEOUT }),
+        axios.get(`${MODEL_API_BASE}/api/supervision/accounts`, { params: { page: 1, page_size: 100 }, timeout: GET_TIMEOUT }),
+        axios.get(`${MODEL_API_BASE}/api/supervision/risk-transactions`, { params: { page: 1, page_size: 50 }, timeout: GET_TIMEOUT }),
+        axios.get(`${MODEL_API_BASE}/api/supervision/auto/status`, { timeout: GET_TIMEOUT }),
+        axios.get(`${SERVICE_CONTROL_BASE}/api/service/model/status`, { timeout: GET_TIMEOUT })
+      ]
+      const [overview, tasks, accounts, risks, auto, service] = await Promise.allSettled(requests)
+      if (overview.status === 'fulfilled') this.overview = overview.value.data
+      if (tasks.status === 'fulfilled') {
+        this.tasks = tasks.value.data.items || []
+        this.syncProcessTask()
+      }
+      if (accounts.status === 'fulfilled') this.accounts = accounts.value.data.items || []
+      if (risks.status === 'fulfilled') this.riskTransactions = risks.value.data.items || []
+      if (auto.status === 'fulfilled') {
+        this.autoStatus = auto.value.data
+        if (auto.value.data.mode) this.autoMode = auto.value.data.mode
+      }
+      if (service.status === 'fulfilled') {
+        this.serviceStatus = service.value.data
+        this.modelApiSwitch = Boolean(service.value.data.active)
+      }
+      this.refreshing = false
     },
-    resizeChart() {
-      if (this.myChart) this.myChart.resize()
+    async toggleModelApi(enabled) {
+      this.serviceActionBusy = true
+      try {
+        const action = enabled ? 'start' : 'stop'
+        const response = await axios.post(
+          `${SERVICE_CONTROL_BASE}/api/service/model/${action}`,
+          null,
+          { timeout: POST_TIMEOUT }
+        )
+        this.serviceStatus = response.data
+        this.modelApiSwitch = Boolean(response.data.active)
+        ElMessage.success(enabled ? '模型 API 已启动' : '模型 API 已停止')
+        if (enabled) await this.refreshDashboard()
+      } catch (error) {
+        this.modelApiSwitch = !enabled
+        ElMessage.error(this.errorMessage(error, '模型 API 操作失败'))
+      } finally {
+        this.serviceActionBusy = false
+      }
     },
-    clearTimers() {
-      if (this.animationTimer) window.clearInterval(this.animationTimer)
-      if (this.progressTimer) window.clearInterval(this.progressTimer)
-      this.animationTimer = null
-      this.progressTimer = null
-    },
-    setStep(key, state) {
-      this.steps = this.steps.map((step) => step.key === key ? { ...step, state } : step)
-    },
-    resetSteps() {
-      this.steps = this.steps.map((step) => ({ ...step, state: 'idle' }))
-    },
-    async startTracking() {
-      const address = this.searchValue.trim()
-      if (!address) {
-        this.resetWorkspace()
+    async submitManualTask() {
+      const address = this.manualAddress.trim().toLowerCase()
+      if (!/^0x[0-9a-f]{40}$/.test(address)) {
+        ElMessage.warning('请输入有效的以太坊账户地址')
         return
       }
-      this.clearTimers()
-      this.isBusy = true
-      this.detectionDone = false
-      this.isAnomaly = false
-      this.activeAddress = address
-      this.sampleResult = null
-      this.predictResult = null
-      this.tableData = []
-      this.displayedNodes = []
-      this.displayedLinks = []
-      this.showIdleOverlay = false
-      this.resetSteps()
-      this.statusText = '采样中'
-      this.workflowTitle = '正在采样交易子图'
-      this.processMessage = '正在根据 B38 配置提取目标账户的交易邻域。'
-      this.setStep('sample', 'running')
-      this.myChart.showLoading({ text: '正在采样子图...' })
-
+      this.submitting = true
       try {
-        const sampleRes = await axios.post(`${MODEL_API_BASE}/api/subgraph/sample`, {
-          address,
-          include_feature_matrix: true,
-          max_feature_rows: 3000
-        })
-        this.sampleResult = sampleRes.data
-        this.setStep('sample', 'done')
-        this.statusText = '渲染中'
-        this.workflowTitle = '正在展开账户关系图'
-        this.processMessage = '采样完成，正在按采样节点顺序逐步显示交易账户。'
-
-        const echartsRes = await axios.post(`${MODEL_API_BASE}/api/subgraph/echarts`, {
-          file_path: this.sampleResult.model_input.file_path,
-          anchor_address: address,
-          max_nodes: 600,
-          max_links: 1500
-        })
-        this.graphData = this.orderGraphBySample(echartsRes.data, this.sampleResult.features?.node_order || [])
-        this.myChart.hideLoading()
-        await this.animateGraph(this.graphData)
-
-        this.setStep('draw', 'done')
-        this.statusText = '检测中'
-        this.workflowTitle = '正在执行异常检测'
-        this.processMessage = '图谱已生成，正在对目标账户进行异常检测。'
-        await this.runInference(this.sampleResult.model_input.file_path)
+        const response = await axios.post(
+          `${MODEL_API_BASE}/api/supervision/tasks`,
+          { address, source: 'manual', force: false },
+          { timeout: POST_TIMEOUT }
+        )
+        ElMessage.success(`任务已创建：${response.data.task_id}`)
+        this.manualAddress = ''
+        await this.refreshDashboard()
       } catch (error) {
-        this.statusText = '失败'
-        this.workflowTitle = '流程中断'
-        this.processMessage = error?.response?.data?.detail || error.message || '采样或检测失败。'
-        this.renderError(this.processMessage)
+        ElMessage.error(this.errorMessage(error, '补检任务创建失败'))
       } finally {
-        this.isBusy = false
-        this.inferenceVisible = false
+        this.submitting = false
       }
     },
-    orderGraphBySample(graph, nodeOrder) {
-      const rank = new Map(nodeOrder.map((id, idx) => [String(id).toLowerCase(), idx]))
-      const nodes = [...(graph.nodes || [])].sort((a, b) => {
-        const ar = rank.has(String(a.id).toLowerCase()) ? rank.get(String(a.id).toLowerCase()) : Number.MAX_SAFE_INTEGER
-        const br = rank.has(String(b.id).toLowerCase()) ? rank.get(String(b.id).toLowerCase()) : Number.MAX_SAFE_INTEGER
-        return ar - br
-      })
-      return { ...graph, nodes }
+    async discoverAccounts() {
+      await this.runAutoAction('/api/supervision/auto/discover-prebuilt?limit=50', '账户发现已执行')
     },
-    animateGraph(graph) {
-      return new Promise((resolve) => {
-        this.setStep('draw', 'running')
-        const nodes = graph.nodes || []
-        const links = graph.links || []
-        const visible = new Set()
-        let idx = 0
-        this.applyGraphOption([], [], graph.categories || [])
-        this.animationTimer = window.setInterval(() => {
-          for (let i = 0; i < 1 && idx < nodes.length; i += 1) {
-            visible.add(String(nodes[idx].id))
-            idx += 1
-          }
-          this.displayedNodes = nodes.slice(0, idx)
-          this.displayedLinks = links.filter((link) => visible.has(String(link.source)) && visible.has(String(link.target)))
-          this.applyGraphOption(this.displayedNodes, this.displayedLinks, graph.categories || [])
-          this.processMessage = `正在展开交易账户：${this.displayedNodes.length}/${nodes.length}`
-          if (idx >= nodes.length) {
-            window.clearInterval(this.animationTimer)
-            this.animationTimer = null
-            this.tableData = this.buildTransactionRows(this.activeAddress, this.displayedLinks)
-            resolve()
-          }
-        }, GRAPH_NODE_REVEAL_MS)
-      })
+    async startAutoSupervision() {
+      await this.runAutoAction(
+        `/api/supervision/auto/start?mode=${this.autoMode}&limit=50&interval_seconds=60`,
+        this.autoMode === 'continuous' ? '持续监管已启动' : '单次扫描已启动'
+      )
     },
-    applyGraphOption(nodes, links, categories) {
-      const normalized = nodes.map((node) => ({
-        ...node,
-        label: { show: String(node.id).toLowerCase() === this.activeAddress.toLowerCase(), formatter: '{b}' },
-        itemStyle: {
-          color: String(node.id).toLowerCase() === this.activeAddress.toLowerCase() ? '#1f6feb' : undefined,
-          borderColor: '#ffffff',
-          borderWidth: 1
+    async stopAutoSupervision() {
+      await this.runAutoAction('/api/supervision/auto/stop', '自动监管已停止')
+    },
+    async runAutoAction(path, successMessage) {
+      this.autoActionBusy = true
+      try {
+        const response = await axios.post(`${MODEL_API_BASE}${path}`, null, { timeout: POST_TIMEOUT })
+        const queued = response.data.queued
+        ElMessage.success(queued === undefined ? successMessage : `${successMessage}，新增 ${queued} 个任务`)
+        await this.refreshDashboard()
+      } catch (error) {
+        ElMessage.error(this.errorMessage(error, '自动监管操作失败'))
+      } finally {
+        this.autoActionBusy = false
+      }
+    },
+    async openAccountDetail(row) {
+      this.drawerVisible = true
+      this.detailLoading = true
+      this.detailAddress = row.address
+      this.detail = {}
+      this.detailGraphData = null
+      this.detailTransactions = []
+      try {
+        const response = await axios.get(
+          `${MODEL_API_BASE}/api/supervision/accounts/${encodeURIComponent(row.address)}`,
+          { timeout: GET_TIMEOUT }
+        )
+        this.detail = response.data
+        const path = this.detail.current_state?.subgraph_path
+        if (path) await this.loadDetailGraph(path, row.address)
+      } catch (error) {
+        ElMessage.error(this.errorMessage(error, '账户详情加载失败'))
+      } finally {
+        this.detailLoading = false
+      }
+    },
+    async openTaskProcess(row) {
+      this.closeTaskProcess()
+      this.processTask = { ...row }
+      this.processDrawerVisible = true
+      if (row.status === 'done') await this.loadProcessResult(row.address)
+      if (row.subgraph_path) await this.loadProcessGraph(row.subgraph_path, row.address)
+    },
+    syncProcessTask() {
+      if (!this.processDrawerVisible || !this.processTask.task_id) return
+      const updated = this.tasks.find((task) => task.task_id === this.processTask.task_id)
+      if (!updated) return
+      const previousStatus = this.processTask.status
+      this.processTask = { ...updated }
+      if (updated.subgraph_path && updated.subgraph_path !== this.processGraphLoadedPath) {
+        this.loadProcessGraph(updated.subgraph_path, updated.address)
+      }
+      if (updated.status === 'done' && previousStatus !== 'done') {
+        this.showCompleteProcessGraph()
+        this.loadProcessResult(updated.address)
+      }
+    },
+    async loadProcessResult(address) {
+      try {
+        const response = await axios.get(
+          `${MODEL_API_BASE}/api/supervision/accounts/${encodeURIComponent(address)}`,
+          { timeout: GET_TIMEOUT }
+        )
+        this.processResultDetail = response.data
+      } catch (error) {
+        ElMessage.error(this.errorMessage(error, '检测概率结果加载失败'))
+      }
+    },
+    async loadProcessGraph(filePath, address) {
+      this.processGraphLoadedPath = filePath
+      try {
+        const response = await axios.post(
+          `${MODEL_API_BASE}/api/subgraph/echarts`,
+          { file_path: filePath, anchor_address: address, max_nodes: 24, max_links: 72 },
+          { timeout: POST_TIMEOUT }
+        )
+        this.processGraphData = response.data
+        this.processDisplayedNodes = []
+        this.processDisplayedLinks = []
+        await this.$nextTick()
+        this.initProcessChart()
+        if (this.processShouldAnimate) {
+          this.animateProcessGraph()
+        } else {
+          this.showCompleteProcessGraph()
         }
-      }))
-      this.myChart.setOption({
-        backgroundColor: 'transparent',
-        tooltip: {
-          confine: true,
-          formatter: (p) => {
-            if (p.dataType === 'edge') {
-              const raw = p.data.raw || {}
-              return `${p.data.source}<br/>→ ${p.data.target}<br/>次数：${raw.E_cnt || 0}<br/>金额：${this.formatCompact(raw.E_sum_amt || 0)}`
-            }
-            const raw = p.data.raw || {}
-            return `${p.data.name}<br/>度数：${p.data.value || 0}<br/>入账：${raw.N_in_cnt || 0}<br/>出账：${raw.N_out_cnt || 0}`
-          }
-        },
-        legend: {
-          top: 8,
-          right: 16,
-          data: categories.map((item) => item.name),
-          textStyle: { color: '#667085' }
-        },
+      } catch (error) {
+        this.processGraphLoadedPath = ''
+        ElMessage.error(this.errorMessage(error, '检测过程子图加载失败'))
+      }
+    },
+    initProcessChart() {
+      if (!this.$refs.processGraph) return
+      this.disposeProcessChart()
+      this.processChart = echarts.init(this.$refs.processGraph)
+      this.renderProcessGraph()
+    },
+    renderProcessGraph() {
+      if (!this.processChart || !this.processGraphData) return
+      this.processChart.setOption({
+        tooltip: { trigger: 'item' },
+        legend: [{ data: (this.processGraphData.categories || []).map((item) => item.name), bottom: 8 }],
+        animationDurationUpdate: 800,
         series: [{
           type: 'graph',
           layout: 'force',
           roam: true,
-          draggable: true,
-          data: normalized,
-          links,
-          categories,
-          edgeSymbol: ['none', 'arrow'],
-          edgeSymbolSize: 7,
-          lineStyle: { color: '#9aa4b2', opacity: 0.55, curveness: 0.08 },
-          force: { repulsion: 130, edgeLength: 95, gravity: 0.08 },
-          emphasis: { focus: 'adjacency', lineStyle: { width: 3 } },
-          animationDuration: 260
-        }]
-      }, true)
-    },
-    async runInference(filePath) {
-      this.setStep('infer', 'running')
-      this.inferenceVisible = true
-      this.inferenceProgress = 8
-      this.progressTimer = window.setInterval(() => {
-        if (this.inferenceProgress < 88) this.inferenceProgress += Math.max(1, Math.round((90 - this.inferenceProgress) * 0.03))
-      }, 220)
-
-      const inferPromise = axios.post(`${MODEL_API_BASE}/api/model/predict`, { file_path: filePath })
-      const delayPromise = new Promise((resolve) => window.setTimeout(resolve, MIN_INFERENCE_MS))
-      const [inferRes] = await Promise.all([inferPromise, delayPromise])
-      if (this.progressTimer) window.clearInterval(this.progressTimer)
-      this.inferenceProgress = 100
-      await new Promise((resolve) => window.setTimeout(resolve, 220))
-
-      this.predictResult = inferRes.data
-      const result = this.predictResult.results?.[0] || {}
-      this.isAnomaly = Boolean(result.pass_threshold?.[result.pred_label])
-      this.detectionDone = true
-      this.setStep('infer', 'done')
-      this.statusText = this.isAnomaly ? '异常' : '正常'
-      this.workflowTitle = this.isAnomaly ? '发现异常账户' : '账户检测正常'
-      this.processMessage = this.isAnomaly
-        ? `模型判定该账户属于 ${result.pred_label} 风险类型，已在图中红色标记。`
-        : '模型未发现超过阈值的异常风险，账户正常。'
-      if (this.isAnomaly) this.markAnomalyNode(this.activeAddress)
-    },
-    markAnomalyNode(address) {
-      const option = this.myChart.getOption()
-      const series = option.series?.[0]
-      if (!series?.data) return
-      series.data = series.data.map((node) => {
-        if (String(node.id).toLowerCase() !== address.toLowerCase()) return node
-        return {
-          ...node,
-          symbolSize: Math.max(node.symbolSize || 30, 48),
-          itemStyle: {
-            ...(node.itemStyle || {}),
-            color: '#d92d20',
-            borderColor: '#fff',
-            borderWidth: 3,
-            shadowBlur: 18,
-            shadowColor: 'rgba(217,45,32,0.45)'
-          },
-          label: { show: true, formatter: '异常账户\n{b}', color: '#d92d20', fontWeight: 700 }
-        }
-      })
-      this.myChart.setOption({ series: [series] })
-    },
-    renderIdleGraph() {
-      this.showIdleOverlay = true
-      this.statusText = '待检索'
-      this.workflowTitle = '等待输入'
-      this.graphTitle = '实时账户关系网络'
-      this.processMessage = '等待检索账户地址。'
-      this.resetSteps()
-      const nodes = Array.from({ length: 24 }).map((_, idx) => ({
-        id: `idle-${idx}`,
-        name: `账户 ${idx + 1}`,
-        value: Math.round(Math.random() * 8 + 1),
-        symbolSize: Math.round(Math.random() * 16 + 12),
-        category: idx % 4,
-        itemStyle: { color: ['#2f80ed', '#12b76a', '#f79009', '#667085'][idx % 4] }
-      }))
-      const links = Array.from({ length: 34 }).map(() => ({
-        source: `idle-${Math.floor(Math.random() * nodes.length)}`,
-        target: `idle-${Math.floor(Math.random() * nodes.length)}`,
-        lineStyle: { opacity: 0.35 }
-      })).filter((link) => link.source !== link.target)
-      this.myChart.setOption({
-        backgroundColor: 'transparent',
-        series: [{
-          type: 'graph',
-          layout: 'force',
-          roam: false,
-          data: nodes,
-          links,
-          categories: [{ name: 'A' }, { name: 'B' }, { name: 'C' }, { name: 'D' }],
-          force: { repulsion: 80, edgeLength: 80 },
-          lineStyle: { color: '#c7ced8' },
+          data: this.processDisplayedNodes,
+          links: this.processDisplayedLinks,
+          categories: this.processGraphData.categories || [],
           label: { show: false },
-          silent: true
+          emphasis: { focus: 'adjacency', label: { show: true } },
+          lineStyle: { color: 'source', curveness: 0.08, opacity: 0.58 },
+          force: { repulsion: 130, edgeLength: [65, 130], gravity: 0.08 }
         }]
       }, true)
     },
-    renderError(message) {
-      this.myChart.hideLoading()
-      this.myChart.setOption({
-        title: { text: '处理失败', subtext: message, left: 'center', top: 'center', textStyle: { color: '#d92d20' } },
-        series: []
+    animateProcessGraph() {
+      this.clearProcessTimers()
+      const nodes = this.processGraphData?.nodes || []
+      const links = this.processGraphData?.links || []
+      if (!nodes.length) return
+      let index = 0
+      const revealNext = () => {
+        this.processDisplayedNodes = nodes.slice(0, index + 1)
+        const visibleIds = new Set(this.processDisplayedNodes.map((node) => String(node.id || node.name)))
+        this.processDisplayedLinks = links.filter(
+          (link) => visibleIds.has(String(link.source)) && visibleIds.has(String(link.target))
+        )
+        this.renderProcessGraph()
+        index += 1
+        if (index >= nodes.length) {
+          window.clearInterval(this.processAnimationTimer)
+          this.processAnimationTimer = null
+          this.startProcessInferenceAnimation()
+        }
+      }
+      revealNext()
+      if (nodes.length > 1) this.processAnimationTimer = window.setInterval(revealNext, GRAPH_NODE_REVEAL_MS)
+    },
+    showCompleteProcessGraph() {
+      this.clearProcessTimers()
+      this.processInferenceProgress = 100
+      this.processDisplayedNodes = this.processGraphData?.nodes || []
+      this.processDisplayedLinks = this.processGraphData?.links || []
+      this.renderProcessGraph()
+    },
+    startProcessInferenceAnimation() {
+      this.processInferenceProgress = 1
+      const tickMs = 110
+      const increment = 100 / (INFERENCE_DURATION_MS / tickMs)
+      this.processProgressTimer = window.setInterval(() => {
+        this.processInferenceProgress = Math.min(100, this.processInferenceProgress + increment)
+        if (this.processInferenceProgress >= 100) {
+          window.clearInterval(this.processProgressTimer)
+          this.processProgressTimer = null
+        }
+      }, tickMs)
+    },
+    clearProcessTimers() {
+      if (this.processAnimationTimer) window.clearInterval(this.processAnimationTimer)
+      if (this.processProgressTimer) window.clearInterval(this.processProgressTimer)
+      this.processAnimationTimer = null
+      this.processProgressTimer = null
+    },
+    closeTaskProcess() {
+      this.clearProcessTimers()
+      this.disposeProcessChart()
+      this.processDrawerVisible = false
+      this.processTask = {}
+      this.processGraphData = null
+      this.processResultDetail = {}
+      this.processDisplayedNodes = []
+      this.processDisplayedLinks = []
+      this.processInferenceProgress = 0
+      this.processGraphLoadedPath = ''
+    },
+    disposeProcessChart() {
+      if (this.processChart) {
+        this.processChart.dispose()
+        this.processChart = null
+      }
+    },
+    resizeProcessChart() {
+      if (this.processChart) this.processChart.resize()
+    },
+    async loadDetailGraph(filePath, address) {
+      const response = await axios.post(
+        `${MODEL_API_BASE}/api/subgraph/echarts`,
+        { file_path: filePath, anchor_address: address, max_nodes: 600, max_links: 1500 },
+        { timeout: POST_TIMEOUT }
+      )
+      this.detailGraphData = response.data
+      this.detailTransactions = this.buildTransactionRows(response.data.links || [], address)
+      await this.$nextTick()
+      this.renderDetailGraph()
+    },
+    renderDetailGraph() {
+      if (!this.$refs.detailGraph || !this.detailGraphData) return
+      this.disposeDetailChart()
+      this.detailChart = echarts.init(this.$refs.detailGraph)
+      const series = {
+        ...(this.detailGraphData.series?.[0] || {}),
+        data: this.detailGraphData.nodes || [],
+        links: this.detailGraphData.links || [],
+        categories: this.detailGraphData.categories || [],
+        label: { show: false },
+        emphasis: { focus: 'adjacency', label: { show: true } },
+        lineStyle: { color: 'source', curveness: 0.08, opacity: 0.55 },
+        force: { repulsion: 125, edgeLength: [60, 130], gravity: 0.08 }
+      }
+      this.detailChart.setOption({
+        tooltip: {
+          trigger: 'item',
+          formatter: (params) => params.dataType === 'node'
+            ? `${params.name}<br/>连接度：${params.value || 0}`
+            : `${params.data.source} → ${params.data.target}<br/>金额：${this.formatCompact(params.data.value)}`
+        },
+        legend: [{ data: (this.detailGraphData.categories || []).map((item) => item.name), bottom: 8 }],
+        animationDurationUpdate: 600,
+        series: [series]
       }, true)
     },
-    resetWorkspace() {
-      this.clearTimers()
-      this.searchValue = ''
-      this.activeAddress = ''
-      this.graphData = null
-      this.sampleResult = null
-      this.predictResult = null
-      this.detectionDone = false
-      this.isAnomaly = false
-      this.inferenceVisible = false
-      this.inferenceProgress = 0
-      this.tableData = []
-      this.isBusy = false
-      this.renderIdleGraph()
+    async rescanDetail() {
+      this.manualAddress = this.detailAddress
+      await this.submitManualTask()
     },
-    refreshData() {
-      if (this.activeAddress) this.startTracking()
-      else this.renderIdleGraph()
-    },
-    exportData() {
-      const payload = JSON.stringify({ sample: this.sampleResult, prediction: this.predictResult }, null, 2)
-      const blob = new Blob([payload], { type: 'application/json' })
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `supervision-${Date.now()}.json`
-      a.click()
-      URL.revokeObjectURL(url)
-    },
-    handleNodeClick(params) {
-      this.selectedNode = params.data
-      this.tableData = this.buildTransactionRows(params.data.id, this.displayedLinks.length ? this.displayedLinks : (this.graphData?.links || []))
+    buildTransactionRows(links, address) {
+      const target = String(address || '').toLowerCase()
+      return links
+        .filter((link) => String(link.source).toLowerCase() === target || String(link.target).toLowerCase() === target)
+        .slice(0, 100)
+        .map((link) => ({
+          direction: String(link.target).toLowerCase() === target ? '转入' : '转出',
+          from: link.source,
+          to: link.target,
+          count: this.formatNumber(link.raw?.E_cnt || 0),
+          amount: this.formatCompact(link.raw?.E_sum_amt || link.value || 0),
+          fee: this.formatCompact(link.raw?.E_sum_fee || 0)
+        }))
     },
     findNodeByAddress(address) {
       const target = String(address || '').toLowerCase()
-      return (this.graphData?.nodes || []).find((node) => String(node.id).toLowerCase() === target)
+      return (this.detailGraphData?.nodes || []).find((node) => String(node.id || node.name).toLowerCase() === target)
     },
-    buildTransactionRows(address, links) {
-      const target = String(address || '').toLowerCase()
-      return (links || [])
-        .filter((link) => String(link.source).toLowerCase() === target || String(link.target).toLowerCase() === target)
-        .slice(0, 12)
-        .map((link) => {
-          const raw = link.raw || {}
-          const isOut = String(link.source).toLowerCase() === target
-          return {
-            direction: isOut ? '转出' : '转入',
-            from: link.source,
-            to: link.target,
-            count: raw.E_cnt || 0,
-            amount: this.formatCompact(raw.E_sum_amt || 0),
-            fee: this.formatCompact(raw.E_sum_fee || 0)
-          }
-        })
+    disposeDetailChart() {
+      if (this.detailChart) {
+        this.detailChart.dispose()
+        this.detailChart = null
+      }
+    },
+    resizeDetailChart() {
+      if (this.detailChart) this.detailChart.resize()
+    },
+    taskTagType(status) {
+      if (status === 'done') return 'success'
+      if (status === 'failed') return 'danger'
+      if (status === 'queued') return 'info'
+      return 'warning'
+    },
+    taskStatusText(status) {
+      return {
+        queued: '等待检测',
+        sampling: '子图采样',
+        inferencing: '模型推理',
+        saving: '保存结果',
+        done: '已完成',
+        failed: '失败'
+      }[status] || status || '-'
+    },
+    sourceText(source) {
+      return {
+        manual: '人工补检',
+        prebuilt: '自动发现',
+        watchlist: '观察名单',
+        transaction_stream: '交易流',
+        risk_expand: '风险扩展',
+        external_label: '外部标签'
+      }[source] || source || '-'
+    },
+    labelText(label) {
+      return {
+        normal: '正常',
+        exchange: '交易所',
+        ico_wallet: 'ICO 钱包',
+        mining: '挖矿账户',
+        phish_hack: '钓鱼/黑客'
+      }[label] || label || '-'
+    },
+    riskLevelText(level) {
+      return { high: '高风险', medium: '中风险', low: '低风险', normal: '正常', unknown: '未知' }[level] || level || '-'
     },
     formatPercent(value) {
-      return `${((Number(value) || 0) * 100).toFixed(2)}%`
+      const number = Number(value)
+      return Number.isFinite(number) ? `${(number * 100).toFixed(2)}%` : '0.00%'
     },
     formatNumber(value) {
-      return Number(value || 0).toLocaleString()
+      const number = Number(value)
+      return Number.isFinite(number) ? number.toLocaleString('zh-CN') : '0'
     },
     formatCompact(value) {
-      const num = Number(value || 0)
-      if (Math.abs(num) >= 1e9) return `${(num / 1e9).toFixed(2)}B`
-      if (Math.abs(num) >= 1e6) return `${(num / 1e6).toFixed(2)}M`
-      if (Math.abs(num) >= 1e3) return `${(num / 1e3).toFixed(2)}K`
-      return num.toFixed(2)
+      const number = Number(value)
+      if (!Number.isFinite(number)) return '0'
+      return new Intl.NumberFormat('zh-CN', { notation: 'compact', maximumFractionDigits: 2 }).format(number)
+    },
+    formatTime(value) {
+      if (!value) return '-'
+      const date = new Date(value)
+      return Number.isNaN(date.getTime()) ? value : date.toLocaleString('zh-CN', { hour12: false })
+    },
+    errorMessage(error, fallback) {
+      const detail = error?.response?.data?.detail
+      if (typeof detail === 'string') return detail
+      if (detail?.message) return detail.message
+      return error?.message || fallback
     }
   }
 }
@@ -545,387 +952,634 @@ export default {
 
 <style scoped>
 .home {
-  width: 100vw;
-  height: 100vh;
-  background: #f5f6fa;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
+  min-height: 100vh;
+  background: #f4f6f8;
+  color: #17202a;
 }
 
 .main-content {
   display: flex;
-  flex: 1;
-  min-height: 0;
-  background: #f5f6fa;
+  min-height: calc(100vh - 64px);
 }
 
 .content {
   flex: 1;
   min-width: 0;
-  padding: 18px 20px;
-  overflow: auto;
+  padding: 24px;
+  overflow: hidden;
 }
 
 .supervision-page {
-  display: grid;
-  gap: 16px;
-  min-height: calc(100vh - 96px);
+  max-width: 1720px;
+  margin: 0 auto;
 }
 
-.supervision-header,
-.graph-card,
-.side-panel > section,
-.log-card {
-  background: #fff;
-  border: 1px solid #e7ebf0;
-  border-radius: 10px;
-  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.06);
-}
-
-.supervision-header {
+.page-header,
+.section-heading,
+.drawer-title {
   display: flex;
+  align-items: center;
   justify-content: space-between;
   gap: 20px;
-  align-items: center;
-  padding: 18px 20px;
 }
 
-.header-copy h2,
-.card-title-row h3,
-.side-panel h3,
-.log-card h3 {
-  margin: 0;
-  color: #1f2937;
+.page-header {
+  margin-bottom: 20px;
+}
+
+.service-warning {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+  border: 1px solid #e1b9bd;
+  border-radius: 5px;
+  padding: 11px 14px;
+  background: #fff7f7;
+  color: #8f303b;
+  font-size: 13px;
+}
+
+.service-warning span {
+  color: #75575b;
+}
+
+.page-header h2,
+.section-heading h3,
+.drawer-title h3 {
+  margin: 4px 0 0;
   letter-spacing: 0;
 }
 
-.header-copy h2 {
-  font-size: 22px;
+.page-header h2 {
+  font-size: 26px;
 }
 
-.header-copy span {
-  display: block;
-  margin-top: 6px;
-  color: #667085;
-  font-size: 14px;
+.page-header span,
+.section-heading span {
+  color: #687481;
+  font-size: 13px;
 }
 
 .eyebrow,
 .section-kicker {
-  margin: 0 0 5px;
-  color: #2f80ed;
+  margin: 0;
+  color: #397265;
   font-size: 12px;
   font-weight: 700;
+  text-transform: uppercase;
 }
 
-.search-panel {
-  display: grid;
-  gap: 10px;
-  min-width: 460px;
+.manual-check {
+  display: flex;
+  width: min(560px, 48%);
 }
 
-.search-box-main {
-  display: grid;
-  grid-template-columns: minmax(260px, 1fr) 112px;
-  gap: 10px;
-}
-
-.search-input {
-  min-height: 40px;
-  border: 1px solid #d8dee8;
-  border-radius: 7px;
-  padding: 0 12px;
-  font-size: 14px;
-  color: #1f2937;
+.manual-check input {
+  flex: 1;
+  min-width: 0;
+  height: 42px;
+  border: 1px solid #c9d1d9;
+  border-right: 0;
+  border-radius: 5px 0 0 5px;
+  padding: 0 14px;
   outline: none;
 }
 
-.search-input:focus {
-  border-color: #2f80ed;
-  box-shadow: 0 0 0 3px rgba(47, 128, 237, 0.12);
+.manual-check input:focus {
+  border-color: #397265;
 }
 
-.track-btn,
-.ghost-btn {
-  min-height: 40px;
-  border-radius: 7px;
-  border: 0;
-  font-weight: 700;
+button {
+  height: 38px;
+  border: 1px solid #2f665a;
+  border-radius: 5px;
+  padding: 0 16px;
+  background: #2f665a;
+  color: #fff;
   cursor: pointer;
 }
 
-.track-btn {
-  background: #2f80ed;
-  color: #fff;
-}
-
-.track-btn:disabled,
-.ghost-btn:disabled {
+button:disabled {
+  cursor: not-allowed;
   opacity: 0.55;
-  cursor: wait;
 }
 
-.header-actions {
+.manual-check button {
+  height: 42px;
+  border-radius: 0 5px 5px 0;
+}
+
+.secondary {
+  border-color: #b9c3cb;
+  background: #fff;
+  color: #33414c;
+}
+
+.danger-btn {
+  border-color: #a83d48;
+  background: #a83d48;
+}
+
+.table-action {
+  height: 30px;
+  border-color: #9fb1ad;
+  padding: 0 10px;
+  background: #fff;
+  color: #2f665a;
+  font-size: 12px;
+}
+
+.kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(135px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.kpi-card {
+  min-height: 118px;
+  border: 1px solid #dce2e7;
+  border-radius: 6px;
+  padding: 16px;
+  background: #fff;
+}
+
+.kpi-card span,
+.kpi-card small {
+  display: block;
+  color: #6c7782;
+  font-size: 13px;
+}
+
+.kpi-card strong {
+  display: block;
+  margin: 10px 0 8px;
+  font-size: 28px;
+  line-height: 1;
+}
+
+.status-band,
+.data-section {
+  margin-bottom: 16px;
+  border: 1px solid #dce2e7;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.status-band {
+  padding: 18px;
+}
+
+.data-section {
+  padding: 18px 18px 14px;
+}
+
+.section-heading {
+  margin-bottom: 14px;
+}
+
+.section-heading h3 {
+  font-size: 17px;
+}
+
+.toolbar {
   display: flex;
-  justify-content: flex-end;
+  align-items: center;
   gap: 8px;
 }
 
-.ghost-btn {
-  padding: 0 14px;
-  background: #f2f5f9;
-  color: #344054;
-  border: 1px solid #e1e7ef;
-}
-
-.workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
-  gap: 16px;
-  min-height: 560px;
-}
-
-.graph-card {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  padding: 16px;
-  min-width: 0;
-}
-
-.card-title-row {
+.service-control {
   display: flex;
-  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-right: 8px;
+  border-right: 1px solid #dce2e7;
+  padding-right: 16px;
+  font-size: 13px;
+}
+
+.service-control b {
+  color: #a13c47;
+  font-size: 12px;
+}
+
+.service-control b.online {
+  color: #2f665a;
+}
+
+.auto-state {
+  margin-right: 4px;
+  color: #7a4650;
+  font-size: 13px;
+}
+
+.auto-state.running {
+  color: #2f665a;
+}
+
+.agent-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border-top: 1px solid #e4e8ec;
+}
+
+.agent-item {
+  display: grid;
+  grid-template-columns: 12px 1fr auto;
   align-items: center;
   gap: 12px;
-  margin-bottom: 12px;
+  min-height: 86px;
+  padding: 12px 18px;
+  border-right: 1px solid #e4e8ec;
 }
 
-.card-title-row.compact {
-  margin-bottom: 10px;
+.agent-item:last-child {
+  border-right: 0;
 }
 
-.state-pill {
-  border-radius: 999px;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 700;
-  background: #eef2f6;
-  color: #667085;
-}
-
-.state-pill.running {
-  background: #eaf2ff;
-  color: #2f80ed;
-}
-
-.state-pill.success {
-  background: #e9f8ef;
-  color: #138a4d;
-}
-
-.state-pill.danger {
-  background: #fdecec;
-  color: #d92d20;
-}
-
-.chart-wrap {
-  position: relative;
-  min-height: 500px;
-  border: 1px solid #e7ebf0;
-  border-radius: 8px;
-  background: #fbfcff;
-  overflow: hidden;
-}
-
-.graph-canvas {
-  width: 100%;
-  height: 100%;
-  min-height: 500px;
-}
-
-.idle-overlay {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  width: min(420px, 78%);
-  padding: 18px 20px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.78);
-  border: 1px solid rgba(214, 222, 234, 0.9);
-  backdrop-filter: blur(8px);
-  text-align: center;
-  color: #344054;
-  box-shadow: 0 12px 36px rgba(16, 24, 40, 0.12);
-}
-
-.idle-overlay strong {
-  display: block;
-  margin-bottom: 6px;
-  font-size: 18px;
-  color: #1f2937;
-}
-
-.idle-overlay span {
-  color: #667085;
-  font-size: 14px;
-}
-
-.side-panel {
-  display: grid;
-  gap: 16px;
-  align-content: start;
-}
-
-.status-card,
-.summary-card {
-  padding: 16px;
-}
-
-.steps {
-  display: grid;
-  gap: 10px;
-  margin: 14px 0;
-}
-
-.step {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  color: #667085;
-  font-size: 14px;
-}
-
-.step i {
+.agent-item i {
   width: 10px;
   height: 10px;
   border-radius: 50%;
-  background: #c9d2df;
+  background: #aeb7bf;
 }
 
-.step.running i {
-  background: #2f80ed;
-  box-shadow: 0 0 0 5px rgba(47, 128, 237, 0.12);
+.agent-item i.active {
+  background: #2f806d;
+  box-shadow: 0 0 0 4px #dcece8;
 }
 
-.step.done i {
-  background: #12b76a;
+.agent-item i.warning {
+  background: #b54a54;
+  box-shadow: 0 0 0 4px #f3dfe1;
 }
 
-.inference-box {
-  margin: 12px 0;
-  padding: 12px;
-  border-radius: 8px;
-  background: #f5f8ff;
+.agent-item strong,
+.agent-item span {
+  display: block;
 }
 
-.progress-head {
+.agent-item span {
+  margin-top: 5px;
+  color: #6c7782;
+  font-size: 12px;
+}
+
+.agent-item b {
+  font-size: 13px;
+}
+
+:deep(.clickable-row) {
+  cursor: pointer;
+}
+
+.drawer-content {
+  min-height: 620px;
+}
+
+.process-content {
+  min-height: 650px;
+}
+
+.process-steps {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  margin-bottom: 16px;
+  border: 1px solid #dce2e7;
+  border-radius: 6px;
+}
+
+.process-step {
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  gap: 10px;
+  min-height: 82px;
+  padding: 16px;
+  border-right: 1px solid #e4e8ec;
+}
+
+.process-step:last-child {
+  border-right: 0;
+}
+
+.process-step i {
+  width: 11px;
+  height: 11px;
+  margin-top: 3px;
+  border-radius: 50%;
+  background: #b7c0c7;
+}
+
+.process-step.active i {
+  background: #397265;
+  box-shadow: 0 0 0 5px #deece8;
+}
+
+.process-step.done i {
+  background: #397265;
+}
+
+.process-step.failed i {
+  background: #b34450;
+  box-shadow: 0 0 0 5px #f4e1e3;
+}
+
+.process-step strong,
+.process-step span {
+  display: block;
+}
+
+.process-step span {
+  margin-top: 6px;
+  color: #6c7782;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.process-progress {
+  margin-bottom: 16px;
+  border: 1px solid #dce2e7;
+  border-radius: 6px;
+  padding: 14px 16px;
+}
+
+.process-progress > div {
   display: flex;
   justify-content: space-between;
-  margin-bottom: 8px;
-  color: #344054;
+  margin-bottom: 9px;
   font-size: 13px;
 }
 
-.progress-track {
-  height: 8px;
-  border-radius: 999px;
-  background: #dce7fb;
-  overflow: hidden;
-}
-
-.progress-bar {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, #2f80ed, #12b76a);
-  transition: width 0.16s ease;
-}
-
-.message-line {
-  margin: 8px 0 0;
-  color: #667085;
-  line-height: 1.5;
-  font-size: 13px;
-}
-
-.summary-card.normal {
-  border-color: #b9ebcf;
-}
-
-.summary-card.danger {
-  border-color: #f4b6b0;
-}
-
-.address-text {
-  margin: 10px 0 14px;
-  color: #667085;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-}
-
-.summary-grid {
+.process-result {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: 150px 150px minmax(0, 1fr);
+  gap: 0;
+  margin-bottom: 16px;
+  border: 1px solid #dce2e7;
+  border-radius: 6px;
 }
 
-.summary-grid div {
-  border: 1px solid #edf1f6;
-  border-radius: 8px;
-  padding: 10px;
-  background: #fbfcfe;
+.process-verdict {
+  padding: 16px;
+  border-right: 1px solid #e4e8ec;
+}
+
+.process-verdict span,
+.process-verdict strong {
+  display: block;
+}
+
+.process-verdict span {
+  margin-bottom: 8px;
+  color: #6c7782;
+  font-size: 12px;
+}
+
+.process-verdict strong {
+  font-size: 16px;
+}
+
+.process-probabilities {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(100px, 1fr));
+  gap: 14px;
+  align-items: center;
+  padding: 13px 16px;
+}
+
+.process-probabilities > div {
   min-width: 0;
 }
 
-.summary-grid span {
+.process-probabilities span,
+.process-probabilities b {
   display: block;
-  margin-bottom: 4px;
-  color: #667085;
+  margin-bottom: 5px;
   font-size: 12px;
 }
 
-.summary-grid b {
-  color: #1f2937;
-  overflow-wrap: anywhere;
+.process-probabilities b {
+  font-size: 13px;
 }
 
-.log-card {
+.process-probabilities .result-pending {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #74808a;
+}
+
+.process-graph-panel {
+  position: relative;
+  min-height: 500px;
+  border: 1px solid #dce2e7;
+  border-radius: 6px;
   padding: 16px;
 }
 
-@media (max-width: 1180px) {
-  .supervision-header,
-  .workspace {
-    grid-template-columns: 1fr;
+.process-graph {
+  width: 100%;
+  height: 430px;
+}
+
+.process-waiting {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -35%);
+  text-align: center;
+}
+
+.process-waiting strong,
+.process-waiting span {
+  display: block;
+}
+
+.process-waiting span {
+  margin-top: 8px;
+  color: #74808a;
+  font-size: 13px;
+}
+
+.drawer-title {
+  width: 100%;
+  padding-right: 20px;
+}
+
+.drawer-title h3 {
+  max-width: 760px;
+  overflow: hidden;
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-summary {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  margin-bottom: 16px;
+  border: 1px solid #dce2e7;
+  border-radius: 6px;
+}
+
+.detail-summary div {
+  min-width: 0;
+  padding: 14px 16px;
+  border-right: 1px solid #e4e8ec;
+}
+
+.detail-summary div:last-child {
+  border-right: 0;
+}
+
+.detail-summary span,
+.detail-summary strong {
+  display: block;
+}
+
+.detail-summary span {
+  margin-bottom: 7px;
+  color: #6c7782;
+  font-size: 12px;
+}
+
+.detail-summary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  min-height: 480px;
+  border: 1px solid #dce2e7;
+  border-radius: 6px;
+}
+
+.graph-panel {
+  position: relative;
+  min-width: 0;
+  padding: 16px;
+  border-right: 1px solid #e4e8ec;
+}
+
+.detail-graph {
+  width: 100%;
+  height: 410px;
+}
+
+.empty-hint {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
+  color: #7c8790;
+}
+
+.probability-panel {
+  padding: 18px;
+}
+
+.probability-panel h3 {
+  margin: 0 0 16px;
+  font-size: 15px;
+}
+
+.probability-panel h3:nth-of-type(2) {
+  margin-top: 28px;
+}
+
+.probability-row {
+  margin-bottom: 14px;
+}
+
+.probability-row > div {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.probability-panel dl {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 12px;
+  margin: 0;
+  font-size: 13px;
+}
+
+.probability-panel dt {
+  color: #687481;
+}
+
+.probability-panel dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.detail-transactions {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #dce2e7;
+  border-radius: 6px;
+}
+
+@media (max-width: 1250px) {
+  .kpi-grid {
+    grid-template-columns: repeat(3, 1fr);
   }
 
-  .supervision-header {
-    display: grid;
+  .page-header {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
-  .search-panel {
-    min-width: 0;
-  }
-
-  .workspace {
-    display: grid;
+  .manual-check {
+    width: 100%;
   }
 }
 
-@media (max-width: 760px) {
+@media (max-width: 820px) {
   .content {
-    padding: 12px;
+    padding: 14px;
   }
 
-  .search-box-main,
-  .summary-grid {
+  .kpi-grid,
+  .agent-grid,
+  .detail-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .agent-item,
+  .detail-summary div {
+    border-bottom: 1px solid #e4e8ec;
+  }
+
+  .detail-grid {
     grid-template-columns: 1fr;
   }
 
-  .chart-wrap,
-  .graph-canvas {
-    min-height: 380px;
+  .graph-panel {
+    border-right: 0;
+    border-bottom: 1px solid #e4e8ec;
+  }
+
+  .toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .process-steps {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .process-result {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .process-probabilities {
+    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, 1fr);
+    border-top: 1px solid #e4e8ec;
   }
 }
 </style>

@@ -25,31 +25,35 @@
     <!-- 仅管理员可见，通过 isAdminVisible 控制显示，避免闪现 -->
     <!-- <router-link v-if="isAdminVisible" to="/user-management">用户管理(管理员)</router-link> -->
 
-    <template v-if="!isAuditor">
+    <template v-if="isRegulator">
+      <router-link to="/home" @click="setBuyerRoleForRegulator">主页</router-link>
+      <router-link to="/market" @click="setBuyerRoleForRegulator">交易市场</router-link>
+      <router-link to="/supervision">监管平台</router-link>
+    </template>
 
-  <router-link to="/home">主页</router-link>
+    <template v-else-if="!isAuditor">
+      <router-link to="/home">主页</router-link>
 
-  <router-link v-if="isSeller" to="/chain-registration">
-    上链登记
-  </router-link>
+      <router-link v-if="isSeller" to="/chain-registration">
+        上链登记
+      </router-link>
 
-  <router-link to="/asset-management2">
-    资产管理
-  </router-link>
+      <router-link to="/asset-management2">
+        资产管理
+      </router-link>
 
-  <router-link :to="marketPath">
-    交易市场
-  </router-link>
+      <router-link :to="marketPath">
+        交易市场
+      </router-link>
 
-  <router-link :to="deliveryPath">
-    资产交付
-  </router-link>
+      <router-link :to="deliveryPath">
+        资产交付
+      </router-link>
 
-  <router-link to="/user-center">
-    个人中心
-  </router-link>
-
-</template>
+      <router-link to="/user-center">
+        个人中心
+      </router-link>
+    </template>
 
   </div>
 </template>
@@ -75,6 +79,10 @@ export default {
     this.roleTick; // ✅ 关键：触发重新计算
     return localStorage.getItem('user_role') || 'seller';
   },
+  loginRole() {
+    this.roleTick;
+    return localStorage.getItem('login_role') || 'user';
+  },
   isSeller() {
     return this.userRole === 'seller';
   },
@@ -84,6 +92,9 @@ export default {
   isAuditor() {
   return this.userRole === 'auditor';
 },
+  isRegulator() {
+    return this.loginRole === 'regulator';
+  },
   deliveryPath() {
   if (this.userRole === 'auditor') {
     return '/home';
@@ -94,7 +105,7 @@ export default {
     : '/delivery/buyer';
 },
   marketPath() {
-    return this.isBuyer ? "/market" : "/market/seller";
+    return this.isBuyer || this.isRegulator ? "/market" : "/market/seller";
   }
   },
   methods: {
@@ -159,6 +170,15 @@ export default {
 
     fetchAssetData() {
       console.log('开始获取资产数据...');
+    },
+
+    setBuyerRoleForRegulator() {
+      if (!this.isRegulator) {
+        return;
+      }
+
+      localStorage.setItem('user_role', 'buyer');
+      window.dispatchEvent(new Event('role-changed'));
     },
 
     onRoleChanged() {

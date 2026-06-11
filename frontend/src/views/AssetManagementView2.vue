@@ -1849,26 +1849,31 @@ async fetchCertificates() {
 },
 
 
-async getCertAddr(certObj) {
+async getCertAddr(certInfo) {
   try {
-    const { name, org } = certObj;
+    const certName = certInfo.name;
+    const orgName = certInfo.org;
 
-    const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${name}/${name}.sign.crt`;
+    const certPath =
+      `/home/super/r/GoSDK/crypto-config/${orgName}/user/${certName}/${certName}.sign.crt`;
 
     const response = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
       cert_path: certPath
     });
-    console.log("证书地址请求响应:", response);  // 打印响应
 
-    if (response.status === 200 && response.data.ethereum.address) {
-      return response.data.ethereum.address;
-    } else {
-      console.error('❌ 获取地址失败:', response.data);
-      throw new Error('证书地址获取失败');
+    const addr = response?.data?.ethereum?.address;
+
+    if (response.status === 200 && addr) {
+      return addr;
     }
-  } catch (error) {
-    console.error('❌ 请求地址失败:', error);
-    throw new Error('请求证书地址失败');
+
+    return null;
+  } catch (err) {
+    console.warn('跳过无效或过期证书:', {
+      cert: certInfo,
+      error: err.response?.data || err.message
+    });
+    return null;
   }
 },
 
@@ -1911,51 +1916,76 @@ async fetchAllAssets() {
 
 async fetchPurchasedAssets() {
   try {
-    await this.fetchCertificates();
-    const addressPromises = this.certificates.map(cert => this.getCertAddr(cert));
-    const addresses = await Promise.all(addressPromises);
-    console.log("✅ 转换后的地址列表:", addresses);
+    this.isLoading = true;
 
-    const response = await axios.post('http://10.112.47.214:3000/api/get-purchased-assets', {
-      addresses: addresses
-    });
+    // 1. 先获取 org1 + org2 的所有证书
+    await this.fetchCertificates();
+
+    const addresses = [];
+
+    // 2. 逐个证书转地址，过期/无效证书跳过
+    for (const certInfo of this.certificates) {
+      const addr = await this.getCertAddr(certInfo);
+
+      if (addr) {
+        addresses.push(addr);
+      }
+    }
+
+    console.log('✅ 有效买家地址列表:', addresses);
+
+    // 3. 没有有效地址，直接清空
+    if (addresses.length === 0) {
+      this.purchasedAssets = [];
+      this.setPagination();
+      return;
+    }
+
+    // 4. 根据有效地址查询购买资产
+    const response = await axios.post(
+      'http://10.112.47.214:3000/api/get-purchased-assets',
+      {
+        addresses
+      }
+    );
 
     if (response.status === 200) {
       const rawAssets = response.data.assets || [];
-      console.log("📦 后端返回资产数据:", rawAssets);
+      console.log('📦 买家购买资产:', rawAssets);
 
-      this.purchasedAssets = rawAssets.map(item => {
-        const mapped = {
-          id: item.file_hash,
-          assetName: item.asset_name,
-          assetType: item.asset_type,
-          description: item.description,
-          fileHash: item.file_hash,
-          email: item.email,
-          address: item.address,
-          industry: item.industry,
-          algorithm: item.algorithm,
-          userId: item.user_id,
-          txperm: item.txperm,
-          isProxied: item.is_proxied,
-          canSellAsset: item.can_sell_asset,
-          canSellView: item.can_sell_view,
-          canSellProcess: item.can_sell_process,
-          quality: item.quality,  // 👈 你关心的字段
-          //quantity: item.number,
-          isExpanded: false
-        };
-        console.log("🧩 映射后资产对象:", mapped);  // ✅ 每条打印出来
-        return mapped;
-      });
+      this.purchasedAssets = rawAssets.map(item => ({
+        id: item.file_hash,
+        assetName: item.asset_name,
+        assetType: item.asset_type,
+        description: item.description,
+        fileHash: item.file_hash,
+        email: item.email,
+        address: item.address,
+        industry: item.industry,
+        algorithm: item.algorithm,
+        userId: item.user_id,
+        txperm: item.txperm,
+        isProxied: item.is_proxied,
 
-      console.log("✅ 最终数组:", this.purchasedAssets); // ✅ 确认结果数组中包含 quality
+        canSellAsset: item.can_sell_asset,
+        canSellView: item.can_sell_view,
+        canSellProcess: item.can_sell_process,
+
+        quality: item.quality,
+        number: item.number || item.quantity || 1,
+        isExpanded: false
+      }));
+
       this.setPagination();
     } else {
-      console.error('❌ 获取购买资产失败:', response);
+      console.error('❌ 获取购买资产失败:', response.data);
+      this.purchasedAssets = [];
+      this.setPagination();
     }
   } catch (error) {
     console.error('❌ 获取用户购买资产信息失败:', error);
+    this.purchasedAssets = [];
+    this.setPagination();
   } finally {
     this.isLoading = false;
   }
