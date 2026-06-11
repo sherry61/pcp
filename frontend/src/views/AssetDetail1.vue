@@ -656,11 +656,6 @@ async openPurchaseModal() {
     return;
   }
 
-  if (!this.selectedModelHash) {
-  alert("请选择一个模型！");
-  return;
-}
-
   // 👇 打印请求体内容，调试用
   const requestBody = {
     asset_id: this.asset.file_hash,
@@ -672,7 +667,7 @@ async openPurchaseModal() {
     processing_type: this.processingChoice,
     expiration_time: this.expirationTime,
      // ✅ 新增：选择的模型（用 file_hash 最稳）
-    model_file_hash: this.selectedModelHash,
+    model_file_hash: this.selectedModelHash || null,
   };
   console.log('用户选择的 expirationTime 是：', this.expirationTime);
 

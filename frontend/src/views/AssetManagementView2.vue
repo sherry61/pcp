@@ -261,7 +261,7 @@
       placeholder="选择开始时间"
       :picker-options="startTimePickerOptions"
       @change="validateTimeRange"
-      :clearable="false"
+      :clearable="true"
       :editable="false"
       :arrow-control="false"
       :format="'HH:mm:ss'"
@@ -280,7 +280,7 @@
       placeholder="选择结束时间"
       :picker-options="endTimePickerOptions"
       @change="validateTimeRange"
-      :clearable="false"
+      :clearable="true"
       :editable="false"
       :arrow-control="false"
       :format="'HH:mm:ss'"
@@ -1620,7 +1620,7 @@ certAddr: '',                     // 单个证书对应地址
         }
       }
     },
-    handleRegionChange(value) {
+    /*handleRegionChange(value) {
       if (value.length !== 3) {
         this.$message.warning('请完整选择省、市、区');
         return;
@@ -1643,7 +1643,27 @@ certAddr: '',                     // 单个证书对应地址
           console.error('动态证书设置失败:', error);
           this.$message.error('动态证书设置失败，请稍后重试');
         });
-    },
+    },*/
+
+    handleRegionChange(value) {
+  if (!value || value.length === 0) {
+    return;
+  }
+
+  if (value.length !== 3) {
+    this.$message.warning('如果设置交易地点，请完整选择省、市、区');
+    return;
+  }
+
+  console.log('交易地点已选择:', value);
+
+  this.setDynamicCert()
+    .then(isDynamicCertSet => {
+      if (!isDynamicCertSet) {
+        this.$message.error('动态证书配置失败');
+      }
+    });
+},
     async setDynamicCert() {
       try {
         const response = await axios.post('http://10.112.47.214:8848/pre/DynamicCertConfig', {
@@ -2272,15 +2292,30 @@ updatePurchasedAssetsPagination() {
     }
   },
   
-    openEditModal(asset) {
+    /*openEditModal(asset) {
       this.editAsset = { ...asset };
       this.showEditModal = true;
-    },
+    },*/
+    openEditModal(asset) {
+  this.editAsset = {
+    ...asset,
+    canSellAsset: !!asset.canSellAsset,
+    canSellView: !!asset.canSellView,
+    canSellProcess: !!asset.canSellProcess
+  };
+
+  // 不强制用户重新选择时间和地点
+  this.transactionStartTime = null;
+  this.transactionEndTime = null;
+  this.selectedRegionOptions = [];
+
+  this.showEditModal = true;
+},
     closeEditModal() {
       this.showEditModal = false;
     },
 
-    async confirmEdit() {
+    /*async confirmEdit() {
   this.isLoading = true;
   this.errorMessage = '';
 
@@ -2346,6 +2381,67 @@ updatePurchasedAssetsPagination() {
     }
   } catch (error) {
     this.isLoading = false;
+    this.errorMessage = '操作失败，请稍后再试。';
+    console.error('操作失败:', error);
+  } finally {
+    this.isLoading = false;
+  }
+},*/
+async confirmEdit() {
+  this.isLoading = true;
+  this.errorMessage = '';
+
+  try {
+    const hasStart = !!this.transactionStartTime;
+    const hasEnd = !!this.transactionEndTime;
+
+    // 只有填写了其中一个，才要求必须成对填写
+    if (hasStart || hasEnd) {
+      if (!hasStart || !hasEnd) {
+        this.$message.error('如果设置交易时间，需要同时填写开始时间和结束时间');
+        this.isLoading = false;
+        return;
+      }
+
+      const today = new Date().toISOString().split('T')[0];
+      const startTime = new Date(`${today} ${this.transactionStartTime}`);
+      const endTime = new Date(`${today} ${this.transactionEndTime}`);
+
+      const startTimeStamp = startTime.getTime();
+      const endTimeStamp = endTime.getTime();
+
+      if (isNaN(startTimeStamp) || isNaN(endTimeStamp)) {
+        this.$message.error('请输入有效的开始时间和结束时间');
+        this.isLoading = false;
+        return;
+      }
+
+      if (startTimeStamp >= endTimeStamp) {
+        this.$message.error('结束时间必须大于开始时间');
+        this.isLoading = false;
+        return;
+      }
+
+      const response = await axios.post('http://10.112.47.214:8848/pre/SetTradingTime', {
+        startTime: startTimeStamp,
+        endTime: endTimeStamp
+      });
+
+      if (!(response.status === 200 && response.data.code === 0)) {
+        this.$message.error('交易时间设置失败');
+        this.isLoading = false;
+        return;
+      }
+
+      this.$message.success('交易时间设置成功');
+    }
+
+    if (this.dataSource === 'database') {
+      await this.confirmEditDatabase();
+    } else if (this.dataSource === 'changan') {
+      await this.confirmEditChain();
+    }
+  } catch (error) {
     this.errorMessage = '操作失败，请稍后再试。';
     console.error('操作失败:', error);
   } finally {
@@ -3336,4 +3432,3 @@ body {
   }
 }
 </style>
-

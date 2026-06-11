@@ -12,19 +12,40 @@
           <input type="password" v-model="password" id="password" required />
         </div>
 
-        <!--<div class="form-group">
+        <div class="form-group">
   <label>登录身份:</label>
+
   <div class="role-group">
     <label class="role-item">
-      <input type="radio" value="seller" v-model="role" />
-      卖家
+      <input
+        type="radio"
+        value="user"
+        v-model="loginRole"
+      />
+      普通用户
     </label>
+
     <label class="role-item">
-      <input type="radio" value="buyer" v-model="role" />
-      买家
+      <input
+        type="radio"
+        value="regulator"
+        v-model="loginRole"
+      />
+      监管方
+    </label>
+
+    <label
+      class="role-item"
+    >
+      <input
+        type="radio"
+        value="auditor"
+        v-model="loginRole"
+      />
+      审计方
     </label>
   </div>
-</div>-->
+</div>
 
         <button type="submit" class="login-button" :disabled="loading">
           {{ loading ? "登录中..." : "登录" }}
@@ -41,16 +62,16 @@ import axios from "axios";
 export default {
   name: "LoginPage",
   data() {
-    return {
-      username: "",
-      password: "",
+  return {
+    username: "",
+    password: "",
 
-      role: "buyer",
+    loginRole: "user",
 
-      loading: false, // 控制按钮状态
-      userIP: "", // 存储公网 IP
-    };
-  },
+    loading: false,
+    userIP: ""
+  }
+},
   methods: {
     async login() {
       this.loading = true; // 启用加载状态
@@ -63,6 +84,7 @@ export default {
 
         console.log("登录成功", response.data);
         localStorage.setItem("token", response.data.token);
+        localStorage.setItem( "login_role", this.loginRole);
         if (!localStorage.getItem('user_role')) {
   localStorage.setItem('user_role', 'seller'); // 默认买家
 }
@@ -74,7 +96,32 @@ export default {
         await this.sendIPToBackend();
 
         // 4. 跳转到主页
-        this.$router.push({ name: "Home" });
+        if (this.loginRole === 'user') {
+
+  localStorage.setItem(
+    'user_role',
+    'seller'
+  );
+
+  this.$router.push({
+    name: 'Home'
+  });
+
+} else if (
+  this.loginRole === 'regulator'
+) {
+
+  this.$router.push({
+    name: 'Supervision'
+  });
+} else if (
+  this.loginRole === 'auditor'
+) {
+
+  window.location.href =
+    'http://10.112.47.214:32768/auth/ssologin';
+
+}
       } catch (error) {
         console.error("登录失败", error.response?.data);
         alert(error.response?.data?.error || "登录失败，请检查用户名和密码");

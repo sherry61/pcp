@@ -2,8 +2,16 @@
   <header class="app-header">
     <div class="left-section">
       <div class="logo">
-        数字资产交易平台
-      </div>
+
+  {{
+    loginRole === 'user'
+      ? '数字资产流通系统'
+      : loginRole === 'regulator'
+      ? '数字资产监管平台'
+      : '数字资产审计平台'
+  }}
+
+</div>
 
       <div class="search-box">
         <input type="text" placeholder="Search" />
@@ -12,14 +20,21 @@
 
     <div class="user-info">
       <!-- ✅ 新增：身份切换（右上角） -->
-      <div class="role-switch">
-        <span class="role-label">身份：</span>
-        <select class="role-select" v-model="role" @change="onRoleChange">
-          <option value="buyer">买家</option>
-<option value="seller">卖家</option>
-<option value="auditor">审计方</option>
-        </select>
-      </div>
+      <div
+  class="role-switch"
+  v-if="loginRole === 'user'"
+>
+  <span class="role-label">身份：</span>
+
+  <select
+    class="role-select"
+    v-model="role"
+    @change="onRoleChange"
+  >
+    <option value="buyer">买家</option>
+    <option value="seller">卖家</option>
+  </select>
+</div>
 
       <span class="welcome-text">欢迎, {{ username }} (ID: {{ userId }})</span>
 
@@ -41,6 +56,12 @@ export default {
       role: localStorage.getItem('user_role') || 'seller'
     };
   },
+   computed: {
+    loginRole() {
+      return localStorage.getItem('login_role') || 'user';
+    }
+  },
+  
   created() {
     // ✅ 确保首次登录也有 role（否则路由守卫会用默认 buyer，但这里 select 可能空）
     if (!localStorage.getItem('user_role')) {
@@ -48,7 +69,7 @@ export default {
     }
   },
   methods: {
-    /*onRoleChange() {
+    onRoleChange() {
       localStorage.setItem('user_role', this.role);
 
       // ✅ 通知 Sidebar 立刻刷新（你需要在 Sidebar 里监听 role-changed）
@@ -57,19 +78,9 @@ export default {
       // ✅ 触发你的 /delivery redirect（根据 role 自动去 buyer/seller）
       // 同时会触发 router.beforeEach 权限重新校验
       this.$router.push('/delivery').catch(() => {});
-    },*/
+    },
 
-onRoleChange() {
-  localStorage.setItem('user_role', this.role);
-  window.dispatchEvent(new Event('role-changed'));
 
-  if (this.role === 'auditor') {
-    window.location.href = 'http://10.112.47.214:8081';
-    return;
-  }
-
-  this.$router.push('/delivery').catch(() => {});
-},
 
     logout() {
       localStorage.removeItem('token');
