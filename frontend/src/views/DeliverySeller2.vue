@@ -69,7 +69,7 @@
               <template #default="{ row }">
                 <div class="action-cell">
                   <el-button v-if="isHeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.checkingHe" @click="openHeDelivery(row)" :disabled="!row.contractVerified">
-                    提交交付
+                    执行交付
                   </el-button>
                   <el-button
                     v-if="isFlRow(row) && !getSellerJoinPackage(row)"
@@ -80,7 +80,7 @@
                     @click="openFlJoinDialog(row)"
                     :disabled="!row.contractVerified"
                   >
-                    提交交付
+                    执行交付
                   </el-button>
                   <el-button
                     v-else-if="isFlRow(row)"
@@ -103,7 +103,7 @@
                     发起训练
                   </el-button>
                   <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)" :disabled="!row.contractVerified">
-                    提交交付
+                    执行交付
                   </el-button>
                   <el-button
                     v-if="isMpcRow(row)"
@@ -918,10 +918,10 @@ export default {
 
       switch (String(row?.mpcRecord?.task_status || '').toLowerCase()) {
         case 'failed':
-          return '提交交付'
+          return '执行交付'
         case 'pending':
         case 'waiting_seller_data':
-          return '提交交付'
+          return '执行交付'
         case 'ready':
         case 'computing':
         case 'done':

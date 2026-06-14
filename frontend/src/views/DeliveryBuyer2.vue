@@ -60,7 +60,7 @@
                     :disabled="row.heRecord?.public_keys_ready"
                     @click="uploadHePublicKeys(row)"
                   >
-                    {{ row.heRecord?.public_keys_ready ? '已完成' : '发起交付' }}
+                    {{ row.heRecord?.public_keys_ready ? '已完成' : '请求交付' }}
                   </el-button>
                   <el-button
                     v-if="isHeRow(row)"
@@ -82,7 +82,7 @@
                     :disabled="Boolean(row.flRecord?.pcp_contract_id)"
                     @click="openFlContractDialog(row)"
                   >
-                    {{ row.flRecord?.pcp_contract_id ? '已完成' : '发起交付' }}
+                    {{ row.flRecord?.pcp_contract_id ? '已完成' : '请求交付' }}
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
@@ -104,7 +104,7 @@
                     :disabled="row.preRecord?.buyer_public_key_ready"
                     @click="uploadPrePublicKey(row)"
                   >
-                    {{ row.preRecord?.buyer_public_key_ready ? '已完成' : '发起交付' }}
+                    {{ row.preRecord?.buyer_public_key_ready ? '已完成' : '请求交付' }}
                   </el-button>
                   <el-button
                     v-if="isPreRow(row)"
@@ -306,7 +306,7 @@
           <template #footer>
             <el-button @click="closeMpcDialog">取消</el-button>
             <el-button type="primary" :loading="mpcDialog.submitting" @click="submitMpcTask()">
-              发起交付
+              请求交付
             </el-button>
           </template>
         </el-dialog>
@@ -855,12 +855,12 @@ export default {
 
     getBuyerMpcActionLabel(row) {
       if (!row?.mpcRecord?.remote_task_id) {
-        return '发起交付'
+        return '请求交付'
       }
 
       switch (String(row?.mpcRecord?.task_status || '').toLowerCase()) {
         case 'failed':
-          return '发起交付'
+          return '请求交付'
         case 'pending':
         case 'waiting_seller_data':
           return '等待卖方'
