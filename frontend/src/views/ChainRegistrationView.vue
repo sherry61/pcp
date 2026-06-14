@@ -290,7 +290,7 @@
               <div class="form-group full-width">
                 <label class="full-width-label left-align">资产交易时间设置</label>
                 <el-time-picker  v-model="transactionStartTime" placeholder="开始时间"
-                  :picker-options="startTimePickerOptions" @change="validateTimeRange" :clearable="false"
+                  :picker-options="startTimePickerOptions" @change="validateTimeRange" :clearable="true"
                   :editable="false" :arrow-control="false" :format="'HH:mm:ss'" :value-format="'HH:mm:ss'"
                   :picker-type="'time'" :use-12h="false" :is-range="false" :start-placeholder="'Start Time'"
                   :end-placeholder="'End Time'" :range-separator="'至'" :popper-class="'time-picker-popper'"
@@ -298,7 +298,7 @@
                   :disabled-time="disabledStartTime" :align="left" :popper-append-to-body="true" :transfer="true"
                   :popper-options="{ boundariesElement: 'body' }" :scroll-to-option="true" />
                 <el-time-picker v-model="transactionEndTime" placeholder="结束时间"
-                  :picker-options="endTimePickerOptions" @change="validateTimeRange" :clearable="false"
+                  :picker-options="endTimePickerOptions" @change="validateTimeRange" :clearable="true"
                   :editable="false" :arrow-control="false" :format="'HH:mm:ss'" :value-format="'HH:mm:ss'"
                   :picker-type="'time'" :use-12h="false" :is-range="false" :start-placeholder="'Start Time'"
                   :end-placeholder="'End Time'" :range-separator="'至'" :popper-class="'time-picker-popper'"
@@ -515,6 +515,7 @@
 import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import axios from 'axios'
+import { provinceAndCityData } from 'element-china-area-data'
 
 export default {
   name: 'ChainRegistrationView',
@@ -622,37 +623,7 @@ analysisResultText: '',
       ],
       selectedOptions: [], // 用于存储级联选择器的值
       selectedRegionOptions: [], // 用户选择的省市区
-      regionData: [
-        // 示例数据，实际使用时可以从后端接口获取
-        {
-          value: 'zhejiang',
-          label: '浙江省',
-          children: [
-            {
-              value: 'hangzhou',
-              label: '杭州市',
-              children: [
-                { value: 'xihu', label: '西湖区' },
-                { value: 'xiacheng', label: '下城区' }
-              ]
-            }
-          ]
-        },
-        {
-          value: 'jiangsu',
-          label: '江苏省',
-          children: [
-            {
-              value: 'nanjing',
-              label: '南京市',
-              children: [
-                { value: 'jianye', label: '建邺区' },
-                { value: 'qinhuai', label: '秦淮区' }
-              ]
-            }
-          ]
-        }
-      ],
+      regionData: provinceAndCityData,
       cascaderProps: {
         expandTrigger: 'hover', // 鼠标悬停时展开子菜单
         checkStrictly: false, // 级联选择时必须选中父节点
@@ -928,45 +899,39 @@ if (indivisibleRawSet.has(raw)) return 'WH';
     this.form.allow_resale = 0;  // 默认不允许二次交易
   }
 },
-    async handleRegionChange(value) {
-      if (value.length !== 3) {
-      this.$message.warning('请完整选择省、市、区');
-      return;
-    }
-    console.log('用户选择的地区:', value);
 
 
-     const isDynamicCertSet = await this.setDynamicCert();
-  if (!isDynamicCertSet) {
-    this.$message.error('动态证书配置失败，无法继续操作');
-    return; // 如果证书配置失败，终止后续操作
+
+     async handleRegionChange(value) {
+  if (!value || value.length !== 2) {
+    this.$message.warning('请完整选择省、市');
+    return;
   }
 
-    // 将交易地点作为字符串数组传递
-    const transactionLocation = `${value[0]}-${value[1]}-${value[2]}`;
+  const transactionLocation = value.join('-');
+  console.log('用户选择的地区:', transactionLocation);
 
-    // 调用后端接口，将交易地点以数组的形式发送
-    try {
-      const response = await axios.post('http://10.112.47.214:8848/pre/SetAllowedLocations', {
-        allowedLocations: [transactionLocation]  // 将交易地点作为字符串数组
-      });
+  const isDynamicCertSet = await this.setDynamicCert();
+  if (!isDynamicCertSet) {
+    this.$message.error('动态证书配置失败，无法继续操作');
+    return;
+  }
 
-      // 打印响应数据到控制台
-      console.log('交易响应数据:', response);
+  try {
+    const response = await axios.post('http://10.112.47.214:8848/pre/SetAllowedLocations', {
+      allowedLocations: [transactionLocation]
+    });
 
-      // 处理响应
-      if (response.status === 200 && response.data.code === 0) {
-        this.$message.success('交易地点设置成功');
-        console.log('智能合约调用成功');
-      } else {
-        this.$message.error('设置交易地点失败');
-        console.log('智能合约调用失败:', response.data.message);
-      }
-    } catch (error) {
-      console.error('请求 SetAllowedLocations 时出错:', error);
-      this.$message.error('请求失败，请检查网络或稍后再试');
+    if (response.status === 200 && response.data.code === 0) {
+      this.$message.success('交易地点设置成功');
+    } else {
+      this.$message.error('设置交易地点失败');
     }
-  },
+  } catch (error) {
+    console.error('请求 SetAllowedLocations 时出错:', error);
+    this.$message.error('请求失败，请检查网络或稍后再试');
+  }
+},
     parseJwt(token) {
       const base64Url = token.split('.')[1];
       const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -1370,6 +1335,27 @@ async saveTradingTime() {
       formData.append('can_sell_view', this.form.isSellReadRight ? '1':'0');
       formData.append('allow_resale', this.form.allow_resale); // 将 allow_resale 传递到后端
       formData.append('model_selection', this.form.modelSelection);
+      // 交易地点
+const tradeLocation =
+  this.selectedRegionOptions && this.selectedRegionOptions.length === 2
+    ? this.selectedRegionOptions.join('-')
+    : '';
+
+formData.append('trade_location', tradeLocation);
+
+// 交易时间
+let tradeStartTs = '';
+let tradeEndTs = '';
+
+if (this.transactionStartTime && this.transactionEndTime) {
+  const today = new Date().toISOString().split('T')[0];
+
+  tradeStartTs = new Date(`${today} ${this.transactionStartTime}`).getTime();
+  tradeEndTs = new Date(`${today} ${this.transactionEndTime}`).getTime();
+}
+
+formData.append('trade_start_ts', tradeStartTs);
+formData.append('trade_end_ts', tradeEndTs);
 
 
       // 打印 formData 中的内容，转换为对象形式

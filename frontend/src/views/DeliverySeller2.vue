@@ -38,13 +38,37 @@
                 <el-button size="small" text class="contract-link" @click="viewContract(row)">
                   <span>查看合约</span>
                 </el-button>
+                 <el-button
+      size="small"
+      type="primary"
+      :loading="row.verifyingContract"
+      @click="verifyContract(row)"
+    >
+      校验合约
+    </el-button>
+
+    <el-tag
+      v-if="row.contractVerified"
+      type="success"
+      size="small"
+    >
+      已校验
+    </el-tag>
+
+    <el-tag
+      v-else
+      type="info"
+      size="small"
+    >
+      未校验
+    </el-tag>
               </template>
             </el-table-column>
 
             <el-table-column label="操作" min-width="432" align="center" header-align="center">
               <template #default="{ row }">
                 <div class="action-cell">
-                  <el-button v-if="isHeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.checkingHe" @click="openHeDelivery(row)">
+                  <el-button v-if="isHeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.checkingHe" @click="openHeDelivery(row)" :disabled="!row.contractVerified">
                     提交交付
                   </el-button>
                   <el-button
@@ -54,6 +78,7 @@
                     class="action-btn-primary"
                     :loading="row.processingFl || row.checkingFl"
                     @click="openFlJoinDialog(row)"
+                    :disabled="!row.contractVerified"
                   >
                     提交交付
                   </el-button>
@@ -77,7 +102,7 @@
                   >
                     发起训练
                   </el-button>
-                  <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)">
+                  <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)" :disabled="!row.contractVerified">
                     提交交付
                   </el-button>
                   <el-button
@@ -465,7 +490,14 @@ export default {
         row: null,
         file: null,
         submitting: false
-      }
+      },
+      contractVerified: false,
+
+    contractVerifyLoading: false,
+
+    contractVerifyMsg: '',
+
+    contractVerifyTime: ''
     }
   },
   computed: {
@@ -898,7 +930,79 @@ export default {
           return '处理中'
       }
     },
+async verifyContract(assetRow) {
 
+  this.contractVerifyLoading = true;
+
+  try {
+
+    const resp = await axios.post(
+      `${API_BASE}/api/digital-contract/verify`,
+      {
+        transactionId:
+          assetRow.transaction_id,
+
+        vmId:
+          `vm-tx-${assetRow.transaction_id}`,
+
+        fileHash:
+          assetRow.file_hash,
+
+        deliveredCnt: '0',
+
+        deliveryCnt: '2000',
+
+        expireTime:
+          new Date(
+            Date.now() +
+            24 * 3600 * 1000
+          ).toISOString()
+      }
+    );
+
+    if (
+      resp.data &&
+      resp.data.success
+    ) {
+
+      this.contractVerified = true;
+
+      this.contractVerifyMsg =
+        '数字合约校验通过';
+
+      this.contractVerifyTime =
+        new Date()
+          .toLocaleString();
+
+      this.$message.success(
+        '数字合约校验通过'
+      );
+
+    } else {
+
+      throw new Error(
+        resp.data?.message
+      );
+    }
+
+  } catch (e) {
+
+    this.contractVerified = false;
+
+    this.contractVerifyMsg =
+      e.message ||
+      '数字合约校验失败';
+
+    this.$message.error(
+      this.contractVerifyMsg
+    );
+  }
+
+  finally {
+
+    this.contractVerifyLoading = false;
+  }
+},
     canOpenMpcSellerDialog(row) {
       if (!row?.mpcRecord?.remote_task_id) {
         return false

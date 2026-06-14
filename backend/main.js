@@ -48,7 +48,8 @@ const FL_MODEL_DIR =
 const ASSET_ANALYSIS_BASE_URL =
   process.env.ASSET_ANALYSIS_BASE_URL || 'http://10.112.47.214:8002';
 const PRE_UPLOAD_DIR = process.env.PRE_UPLOAD_DIR || '/home/super/r/localdata/pre_uploads';
-
+const DIGITAL_CONTRACT_BASE_URL =
+  process.env.DIGITAL_CONTRACT_BASE_URL || 'http://10.112.14.6:18080/api';
 
  
 // 缓存 TTL
@@ -365,6 +366,63 @@ async function proxyAssetAnalysis(req, res, methodMap, modeName) {
       error: err.message
     });
   }
+}
+
+
+async function decryptReceiveKeyResp(jsonResp, ecPrivateKeyPath) {
+  const ephDER = Buffer.from(jsonResp.ephPub, 'base64');
+  const salt = Buffer.from(jsonResp.salt, 'base64');
+  const nonce = Buffer.from(jsonResp.nonce, 'base64');
+  const tag = Buffer.from(jsonResp.tag, 'base64');
+  const cipher = Buffer.from(jsonResp.ciphertext, 'base64');
+
+  const privPem = await fs.readFile(ecPrivateKeyPath, 'utf8');
+  const myPriv = crypto.createPrivateKey(privPem);
+  const ephPub = crypto.createPublicKey({
+    key: ephDER,
+    format: 'der',
+    type: 'spki'
+  });
+
+  const secret = crypto.diffieHellman({
+    privateKey: myPriv,
+    publicKey: ephPub
+  });
+
+  const info = Buffer.from('HENC2-P256-AES256GCM', 'ascii');
+  const hash = crypto.createHash('sha256');
+  hash.update(secret);
+  hash.update(salt);
+  hash.update(info);
+
+  const aesKey = hash.digest();
+
+  const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, nonce);
+  decipher.setAuthTag(tag);
+
+  return Buffer.concat([
+    decipher.update(cipher),
+    decipher.final()
+  ]);
+}
+
+function extractSm4Key(plain) {
+  if (!Buffer.isBuffer(plain)) return null;
+
+  if (plain.length === 16) {
+    return plain;
+  }
+
+  if (plain.length >= 24) {
+    const ver = plain.readUInt32LE(0);
+    const keyLen = plain.readUInt32LE(4);
+
+    if ((ver === 1 || ver === 2) && keyLen === 16) {
+      return plain.slice(8, 24);
+    }
+  }
+
+  return null;
 }
 
 app.post('/api/asset-analysis/classify', upload.single('input_file'), async (req, res) => {
@@ -2735,7 +2793,155 @@ app.get('/api/get-total-transaction-stats', (req, res) => {
   });
 });
 
+app.post('/api/digital-contract/verify', async (req, res) => {
+  try {
+    const {
+      transactionId,
+      vmId,
+      fileHash,
+      deliveredCnt = '0',
+      deliveryCnt = '2000',
+      expireTime
+    } = req.body || {};
 
+    if (!transactionId) {
+      return res.status(400).json({
+        success: false,
+        message: '缺少 transactionId'
+      });
+    }
+
+    if (!fileHash) {
+      return res.status(400).json({
+        success: false,
+        message: '缺少 fileHash'
+      });
+    }
+
+    const finalVmId = vmId || `vm-tx-${transactionId}`;
+
+    const pubKey = (await fs.readFile(KEY_FILE_PATH, 'utf8')).trim();
+
+    const keyResp = await axios.post(
+      `${DIGITAL_CONTRACT_BASE_URL}/receive-key`,
+      {
+        vmId: finalVmId,
+
+        // 两个都传，兼容文档里的 key 和示例里的 ecPublicKey
+        key: pubKey,
+        ecPublicKey: pubKey
+      },
+      {
+        timeout: 60000,
+        validateStatus: () => true
+      }
+    );
+
+    if (
+      keyResp.status !== 200 ||
+      !(keyResp.data?.code === 200 || keyResp.data?.status === 'ok')
+    ) {
+      return res.status(502).json({
+        success: false,
+        message: 'receive-key 调用失败',
+        remoteStatus: keyResp.status,
+        remote: keyResp.data
+      });
+    }
+
+    const plain = await decryptReceiveKeyResp(
+      keyResp.data,
+      PRIVATE_KEY_PATH
+    );
+
+    const sm4Key = extractSm4Key(plain);
+
+    if (!sm4Key || sm4Key.length !== 16) {
+      return res.status(500).json({
+        success: false,
+        message: 'SM4 密钥解析失败',
+        plainLength: plain.length
+      });
+    }
+
+    const plainContract = {
+      delivery_cnt: String(deliveryCnt),
+      fileHash: String(fileHash),
+      timestamp:
+        expireTime ||
+        new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+    };
+
+    const sharedIv = crypto.randomBytes(16).toString('base64');
+
+    const encContract = await sm4CbcEncryptCompat(
+      sm4Key,
+      JSON.stringify(plainContract),
+      {
+        ivB64: sharedIv,
+        padding: 'pkcs7',
+        useOpenSSL: true,
+        canonicalizeJson: true,
+        appendLF: false
+      }
+    );
+
+    const encDeliveredCnt = await sm4CbcEncryptCompat(
+      sm4Key,
+      String(deliveredCnt),
+      {
+        ivB64: sharedIv,
+        padding: 'pkcs7',
+        useOpenSSL: true,
+        appendLF: false
+      }
+    );
+
+    const jsonResp = await axios.post(
+      `${DIGITAL_CONTRACT_BASE_URL}/receive-json`,
+      {
+        vmId: finalVmId,
+        iv: sharedIv,
+        deliveried_cnt: encDeliveredCnt.ciphertext,
+        ciphertext: encContract.ciphertext
+      },
+      {
+        timeout: 60000,
+        validateStatus: () => true
+      }
+    );
+
+    if (jsonResp.status === 200 && jsonResp.data?.code === 200) {
+      return res.json({
+        success: true,
+        message: '数字合约校验通过',
+        vmId: finalVmId,
+        transactionId,
+        plainContract,
+        remote: jsonResp.data
+      });
+    }
+
+    return res.status(400).json({
+      success: false,
+      message: '数字合约校验失败',
+      vmId: finalVmId,
+      transactionId,
+      plainContract,
+      remoteStatus: jsonResp.status,
+      remote: jsonResp.data
+    });
+
+  } catch (err) {
+    console.error('[digital-contract/verify] error:', err);
+
+    return res.status(500).json({
+      success: false,
+      message: '数字合约校验异常',
+      error: err.message
+    });
+  }
+});
   // 定义定时任务，每天检查一次过期代币
 cron.schedule('0 0 * * *', () => {
   console.log('开始检查过期代币...');
