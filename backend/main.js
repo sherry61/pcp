@@ -508,36 +508,36 @@ userDb.connect(err => {
 });
 
 
-// MySQL连接配置 - Chainmaker CA4 Database
+// MySQL连接配置 - Active Chainmaker CA org1 Database
 const chainmakerCaDb = mysql.createConnection({
     host: 'localhost',
     user: 'root',
     password: '123456',
-    database: 'chainmaker_ca4'
+    database: 'chainmaker_ca7'
 });
 
 chainmakerCaDb.connect(err => {
     if (err) {
-        console.error('MySQL chainmaker_ca4 连接失败:', err);
+        console.error('MySQL chainmaker_ca7 连接失败:', err);
         return;
     }
-    console.log('MySQL chainmaker_ca4 连接成功');
+    console.log('MySQL chainmaker_ca7 连接成功');
 });
 
-// MySQL连接配置 - Chainmaker CA2 Database
+// MySQL连接配置 - Active Chainmaker CA org2 Database
 const chainmakerCa2Db = mysql.createConnection({
     host: 'localhost',
     user: 'root',
     password: '123456',
-    database: 'chainmaker_ca02'
+    database: 'chainmaker_ca03'
 });
 
 chainmakerCa2Db.connect(err => {
     if (err) {
-        console.error('MySQL chainmaker_ca02 连接失败:', err);
+        console.error('MySQL chainmaker_ca03 连接失败:', err);
         return;
     }
-    console.log('MySQL chainmaker_ca02 连接成功');
+    console.log('MySQL chainmaker_ca03 连接成功');
 });
 
 registerHeRoutes({
@@ -1991,25 +1991,10 @@ app.post('/api/get-certificates', (req, res) => {
         const certificates = results[0].certificates ? JSON.parse(results[0].certificates) : [];
         
         if (certificates.length === 0) {
-            return res.status(404).json({ message: '用户没有证书' });
+            return res.status(200).json({ userId, certificates: [] });
         }
 
-        // 查询链中每个证书的相关参数
-        const certQueries = certificates.map(cert => {
-            return new Promise((resolve, reject) => {
-                const certQuery = 'SELECT * FROM cert_info WHERE user_id = ?'; // 假设在 chainmaker_ca2 中有名为 certificates 的表
-                chainmakerCaDb.query(certQuery, [cert], (err, certResults) => {
-                    if (err) {
-                        console.error('查询证书参数失败:', err);
-                        return reject(err);
-                    }
-                    if (certResults.length === 0) {
-                        return resolve({ cert, message: '证书参数未找到' });
-                    }
-                    resolve({ cert, data: certResults[0] });
-                });
-            });
-        });
+        const certQueries = certificates.map(cert => resolveCertificateRecord(chainmakerCaDb, cert));
 
         // 等待所有证书查询完成
         Promise.all(certQueries)
@@ -2046,25 +2031,10 @@ app.post('/api/get-certificates2', (req, res) => {
         const certificates = results[0].certificates2 ? JSON.parse(results[0].certificates2) : [];
         
         if (certificates.length === 0) {
-            return res.status(404).json({ message: '用户没有证书' });
+            return res.status(200).json({ userId, certificates: [] });
         }
 
-        // 查询链中每个证书的相关参数
-        const certQueries = certificates.map(cert => {
-            return new Promise((resolve, reject) => {
-                const certQuery = 'SELECT * FROM cert_info WHERE user_id = ?'; // 假设在 chainmaker_ca2 中有名为 certificates 的表
-                chainmakerCa2Db.query(certQuery, [cert], (err, certResults) => {
-                    if (err) {
-                        console.error('查询证书参数失败:', err);
-                        return reject(err);
-                    }
-                    if (certResults.length === 0) {
-                        return resolve({ cert, message: '证书参数未找到' });
-                    }
-                    resolve({ cert, data: certResults[0] });
-                });
-            });
-        });
+        const certQueries = certificates.map(cert => resolveCertificateRecord(chainmakerCa2Db, cert));
 
         // 等待所有证书查询完成
         Promise.all(certQueries)
@@ -2077,6 +2047,81 @@ app.post('/api/get-certificates2', (req, res) => {
             });
     });
 });
+
+function mapUserTypeToRole(userType) {
+    const type = Number(userType);
+    if (type === 1) return 'admin';
+    if (type === 4) return 'client';
+    return '未知角色';
+}
+
+function resolveCertificateRecord(connection, cert) {
+    return new Promise((resolve, reject) => {
+        const signCommonName = `${cert}.sign`;
+        const tlsCommonName = `${cert}.tls`;
+        const certContentQuery = `
+            SELECT organization, organizational_unit, common_name, issue_date, expiration_date, updated_at
+            FROM cert_content
+            WHERE common_name IN (?, ?)
+            ORDER BY
+                CASE
+                    WHEN organization IS NULL OR organization = '' OR organization LIKE '.%' THEN 1
+                    ELSE 0
+                END,
+                FIELD(common_name, ?, ?),
+                updated_at DESC
+            LIMIT 1
+        `;
+
+        connection.query(certContentQuery, [signCommonName, tlsCommonName, signCommonName, tlsCommonName], (contentErr, contentResults) => {
+            if (contentErr) {
+                console.error('查询证书内容失败:', contentErr);
+                return reject(contentErr);
+            }
+
+            const certInfoQuery = `
+                SELECT *
+                FROM cert_info
+                WHERE user_id IN (?, ?)
+                ORDER BY
+                    CASE
+                        WHEN org_id IS NULL OR org_id = '' OR org_id LIKE '.%' THEN 1
+                        ELSE 0
+                    END,
+                    FIELD(user_id, ?, ?),
+                    updated_at DESC
+                LIMIT 1
+            `;
+            connection.query(certInfoQuery, [signCommonName, tlsCommonName, signCommonName, tlsCommonName], (infoErr, infoResults) => {
+                if (infoErr) {
+                    console.error('查询证书参数失败:', infoErr);
+                    return reject(infoErr);
+                }
+
+                if (contentResults.length === 0 && infoResults.length === 0) {
+                    return resolve({ cert, message: '证书参数未找到' });
+                }
+
+                const content = contentResults[0] || null;
+                const info = infoResults[0] || null;
+
+                resolve({
+                    cert,
+                    organization: content?.organization || info?.org_id || '未知组织',
+                    role: content?.organizational_unit || mapUserTypeToRole(info?.user_type),
+                    data: {
+                        ...info,
+                        org_id: content?.organization || info?.org_id || null,
+                        user_role: content?.organizational_unit || mapUserTypeToRole(info?.user_type),
+                        common_name: content?.common_name || null,
+                        issue_date: content?.issue_date || null,
+                        expiration_date: content?.expiration_date || null,
+                    }
+                });
+            });
+        });
+    });
+}
 
 // 根据 file_hash 提供图片的 API 端点
 app.get('/api/image/:hash', (req, res) => {

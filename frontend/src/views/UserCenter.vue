@@ -31,18 +31,13 @@
             <el-form-item label="证书名称" :rules="{ required: true, message: '请输入证书名称', trigger: 'blur' }">
               <el-input v-model="form.certificateName" placeholder="输入不超过10位的字母和数字组合" />
             </el-form-item>
-            <el-form-item label="选择组织">
+            <el-form-item label="选择组织" :rules="{ required: true, message: '请选择组织', trigger: 'change' }">
               <el-select v-model="form.organization" placeholder="请选择组织">
                 <el-option label="wx-org1.chainmaker.org" value="wx-org1.chainmaker.org"></el-option>
                 <el-option label="wx-org2.chainmaker.org" value="wx-org2.chainmaker.org"></el-option>
               </el-select>
             </el-form-item>
-            <el-form-item label="选择角色">
-              <el-select v-model="form.role" placeholder="请选择角色">
-                <el-option label="client" value="client"></el-option>
-                <el-option label="admin" value="admin"></el-option>
-              </el-select>
-            </el-form-item>
+            <el-alert v-if="formError" :title="formError" type="error" show-icon :closable="false" />
             <el-alert title="证书有效期暂定为6个月，到期后可联系官方续期。" type="info" show-icon />
           </el-form>
           <template #footer>
@@ -68,39 +63,10 @@
           <div class="table">
             <!-- 主表格 -->
             <el-table :data="tableData" border style="width: 100%" v-loading="loading" empty-text="暂无数据">
-              <!-- 展开行 -->
-              <el-table-column type="expand">
-                <template #default="scope">
-                  <!-- 子内容（不用表格） -->
-                  <div class="details-container">
-                    <div v-for="(detail, index) in scope.row.details" :key="index" class="detail-item">
-                      <div class="detail-label">用途:</div>
-                      <div class="detail-value">{{ detail.purpose }}</div>
-                      <div class="detail-label">过期时间:</div>
-                      <div class="detail-value">{{ detail.expiry || '未知' }}</div>
-                      <div class="detail-label">状态:</div>
-                      <div class="detail-value">
-                        <span :style="{ color: detail.status === '正常' ? 'green' : 'red' }">
-                          {{ detail.status || '未知' }}
-                        </span>
-                      </div>
-                      <div class="detail-label">操作:</div>
-                      <div class="detail-value">
-                        <el-link type="primary" @click="viewCertificate(scope.row.name, detail.purpose === '签名证书' ? 'sign' : 'tls')">
-                          <i class="el-icon-view"></i>
-                          查看
-                        </el-link>
-                      </div>
-                    </div>
-                  </div>
-                </template>
-              </el-table-column>
-
-              <!-- 主表格列 -->
-              <el-table-column prop="name" label="证书名称" />
+              <el-table-column prop="cert" label="证书名称" />
               <el-table-column prop="organization" label="所属组织" />
-              <el-table-column prop="role" label="证书角色" />
-              <el-table-column prop="time" label="申请时间" />
+              <el-table-column prop="createdAt" label="创建时间" />
+              <el-table-column prop="expirationAt" label="过期时间" />
             </el-table>
           </div>
         </el-card>
@@ -135,25 +101,42 @@ export default {
     const isCertContentDialogVisible = ref(false);
     const searchQuery = ref(""); // 搜索关键词
     const message = ref(""); // 提示信息
+    const formError = ref("");
 
     const form = ref({
       certificateName: "",
       organization: "",
-      role: "",
     });
 
     const certContent = ref("");
 
     const submitApplication = async () => {
+      formError.value = "";
+
       if (!form.value.certificateName) {
-        message.value = "证书名称不能为空";
+        formError.value = "证书名称不能为空";
+        return;
+      }
+
+      if (!form.value.organization) {
+        formError.value = "请选择组织";
         return;
       }
 
       // 验证证书名称格式（1-10个字母或数字）
       const certNamePattern = /^[a-zA-Z0-9]{1,10}$/;
       if (!certNamePattern.test(form.value.certificateName)) {
-        message.value = "证书名称格式不正确，必须是1-10个字母或数字";
+        formError.value = "证书名称格式不正确，必须是1-10个字母或数字";
+        return;
+      }
+
+      const normalizedCertificateName = form.value.certificateName.trim().toLowerCase();
+      const hasDuplicateCertificate = certificates.value.some(
+        (item) => item.cert.trim().toLowerCase() === normalizedCertificateName
+      );
+
+      if (hasDuplicateCertificate) {
+        formError.value = "证书名称已存在，请更换后重试";
         return;
       }
 
@@ -181,10 +164,10 @@ export default {
           console.log("添加证书响应:", addCertResponse);  // 打印响应数据
           if (addCertResponse.status === 200) {
             message.value = "证书申请成功";
+            formError.value = "";
             isDialogVisible.value = false;
             form.value.certificateName = "";
             form.value.organization = "";
-            form.value.role = "";
             fetchUserCertificate(userId.value);
 
           } else {
@@ -239,8 +222,18 @@ export default {
         message.value = "获取用户ID失败，服务器不可用。";
       }
     };
-    const formatDateTime = (date) => {
-      if (!(date instanceof Date)) return "";
+
+    const formatTimestamp = (timestamp) => {
+      if (!timestamp) {
+        return "未知";
+      }
+
+      const value = Number(timestamp);
+      if (!Number.isFinite(value)) {
+        return "未知";
+      }
+
+      const date = new Date(value * 1000);
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, "0");
       const day = String(date.getDate()).padStart(2, "0");
@@ -248,15 +241,14 @@ export default {
       const minutes = String(date.getMinutes()).padStart(2, "0");
       const seconds = String(date.getSeconds()).padStart(2, "0");
       return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
-    }
-
+    };
 
     // 获取用户证书数据
    // 获取用户证书数据
 const fetchUserCertificate = async (userId) => {
   try {
     loading.value = true;
-    const [response1, response2] = await Promise.all([
+    const [response1, response2] = await Promise.allSettled([
       // 获取 org-chainmaker1 的证书
       axios.post("http://10.112.47.214:3000/api/get-certificates", { userId: parseInt(userId) }),
       
@@ -265,81 +257,48 @@ const fetchUserCertificate = async (userId) => {
     ]);
     
     // 合并两个组织的证书数据
-    const certificates1 = response1.data.certificates || [];
-    const certificates2 = response2.data.certificates || [];
+    const certificates1 = response1.status === "fulfilled"
+      ? (response1.value.data.certificates || [])
+      : [];
+    const certificates2 = response2.status === "fulfilled"
+      ? (response2.value.data.certificates || [])
+      : [];
 
     // 合并结果
-    const allCertificates = [...certificates1, ...certificates2];
+    const allCertificates = [...certificates1, ...certificates2]
+      .filter((item) => item?.data);
 
     if (allCertificates.length > 0) {
-      // 构建表格数据
-      tableData.value = allCertificates.map((item) => {
-        const certName = item.cert; // 证书名称
-        let organization = item.organization || "未知组织"; // 默认组织为"未知"
-        let role = item.role || "未知角色"; // 默认角色为"未知"
-        let applyTimeStr = ""; // 申请时间（格式化字符串）
-        let expiryTimeStr = ""; // 过期时间（格式化字符串）
-        let statusSign = "未知"; // 签名证书状态
-        let statusTLS = "未知"; // TLS 证书状态
+      certificates.value = allCertificates.map((item) => {
+        const cert = item.cert || "未知证书";
+        let organization = item.organization || "未知组织";
+        let createdAt = "未知";
+        let expirationAt = "未知";
 
-        // 如果后端返回了 data 对象，表示证书存在可用的参数
-        if (item.data) {
-          const data = item.data;
+        if (item.data?.org_id) {
+          organization = item.data.org_id;
+        }
 
-          // 如果后端返回了 org_id，可根据需要进行赋值
-          if (data.org_id) {
-            organization = data.org_id;
-          }
+        if (item.data?.issue_date) {
+          createdAt = formatTimestamp(item.data.issue_date);
+        }
 
-          // 解析 created_at 作为申请时间
-          if (data.created_at) {
-            // created_at 是 Unix 时间戳（秒）
-            const applyTime = new Date(data.created_at * 1000);
-            applyTimeStr = formatDateTime(applyTime);
-
-            // 过期时间 = created_at + 6个月（此处简单用 6 * 30 天 = 180 天）
-            const halfYearSeconds = 180 * 24 * 60 * 60;
-            const expireTime = new Date((data.created_at + halfYearSeconds) * 1000);
-            expiryTimeStr = formatDateTime(expireTime);
-
-            // 判断是否过期
-            const now = new Date();
-            if (now < expireTime) {
-              statusSign = "正常";
-              statusTLS = "正常";
-            } else {
-              statusSign = "过期";
-              statusTLS = "过期";
-            }
-          }
-        } else if (item.message) {
-          // 如果后端只返回了 message，表示“证书参数未找到”
-          statusSign = "无效";
-          statusTLS = "无效";
+        if (item.data?.expiration_date) {
+          expirationAt = formatTimestamp(item.data.expiration_date);
         }
 
         return {
-          name: certName,
-          organization: organization,
-          role: role,
-          time: applyTimeStr,
-          details: [
-            {
-              purpose: "签名证书",
-              expiry: expiryTimeStr,
-              status: statusSign,
-              link: "查看",
-            },
-            {
-              purpose: "TLS证书",
-              expiry: expiryTimeStr,
-              status: statusTLS,
-              link: "查看",
-            },
-          ],
+          cert,
+          organization,
+          createdAt,
+          expirationAt,
         };
       });
+
+      tableData.value = certificates.value;
     } else {
+      certificates.value = [];
+      tableData.value = [];
       message.value = "没有找到证书信息。";
     }
   } catch (error) {
@@ -353,29 +312,12 @@ const fetchUserCertificate = async (userId) => {
     // 搜索证书功能
     const searchCertificates = () => {
       if (searchQuery.value) {
-        tableData.value = certificates.value
-          .filter((certName) => certName.includes(searchQuery.value))
-          .map((certName) => ({
-            name: certName,
-            organization: "wx-org1.chainmaker.org",
-            role: "client",
-            time: "2024-07-08 11:10:46",
-            details: [
-              {
-                purpose: "签名证书",
-                expiry: "",
-                status: "",
-                link: "查看",
-              },
-              {
-                purpose: "TLS证书",
-                expiry: "",
-                status: "",
-                link: "查看",
-              },
-            ],
-          }));
+        const keyword = searchQuery.value.trim().toLowerCase();
+        tableData.value = certificates.value.filter((item) =>
+          item.cert.toLowerCase().includes(keyword)
+        );
       } else {
+        tableData.value = certificates.value;
         fetchUserCertificate(userId.value);
       }
     };
@@ -435,6 +377,7 @@ const fetchUserCertificate = async (userId) => {
       searchQuery,
       message,
       form,
+      formError,
       isDialogVisible,
       isCertContentDialogVisible,
       certContent,
