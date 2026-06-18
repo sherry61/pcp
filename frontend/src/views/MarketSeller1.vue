@@ -134,6 +134,7 @@ export default {
               ...org1Res.data.certificates.map((cert) => ({
                 org: "wx-org1.chainmaker.org",
                 cert: cert.cert,
+                address: cert.address || "",
               }))
             );
           }
@@ -149,6 +150,7 @@ export default {
               ...org2Res.data.certificates.map((cert) => ({
                 org: "wx-org2.chainmaker.org",
                 cert: cert.cert,
+                address: cert.address || "",
               }))
             );
           }
@@ -156,13 +158,9 @@ export default {
 
         const allPendingTx = [];
 
-        for (const { org, cert } of certLists) {
+        for (const { cert, address } of certLists) {
           try {
-            const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${cert}/${cert}.sign.crt`;
-            const addrRes = await axios.post("http://10.112.47.214:9092/cert-to-addr", {
-              cert_path: certPath,
-            });
-            const certAddr = addrRes?.data?.ethereum?.address;
+            const certAddr = address;
             if (!certAddr) continue;
 
             const txRes = await axios.get(
@@ -184,14 +182,13 @@ export default {
 
             allPendingTx.push(...formatted);
           } catch (err) {
-  console.warn("跳过无效或过期证书，不影响其他证书:", {
-    cert,
-    org,
-    error: err.response?.data || err.message
-  });
+            console.warn("跳过无效或过期证书，不影响其他证书:", {
+              cert,
+              error: err.response?.data || err.message
+            });
 
-  continue;
-}
+            continue;
+          }
         }
 
         this.awaitingAssets = allPendingTx;
@@ -316,7 +313,12 @@ export default {
         }
       } catch (permError) {
         console.error(`购买权限 [${rightType}] 异常:`, permError);
-        this.$message.error(`权限 [${rightType}] 交易时发生网络错误`);
+        const backendMessage =
+          permError?.response?.data?.message ||
+          permError?.response?.data?.error ||
+          permError?.message ||
+          '未知错误';
+        this.$message.error(`权限 [${rightType}] 交易失败: ${backendMessage}`);
       }
     }
 
@@ -354,47 +356,24 @@ export default {
         });
 
         if (res.status === 200 && Array.isArray(res.data.certificates)) {
-          for (const { cert } of res.data.certificates) {
-            const certPath = `/home/super/r/GoSDK/crypto-config/${orgName}/user/${cert}/${cert}.sign.crt`;
-           try {
-  const addrRes = await axios.post(
-    'http://10.112.47.214:9092/cert-to-addr',
-    {
-      cert_path: certPath,
-    }
-  );
-
-  const addr = addrRes?.data?.ethereum?.address;
-
-  if (addr) {
-    allCerts.push({
-      cert,
-      orgName,
-      addr
-    });
-
-    console.log('证书有效:', {
-      cert,
-      orgName,
-      addr
-    });
-  } else {
-    console.warn('证书未解析出地址，跳过:', {
-      cert,
-      orgName,
-      certPath
-    });
-  }
-} catch (err) {
-  console.warn('跳过无效或过期证书:', {
-    cert,
-    orgName,
-    certPath,
-    error: err.response?.data || err.message
-  });
-
-  continue;
-}
+          for (const { cert, address } of res.data.certificates) {
+            if (address) {
+              allCerts.push({
+                cert,
+                orgName,
+                addr: address
+              });
+              console.log('证书有效:', {
+                cert,
+                orgName,
+                addr: address
+              });
+            } else {
+              console.warn('证书未解析出地址，跳过:', {
+                cert,
+                orgName
+              });
+            }
           }
         }
       } catch (e) {

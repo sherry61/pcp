@@ -121,7 +121,7 @@ export default {
 ) {
 
   window.location.href =
-    'http://10.112.47.214:32772/auth/ssologin';
+    'http://10.112.47.214:5173/auth/ssologin';
 
 }
       } catch (error) {

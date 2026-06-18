@@ -480,35 +480,51 @@ export default {
     },
 
     async getAllBuyerAddresses() {
-      const addresses = []
-      const sources = [
-        { org: 'wx-org1.chainmaker.org', api: 'get-certificates' },
-        { org: 'wx-org2.chainmaker.org', api: 'get-certificates2' }
-      ]
+  const addresses = []
 
-      for (const source of sources) {
-        try {
-          const response = await axios.post(`${API_BASE}/api/${source.api}`, {
-            userId: this.userId
-          })
-          const certs = Array.isArray(response.data.certificates) ? response.data.certificates : []
-          for (const cert of certs) {
-            const certPath = `/home/super/r/GoSDK/crypto-config/${source.org}/user/${cert.cert}/${cert.cert}.sign.crt`
-            const addrResponse = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
-              cert_path: certPath
-            })
-            const address = addrResponse?.data?.ethereum?.address
-            if (address) {
-              addresses.push(address)
-            }
-          }
-        } catch (error) {
-          console.warn('获取买家证书地址失败:', error?.message || error)
-        }
+  const sources = [
+    { org: 'wx-org1.chainmaker.org', api: 'get-certificates' },
+    { org: 'wx-org2.chainmaker.org', api: 'get-certificates2' }
+  ]
+
+  for (const source of sources) {
+    let certs = []
+
+    try {
+      const response = await axios.post(`${API_BASE}/api/${source.api}`, {
+        userId: this.userId
+      })
+
+      certs = Array.isArray(response.data.certificates)
+        ? response.data.certificates
+        : []
+    } catch (error) {
+      console.warn(`获取 ${source.api} 失败，跳过该组织:`, error?.response?.data || error.message)
+      continue
+    }
+
+    for (const cert of certs) {
+      const certName = cert.cert
+
+      if (!certName) {
+        continue
       }
 
-      return [...new Set(addresses)]
-    },
+      try {
+        const address = cert.address
+
+        if (address) {
+          addresses.push(address)
+        }
+      } catch (error) {
+        console.warn(`跳过无效/过期证书 ${certName}:`, error?.response?.data || error.message)
+        continue
+      }
+    }
+  }
+
+  return [...new Set(addresses)]
+},
 
     async refreshResults() {
       this.isLoading = true

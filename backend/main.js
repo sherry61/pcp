@@ -14,7 +14,7 @@ const path = require('path');
 const cron = require('node-cron');        // 确保只 require 一次
 const { sm4 } = require('sm-crypto');
 
-const { spawn } = require('child_process');
+const { spawn,exec } = require('child_process');
 const FormData = require('form-data');
 const { registerFlRoutes, registerHeRoutes, registerPreRoutes } = require('./pcp');
 const { registerMpcRoutes } = require('./mpc');
@@ -513,15 +513,15 @@ const chainmakerCaDb = mysql.createConnection({
     host: 'localhost',
     user: 'root',
     password: '123456',
-    database: 'chainmaker_ca7'
+    database: 'chainmaker_ca8'
 });
 
 chainmakerCaDb.connect(err => {
     if (err) {
-        console.error('MySQL chainmaker_ca7 连接失败:', err);
+        console.error('MySQL chainmaker_ca8 连接失败:', err);
         return;
     }
-    console.log('MySQL chainmaker_ca7 连接成功');
+    console.log('MySQL chainmaker_ca8 连接成功');
 });
 
 // MySQL连接配置 - Active Chainmaker CA org2 Database
@@ -529,15 +529,99 @@ const chainmakerCa2Db = mysql.createConnection({
     host: 'localhost',
     user: 'root',
     password: '123456',
-    database: 'chainmaker_ca03'
+    database: 'chainmaker_ca04'
 });
 
 chainmakerCa2Db.connect(err => {
     if (err) {
-        console.error('MySQL chainmaker_ca03 连接失败:', err);
+        console.error('MySQL chainmaker_ca04 连接失败:', err);
         return;
     }
-    console.log('MySQL chainmaker_ca03 连接成功');
+    console.log('MySQL chainmaker_ca04 连接成功');
+});
+
+const CERT_DB_NAME_BY_ORG = {
+    'wx-org1': 'chainmaker_ca8',
+    'wx-org2': 'chainmaker_ca04'
+};
+
+function insertCertificateRegistry({
+    userId,
+    certificateName,
+    org,
+    signCertPath = null,
+    tlsCertPath = null,
+    pemPath = null,
+    address = null,
+    expiresAt = null
+}) {
+    const sql = `
+        INSERT INTO certificate_registry
+            (user_id, certificate_name, org, sign_cert_path, tls_cert_path, pem_path, address, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE
+            user_id = COALESCE(VALUES(user_id), user_id),
+            sign_cert_path = COALESCE(VALUES(sign_cert_path), sign_cert_path),
+            tls_cert_path = COALESCE(VALUES(tls_cert_path), tls_cert_path),
+            pem_path = COALESCE(VALUES(pem_path), pem_path),
+            address = COALESCE(VALUES(address), address),
+            expires_at = COALESCE(VALUES(expires_at), expires_at)
+    `;
+
+    const values = [
+        userId,
+        certificateName,
+        org,
+        signCertPath || null,
+        tlsCertPath || null,
+        pemPath || null,
+        address || null,
+        expiresAt || null
+    ];
+
+    return new Promise((resolve, reject) => {
+        db.query(sql, values, (err, result) => {
+            if (err) {
+                return reject(err);
+            }
+            resolve(result);
+        });
+    });
+}
+
+app.post('/api/certificate-registry/upsert', async (req, res) => {
+    const {
+        userId = null,
+        certificateName,
+        org,
+        signCertPath = null,
+        tlsCertPath = null,
+        pemPath = null,
+        address = null,
+        expiresAt = null
+    } = req.body || {};
+
+    if (!certificateName || !org) {
+        return res.status(400).json({ message: '缺少 certificateName 或 org 参数' });
+    }
+
+    try {
+        await insertCertificateRegistry({
+            userId,
+            certificateName,
+            org,
+            signCertPath,
+            tlsCertPath,
+            pemPath,
+            address,
+            expiresAt
+        });
+
+        return res.status(200).json({ message: '证书登记成功' });
+    } catch (error) {
+        console.error('写入 certificate_registry 失败:', error);
+        return res.status(500).json({ message: '证书登记失败' });
+    }
 });
 
 registerHeRoutes({
@@ -927,7 +1011,7 @@ app.post('/api/authorize', (req, res) => {
         return res.status(400).json({ message: '文件哈希和目标地址是必填的' });
     }
 
-    const sql = `
+      const sql = `
         UPDATE asset_registrations
         SET agent_addr = ?, is_proxied = 1
         WHERE file_hash = ?
@@ -992,6 +1076,50 @@ app.post('/api/get-user-id', (req, res) => {
             res.status(404).json({ error: '用户未找到' });
         }
     });
+});
+
+app.get('/api/get-tps', (req, res) => {
+  const requestId = `tps-${Date.now()}`;
+  const cwd = '/home/super/r/ssd2/chainmaker/chainmaker-go/tools/cmc';
+  const cmd = 'bash -lc "ulimit -n 65535 && bash ./run_tps.sh"';
+
+  console.log(`\n========== [${requestId}] TPS 请求开始 ==========`);
+  console.log(`[${requestId}] cwd:`, cwd);
+  console.log(`[${requestId}] cmd:`, cmd);
+
+  exec(cmd, {
+    cwd,
+    timeout: 900000,
+    maxBuffer: 100 * 1024 * 1024
+  }, (error, stdout, stderr) => {
+    console.log(`\n========== [${requestId}] TPS 脚本回调 ==========`);
+
+    const tail = stdout ? stdout.slice(-5000) : '';
+    console.log(`[${requestId}] stdout后5000字符:\n`, tail);
+
+    if (stderr) {
+      console.error(`[${requestId}] stderr后3000字符:\n`, stderr.slice(-3000));
+    }
+
+    const match = stdout.match(/Average\s+TPS\s*:\s*([0-9.]+)/i);
+    const tps = match ? Number(match[1]) : null;
+
+    if (error) {
+      return res.status(500).json({
+        success: false,
+        message: error.message,
+        tps,
+        stdoutTail: tail,
+        stderrTail: stderr ? stderr.slice(-3000) : ''
+      });
+    }
+
+    return res.json({
+      success: true,
+      tps,
+      rawTail: tail
+    });
+  });
 });
 
 app.listen(port, () => {
@@ -1963,6 +2091,16 @@ app.post('/api/add-certificate', (req, res) => {
                 return res.status(500).json({ message: '服务器内部错误' });
             }
 
+            const chainmakerDbName = CERT_DB_NAME_BY_ORG[org] || null;
+            insertCertificateRegistry({
+                userId,
+                certificateName,
+                org,
+                expiresAt: null
+            }).catch((registryErr) => {
+                console.error('写入 certificate_registry 失败:', registryErr);
+            });
+
             res.status(200).json({ message: '证书添加成功' });
         });
     });
@@ -1975,36 +2113,40 @@ app.post('/api/get-certificates', (req, res) => {
         return res.status(400).json({ message: '缺少 userId 参数' });
     }
 
-    const query = 'SELECT certificates FROM users WHERE id = ?';
+    const sql = `
+        SELECT
+            certificate_name AS cert,
+            org AS organization,
+            sign_cert_path,
+            tls_cert_path,
+            pem_path,
+            address,
+            created_at,
+            expires_at
+        FROM certificate_registry
+        WHERE user_id = ? AND org = 'wx-org1'
+        ORDER BY created_at DESC, id DESC
+    `;
 
-    userDb.query(query, [userId], (err, results) => {
+    db.query(sql, [userId], (err, results) => {
         if (err) {
             console.error('查询证书失败:', err);
             return res.status(500).json({ message: '服务器内部错误' });
         }
 
-        if (results.length === 0) {
-            return res.status(404).json({ message: '用户未找到' });
-        }
-
-        // 如果 certificates 不为空，解析 JSON；否则返回空数组
-        const certificates = results[0].certificates ? JSON.parse(results[0].certificates) : [];
-        
-        if (certificates.length === 0) {
-            return res.status(200).json({ userId, certificates: [] });
-        }
-
-        const certQueries = certificates.map(cert => resolveCertificateRecord(chainmakerCaDb, cert));
-
-        // 等待所有证书查询完成
-        Promise.all(certQueries)
-            .then(certResults => {
-                res.status(200).json({ userId, certificates: certResults });
-            })
-            .catch(err => {
-                console.error('查询证书参数出错:', err);
-                res.status(500).json({ message: '服务器内部错误' });
-            });
+        return res.status(200).json({
+            userId,
+            certificates: (results || []).map((row) => ({
+                cert: row.cert,
+                organization: row.organization,
+                address: row.address || null,
+                sign_cert_path: row.sign_cert_path || null,
+                tls_cert_path: row.tls_cert_path || null,
+                pem_path: row.pem_path || null,
+                registry_created_at: row.created_at || null,
+                expires_at: row.expires_at || null
+            }))
+        });
     });
 });
 
@@ -2015,36 +2157,40 @@ app.post('/api/get-certificates2', (req, res) => {
         return res.status(400).json({ message: '缺少 userId 参数' });
     }
 
-    const query = 'SELECT certificates2 FROM users WHERE id = ?';
+    const sql = `
+        SELECT
+            certificate_name AS cert,
+            org AS organization,
+            sign_cert_path,
+            tls_cert_path,
+            pem_path,
+            address,
+            created_at,
+            expires_at
+        FROM certificate_registry
+        WHERE user_id = ? AND org = 'wx-org2'
+        ORDER BY created_at DESC, id DESC
+    `;
 
-    userDb.query(query, [userId], (err, results) => {
+    db.query(sql, [userId], (err, results) => {
         if (err) {
             console.error('查询证书失败:', err);
             return res.status(500).json({ message: '服务器内部错误' });
         }
 
-        if (results.length === 0) {
-            return res.status(404).json({ message: '用户未找到' });
-        }
-
-        // 如果 certificates 不为空，解析 JSON；否则返回空数组
-        const certificates = results[0].certificates2 ? JSON.parse(results[0].certificates2) : [];
-        
-        if (certificates.length === 0) {
-            return res.status(200).json({ userId, certificates: [] });
-        }
-
-        const certQueries = certificates.map(cert => resolveCertificateRecord(chainmakerCa2Db, cert));
-
-        // 等待所有证书查询完成
-        Promise.all(certQueries)
-            .then(certResults => {
-                res.status(200).json({ userId, certificates: certResults });
-            })
-            .catch(err => {
-                console.error('查询证书参数出错:', err);
-                res.status(500).json({ message: '服务器内部错误' });
-            });
+        return res.status(200).json({
+            userId,
+            certificates: (results || []).map((row) => ({
+                cert: row.cert,
+                organization: row.organization,
+                address: row.address || null,
+                sign_cert_path: row.sign_cert_path || null,
+                tls_cert_path: row.tls_cert_path || null,
+                pem_path: row.pem_path || null,
+                registry_created_at: row.created_at || null,
+                expires_at: row.expires_at || null
+            }))
+        });
     });
 });
 

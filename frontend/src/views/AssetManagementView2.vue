@@ -1831,12 +1831,14 @@ async fetchCertificates() {
     // 标注 org 字段为完整形式
     const org1Certs = org1Res.data.certificates?.map(cert => ({
       name: cert.cert,
-      org: 'wx-org1.chainmaker.org'
+      org: 'wx-org1.chainmaker.org',
+      address: cert.address || ''
     })) || [];
 
     const org2Certs = org2Res.data.certificates?.map(cert => ({
       name: cert.cert,
-      org: 'wx-org2.chainmaker.org'
+      org: 'wx-org2.chainmaker.org',
+      address: cert.address || ''
     })) || [];
 
     this.certificates = [...org1Certs, ...org2Certs];
@@ -1851,23 +1853,7 @@ async fetchCertificates() {
 
 async getCertAddr(certInfo) {
   try {
-    const certName = certInfo.name;
-    const orgName = certInfo.org;
-
-    const certPath =
-      `/home/super/r/GoSDK/crypto-config/${orgName}/user/${certName}/${certName}.sign.crt`;
-
-    const response = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
-      cert_path: certPath
-    });
-
-    const addr = response?.data?.ethereum?.address;
-
-    if (response.status === 200 && addr) {
-      return addr;
-    }
-
-    return null;
+    return certInfo.address || null;
   } catch (err) {
     console.warn('跳过无效或过期证书:', {
       cert: certInfo,

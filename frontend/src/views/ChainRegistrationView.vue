@@ -338,8 +338,8 @@
             <p><strong>证书选择:</strong>
               <select v-model="form.selectedCertificate" required>
                 <option value="">请选择证书</option>
-                <option v-for="certificate in certificates" :key="certificate" :value="certificate">
-                  {{ certificate }}
+                <option v-for="certificate in certificates" :key="certificate.cert" :value="certificate.cert">
+                  {{ certificate.cert }}
                 </option>
               </select>
             </p>
@@ -773,7 +773,12 @@ if (indivisibleRawSet.has(raw)) return 'WH';
         }
 
         if (response.status === 200 && response.data.certificates) {
-          this.certificates = response.data.certificates.map(item => item.cert || '未知证书');
+          this.certificates = response.data.certificates.map(item => ({
+            cert: item.cert || '未知证书',
+            address: item.address || '',
+            org: item.organization || '',
+            sign_cert_path: item.sign_cert_path || ''
+          }));
         } else {
           console.error('获取证书失败:', response.data);
           this.certificates = [];
@@ -788,30 +793,13 @@ if (indivisibleRawSet.has(raw)) return 'WH';
 
     async getCertAddr(selectedCert) { 
   try {
-    // 打印 selectedCert 和证书路径，确保路径正确
-    console.log("选中的证书:", selectedCert);
-
-    // 根据资产领域判断选择的证书路径
-    let certPath;
-    if (this.isDivisibleIndustry(this.form.industry)) {
-      // 可分割资产，使用 wx-org2
-      certPath = `/home/super/r/GoSDK/crypto-config/wx-org2.chainmaker.org/user/${selectedCert}/${selectedCert}.sign.crt`;
-      console.log("使用可分割资产证书路径:", certPath);
-    } else {
-      // 不可分割资产，使用 wx-org1
-      certPath = `/home/super/r/GoSDK/crypto-config/wx-org1.chainmaker.org/user/${selectedCert}/${selectedCert}.sign.crt`;
-      console.log("使用不可分割资产证书路径:", certPath);
-    }
-
-    // 请求获取证书地址
-    const response = await axios.post('http://10.112.47.214:9092/cert-to-addr', { cert_path: certPath });
-
-    if (response.status === 200 && response.data.ethereum.address) {
-      this.certAddr = response.data.ethereum.address;
+    const selected = this.certificates.find(item => item.cert === selectedCert);
+    if (selected?.address) {
+      this.certAddr = selected.address;
       console.log("成功获取证书地址:", this.certAddr);
-      return response.data.ethereum.address;
+      return selected.address;
     } else {
-      console.error('获取地址失败:', response.data);
+      console.error('获取地址失败: 未找到证书地址', selectedCert);
       throw new Error('证书地址获取失败');
     }
   } catch (error) {
@@ -1046,7 +1034,7 @@ async confirmForm() {
   if (!this.certAddr) {
     console.error("未能成功获取证书地址，无法执行 Mint 接口调用");
     this.showError = true;
-    this.errorMessage = '无法获取证书地址，请检查证书选择或网络连接';
+      this.errorMessage = '无法获取证书地址，请检查证书登记信息';
     this.showUnifiedModal = false; // 隐藏统一模态框
     return; // 中止后续流程
   }

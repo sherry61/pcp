@@ -228,12 +228,28 @@ export default {
         return "未知";
       }
 
+      if (typeof timestamp === "string") {
+        const normalized = timestamp.replace(" ", "T");
+        const date = new Date(normalized);
+        if (Number.isNaN(date.getTime())) {
+          return "未知";
+        }
+
+        const year = date.getFullYear();
+        const month = String(date.getMonth() + 1).padStart(2, "0");
+        const day = String(date.getDate()).padStart(2, "0");
+        const hours = String(date.getHours()).padStart(2, "0");
+        const minutes = String(date.getMinutes()).padStart(2, "0");
+        const seconds = String(date.getSeconds()).padStart(2, "0");
+        return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+      }
+
       const value = Number(timestamp);
       if (!Number.isFinite(value)) {
         return "未知";
       }
 
-      const date = new Date(value * 1000);
+      const date = new Date(value > 1e12 ? value : value * 1000);
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, "0");
       const day = String(date.getDate()).padStart(2, "0");
@@ -266,7 +282,7 @@ const fetchUserCertificate = async (userId) => {
 
     // 合并结果
     const allCertificates = [...certificates1, ...certificates2]
-      .filter((item) => item?.data);
+      .filter((item) => item?.cert);
 
     if (allCertificates.length > 0) {
       certificates.value = allCertificates.map((item) => {
@@ -277,6 +293,14 @@ const fetchUserCertificate = async (userId) => {
 
         if (item.data?.org_id) {
           organization = item.data.org_id;
+        }
+
+        if (item.registry_created_at) {
+          createdAt = formatTimestamp(item.registry_created_at);
+        }
+
+        if (item.expires_at) {
+          expirationAt = formatTimestamp(item.expires_at);
         }
 
         if (item.data?.issue_date) {

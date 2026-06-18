@@ -66,7 +66,7 @@ func main() {
 			Name:    "autocert",
 			Command: "go",
 			Args:    []string{"run", "autocert.go"},
-			Dir:     "/home/super/r/autocert",
+			Dir:     "/home/super/fqh/autocert",
 			Port:    "9081",
 		},
 		{

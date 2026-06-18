@@ -27,3 +27,4 @@ pnpm-debug.log*
 # Runtime storage and generated HE result files
 backend/storage/he-results/
 
+cert-store/

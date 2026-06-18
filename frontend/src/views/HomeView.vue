@@ -17,13 +17,23 @@
             <p class="details">较昨日{{ trend }} <span :class="trendClass">{{ transactionChangePercent }}</span></p>
           </div>
           <div class="dashboard-item">
-            <div class="header">
-              <h3>交易 (TPS)</h3>
-              <img src="@/assets/tps-icon.png" alt="TPS Icon" class="dashboard-icon">
-            </div>
-            <p class="main-number">{{ 11600 }}</p>
-            
-          </div>
+  <div class="header">
+    <h3>交易 (TPS)</h3>
+    <div class="tps-header-actions">
+      <el-button
+        size="small"
+        plain
+        :loading="tpsLoading"
+        @click="fetchTPS"
+      >
+        刷新
+      </el-button>
+      <img src="@/assets/tps-icon.png" alt="TPS Icon" class="dashboard-icon">
+    </div>
+  </div>
+
+  <p class="main-number">{{ currentTPS }}</p>
+</div>
           <div class="dashboard-item">
             <div class="header">
               <h3>已审计交易</h3>
@@ -68,7 +78,9 @@ data() {
     transactionChangePercent: '0%', // 新增字段，用于展示提升百分比
     chartKey: 0,
     transactionHistory:[],
-    trend: ''
+    trend: '',
+    currentTPS: '25411',
+    tpsLoading: false
   }
 },
 
@@ -82,6 +94,28 @@ mounted() {
     refreshChart() {
     this.chartKey++;  // 更新 key 强制重新渲染组件
   },
+
+  async fetchTPS() {
+  this.tpsLoading = true;
+
+  try {
+    const response = await axios.get('http://10.112.47.214:3000/api/get-tps');
+
+    if (response.status === 200 && response.data?.success) {
+      this.currentTPS =
+        response.data.tps == null
+          ? '--'
+          : Number(response.data.tps).toFixed(2);
+    } else {
+      this.currentTPS = '--';
+    }
+  } catch (error) {
+    console.error('获取TPS失败:', error);
+    this.currentTPS = '--';
+  } finally {
+    this.tpsLoading = false;
+  }
+},
 
   async fetchTodayTransaction() {
     try {
@@ -307,5 +341,11 @@ body {
   width: 800px; /* 设置图表宽度 */
   max-width: 800px; /* 设置图表最大宽度 */
   margin: 0 auto; /* 居中对齐 */
+}
+
+.tps-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 </style>

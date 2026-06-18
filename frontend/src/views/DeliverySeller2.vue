@@ -68,7 +68,7 @@
             <el-table-column label="操作" min-width="432" align="center" header-align="center">
               <template #default="{ row }">
                 <div class="action-cell">
-                  <el-button v-if="isHeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.checkingHe" @click="openHeDelivery(row)" :disabled="!row.contractVerified">
+                  <el-button v-if="isHeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.checkingHe" @click="openHeDelivery(row)">
                     执行交付
                   </el-button>
                   <el-button
@@ -78,7 +78,7 @@
                     class="action-btn-primary"
                     :loading="row.processingFl || row.checkingFl"
                     @click="openFlJoinDialog(row)"
-                    :disabled="!row.contractVerified"
+
                   >
                     执行交付
                   </el-button>
@@ -546,7 +546,7 @@ export default {
           const response = await axios.post(`${API_BASE}/api/${source.api}`, { userId: this.userId })
           const certs = Array.isArray(response.data.certificates) ? response.data.certificates : []
           certs.forEach((cert) => {
-            certLists.push({ org: source.org, cert: cert.cert })
+            certLists.push({ org: source.org, cert: cert.cert, address: cert.address || '' })
           })
         } catch (error) {
           console.error(`获取 ${source.api} 失败:`, error)
@@ -556,11 +556,7 @@ export default {
       const addresses = []
       for (const item of certLists) {
         try {
-          const certPath = `/home/super/r/GoSDK/crypto-config/${item.org}/user/${item.cert}/${item.cert}.sign.crt`
-          const response = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
-            cert_path: certPath
-          })
-          const address = response?.data?.ethereum?.address
+          const address = item.address
           if (address) addresses.push(address)
         } catch (error) {
           console.error(`解析证书地址失败: ${item.cert}`, error)

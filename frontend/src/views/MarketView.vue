@@ -1038,10 +1038,9 @@ connectWalletMock() {
       }
 
     // ✅ 只要发现任一地址有 pendingTransactions，就判为 seller
-    for (const { org, cert } of certLists) {
-      const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${cert}/${cert}.sign.crt`;
-      const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', { cert_path: certPath });
-      const addr = addrRes?.data?.ethereum?.address;
+    for (const { cert } of certLists) {
+      const certInfo = this.certificates.find(item => item.cert === cert);
+      const addr = certInfo?.address;
       if (!addr) continue;
 
       const pendingRes = await axios.get(`http://10.112.47.214:3000/api/seller-pending-transactions/${addr}`);
@@ -1095,7 +1094,11 @@ connectWalletMock() {
       userId: this.userId,
     });
     if (response.status === 200 && response.data.certificates) {
-      this.certificates = response.data.certificates.map(item => item.cert || '未知证书');
+      this.certificates = response.data.certificates.map(item => ({
+        cert: item.cert || '未知证书',
+        address: item.address || '',
+        sign_cert_path: item.sign_cert_path || '',
+      }));
     } else {
       console.error('获取证书失败:', response.data);
       this.certificates = [];
@@ -1109,14 +1112,11 @@ connectWalletMock() {
 
 async getCertAddr(selectedCert) {
       try {
-        const certPath = `/home/super/r/GoSDK/crypto-config/wx-org1.chainmaker.org/user/${selectedCert}/${selectedCert}.sign.crt`;
-        const response = await axios.post('http://10.112.47.214:9092/cert-to-addr', { cert_path: certPath });
-
-        if (response.status === 200 && response.data.ethereum.address) {
-          return response.data.ethereum.address;
-        } else {
-          throw new Error('证书地址获取失败');
+        const selected = this.certificates.find(item => item.cert === selectedCert);
+        if (selected?.address) {
+          return selected.address;
         }
+        throw new Error('证书地址获取失败');
       } catch (error) {
         console.error('请求地址时发生错误:', error);
         throw new Error('证书地址获取失败，请检查网络连接或服务器状态');
@@ -1235,14 +1235,10 @@ async fetchRequestedAssets() {
 
     const allTransactions = [];
 
-    for (const { org, cert } of certLists) {
+    for (const { cert } of certLists) {
       try {
-        const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${cert}/${cert}.sign.crt`;
-        const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
-          cert_path: certPath,
-        });
-
-        const certAddr = addrRes?.data?.ethereum?.address;
+        const certInfo = this.certificates.find(item => item.cert === cert);
+        const certAddr = certInfo?.address;
         if (!certAddr) {
           console.warn(`未能获取地址，证书: ${cert}`);
           continue;
@@ -1318,14 +1314,10 @@ async fetchRequestedAssets() {
 
     const allPendingTx = [];
 
-    for (const { org, cert } of certLists) {
+    for (const { cert } of certLists) {
       try {
-        const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${cert}/${cert}.sign.crt`;
-        const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
-          cert_path: certPath,
-        });
-
-        const certAddr = addrRes?.data?.ethereum?.address;
+        const certInfo = this.certificates.find(item => item.cert === cert);
+        const certAddr = certInfo?.address;
         if (!certAddr) {
           console.warn(`未能获取地址，证书: ${cert}`);
           continue;
@@ -1549,7 +1541,12 @@ async fetchRequestedAssets() {
         }
       } catch (permError) {
         console.error(`购买权限 [${rightType}] 异常:`, permError);
-        this.$message.error(`权限 [${rightType}] 交易时发生网络错误`);
+        const backendMessage =
+          permError?.response?.data?.message ||
+          permError?.response?.data?.error ||
+          permError?.message ||
+          '未知错误';
+        this.$message.error(`权限 [${rightType}] 交易失败: ${backendMessage}`);
       }
     }
 
@@ -1853,14 +1850,9 @@ async transferAsset(asset) {
         });
 
         if (res.status === 200 && Array.isArray(res.data.certificates)) {
-          for (const { cert } of res.data.certificates) {
-            const certPath = `/home/super/r/GoSDK/crypto-config/${orgName}/user/${cert}/${cert}.sign.crt`;
-            const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
-              cert_path: certPath,
-            });
-            const addr = addrRes?.data?.ethereum?.address;
-            if (addr) {
-              allCerts.push({ cert, orgName, addr });
+          for (const { cert, address } of res.data.certificates) {
+            if (address) {
+              allCerts.push({ cert, orgName, addr: address });
             }
           }
         }

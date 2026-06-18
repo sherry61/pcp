@@ -95,8 +95,8 @@
               <label for="certificate-select"><strong>选择证书:</strong></label>
               <select id="certificate-select" v-model="selectedCertificate" required>
                 <option value="">请选择证书</option>
-                <option v-for="certificate in certificates" :key="certificate" :value="certificate">
-                  {{ certificate }}
+                <option v-for="certificate in certificates" :key="certificate.cert" :value="certificate.cert">
+                  {{ certificate.cert }}
                 </option>
               </select>
             </div>
@@ -180,8 +180,8 @@
               <label for="certificate-select"><strong>选择模型</strong></label>
               <select id="certificate-select" v-model="selectedCertificate" required>
                 <option value="">请选择模型</option>
-                <option v-for="certificate in certificates" :key="certificate" :value="certificate">
-                  {{ certificate }}
+                <option v-for="certificate in certificates" :key="certificate.cert" :value="certificate.cert">
+                  {{ certificate.cert }}
                 </option>
               </select>
             </div>
@@ -441,7 +441,11 @@ export default {
         }
      
         if (response.status === 200 && response.data.certificates) {
-          this.certificates = response.data.certificates.map(item => item.cert || '未知证书');
+          this.certificates = response.data.certificates.map(item => ({
+            cert: item.cert || '未知证书',
+            address: item.address || '',
+            sign_cert_path: item.sign_cert_path || ''
+          }));
         } else {
           console.error('获取证书失败:', response.data);
           this.certificates = [];
@@ -547,24 +551,11 @@ export default {
 
     async getCertAddr(selectedCert) {
       try {
-        let certPath;
-        if (this.isDivisibleIndustry(this.asset.industry)) {
-      // 可分割资产，使用 wx-org2
-      certPath = `/home/super/r/GoSDK/crypto-config/wx-org2.chainmaker.org/user/${selectedCert}/${selectedCert}.sign.crt`;
-      console.log("使用可分割资产证书路径:", certPath);
-    } else {
-      // 不可分割资产，使用 wx-org1
-      certPath = `/home/super/r/GoSDK/crypto-config/wx-org1.chainmaker.org/user/${selectedCert}/${selectedCert}.sign.crt`;
-      console.log("使用不可分割资产证书路径:", certPath);
-    }
-       
-        const response = await axios.post('http://10.112.47.214:9092/cert-to-addr', { cert_path: certPath });
-
-        if (response.status === 200 && response.data.ethereum.address) {
-          return response.data.ethereum.address;
-        } else {
-          throw new Error('证书地址获取失败');
+        const selected = this.certificates.find(item => item.cert === selectedCert);
+        if (selected?.address) {
+          return selected.address;
         }
+        throw new Error('证书地址获取失败');
       } catch (error) {
         console.error('请求地址时发生错误:', error);
         throw new Error('证书地址获取失败，请检查网络连接或服务器状态');
