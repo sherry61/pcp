@@ -38,30 +38,35 @@
                 <el-button size="small" text class="contract-link" @click="viewContract(row)">
                   <span>查看合约</span>
                 </el-button>
-                 <el-button
-      size="small"
-      type="primary"
-      :loading="row.verifyingContract"
-      @click="verifyContract(row)"
-    >
-      校验合约
-    </el-button>
+                <!--
+                临时隐藏校验合约入口。
+                DeliverySeller2 当前未按行维护 contractVerified / verifyingContract，
+                先去掉按钮和状态展示，避免误导用户。
+                <el-button
+                  size="small"
+                  type="primary"
+                  :loading="row.verifyingContract"
+                  @click="verifyContract(row)"
+                >
+                  校验合约
+                </el-button>
 
-    <el-tag
-      v-if="row.contractVerified"
-      type="success"
-      size="small"
-    >
-      已校验
-    </el-tag>
+                <el-tag
+                  v-if="row.contractVerified"
+                  type="success"
+                  size="small"
+                >
+                  已校验
+                </el-tag>
 
-    <el-tag
-      v-else
-      type="info"
-      size="small"
-    >
-      未校验
-    </el-tag>
+                <el-tag
+                  v-else
+                  type="info"
+                  size="small"
+                >
+                  未校验
+                </el-tag>
+                -->
               </template>
             </el-table-column>
 
@@ -102,7 +107,7 @@
                   >
                     发起训练
                   </el-button>
-                  <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)" :disabled="!row.contractVerified">
+                  <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)">
                     执行交付
                   </el-button>
                   <el-button
