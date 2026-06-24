@@ -1189,14 +1189,17 @@ export default {
 
       row.uploadingPreKey = true
       try {
-        const keyMaterial = await preCrypto.generatePreBuyerKeyPair()
+        const keyMaterial = await preCrypto.generatePreBuyerKeyPair({
+          transactionId: row.transaction_id
+        })
         await axios.post(`${API_BASE}/api/privacy/pre/buyer-public-key`, {
           transactionId: row.transaction_id,
-          buyerPublicKey: keyMaterial.publicKeyHex
+          buyerPublicKey: keyMaterial.publicKey
         })
         preCrypto.downloadPrePrivateKeyFile({
           transactionId: row.transaction_id,
-          privateKeyPem: keyMaterial.privateKeyPem
+          privateScalarHex: keyMaterial.privateScalarHex,
+          publicKey: keyMaterial.publicKey
         })
 
         await this.refreshPreStatus(row, false)
@@ -1313,6 +1316,13 @@ export default {
       this.decryptDialog.processing = true
       try {
         const privateKeyText = await this.decryptDialog.privateKeyFile.text()
+        const parsedKey = heCrypto.parseHeKeyMaterial(privateKeyText)
+        heCrypto.assertHePrivateKeyMatchesRecord({
+          parsedKey,
+          algorithm: this.decryptDialog.algorithm,
+          transactionId: this.decryptDialog.row.transaction_id,
+          record: this.decryptDialog.row.heRecord
+        })
         const plaintextCsv = await heCrypto.decryptHeResultCsv({
           algorithm: this.decryptDialog.algorithm,
           encryptedCsvText: this.decryptDialog.encryptedText,
@@ -1354,9 +1364,15 @@ export default {
           this.preDecryptDialog.privateKeyFile.text(),
           this.preDecryptDialog.encryptedBlob.arrayBuffer()
         ])
+        const parsedKey = preCrypto.parsePrePrivateKeyMaterial(privateKeyText)
+        preCrypto.assertPrePrivateKeyMatchesRecord({
+          parsedKey,
+          transactionId: this.preDecryptDialog.row.transaction_id,
+          record: this.preDecryptDialog.row.preRecord
+        })
 
         await preCrypto.downloadDecryptedPreResultArchive({
-          encryptedTarBuffer,
+          encryptedZipBuffer: encryptedTarBuffer,
           privateKeyText,
           transactionId: this.preDecryptDialog.row.transaction_id
         })

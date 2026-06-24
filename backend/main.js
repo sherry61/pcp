@@ -653,6 +653,21 @@ registerPreRoutes({
   upload,
   dbQuery,
   firstDefined,
+  parseJsonField(value) {
+    if (value == null || value === '') {
+      return null;
+    }
+
+    if (typeof value === 'object') {
+      return value;
+    }
+
+    try {
+      return JSON.parse(value);
+    } catch (error) {
+      return null;
+    }
+  },
   safeBaseName,
   pickContentType
 });

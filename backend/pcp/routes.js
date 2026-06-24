@@ -21,10 +21,12 @@ const {
 } = require('./he');
 const {
   buildPreContractPayload,
+  buildPreAttemptMetadata,
   normalizePreRecord,
   mapPreRecordRow,
   extractPreResultMetadata,
-  validatePreHexString
+  validatePreJsonPayload,
+  validatePreSourceArchive
 } = require('./pre');
 const {
   createHeResultSyncHandler,
@@ -54,6 +56,16 @@ function formatHeRouteError(error) {
     };
   }
 
+  if (error?.statusCode) {
+    return {
+      status: error.statusCode,
+      body: {
+        message: error.message || 'HE 请求校验失败',
+        code: error.code || `HE_${error.statusCode}`
+      }
+    };
+  }
+
   const status = error?.response?.status;
   if ([400, 403, 404, 409, 422].includes(status)) {
     return {
@@ -71,7 +83,7 @@ function formatHeRouteError(error) {
   return {
     status: 500,
     body: {
-      message: 'HE 路由处理失败',
+      message: error?.message || 'HE 路由处理失败',
       error: error.message
     }
   };
@@ -958,6 +970,7 @@ function registerPreRoutes({
   upload,
   dbQuery,
   firstDefined,
+  parseJsonField,
   safeBaseName,
   pickContentType
 }) {
@@ -1028,12 +1041,15 @@ function registerPreRoutes({
       return {
         transaction_id: fallback.transaction_id || fallback.transactionId || null,
         business_contract_id: businessContractId,
+        current_attempt_id: null,
         pcp_contract_id: null,
         buyer_id: buyerId,
         seller_id: sellerId,
         buyer_public_key: null,
         buyer_public_key_ready: false,
-        tee_key_id: null,
+        seller_source_public_key: null,
+        seller_source_public_key_ready: false,
+        reencryption_key_ready: false,
         pcp_status: 'NOT_EXIST',
         has_record: false,
         result_ready: false,
@@ -1046,12 +1062,15 @@ function registerPreRoutes({
     return {
       transaction_id: mapped.transaction_id,
       business_contract_id: mapped.business_contract_id || businessContractId,
+      current_attempt_id: mapped.current_attempt_id || null,
       pcp_contract_id: mapped.pcp_contract_id || null,
       buyer_id: mapped.buyer_id || buyerId,
       seller_id: mapped.seller_id || sellerId,
       buyer_public_key: mapped.buyer_public_key || null,
       buyer_public_key_ready: Boolean(mapped.buyer_public_key_ready),
-      tee_key_id: mapped.tee_key_id || null,
+      seller_source_public_key: mapped.seller_source_public_key || null,
+      seller_source_public_key_ready: Boolean(mapped.seller_source_public_key_ready),
+      reencryption_key_ready: Boolean(mapped.reencryption_key_ready),
       pcp_status: mapped.pcp_status || 'CREATED',
       has_record: true,
       result_ready: Boolean(mapped.result_ready),
@@ -1067,24 +1086,28 @@ function registerPreRoutes({
       INSERT INTO pre_delivery_contracts (
         transaction_id,
         business_contract_id,
+        current_attempt_id,
         pcp_contract_id,
         buyer_id,
         seller_id,
         buyer_public_key,
-        tee_key_id,
+        seller_source_public_key,
+        reencryption_key,
         pcp_status,
         download_token,
         result_filename,
         result_storage_path,
         last_error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         business_contract_id = VALUES(business_contract_id),
+        current_attempt_id = VALUES(current_attempt_id),
         pcp_contract_id = VALUES(pcp_contract_id),
         buyer_id = VALUES(buyer_id),
         seller_id = VALUES(seller_id),
         buyer_public_key = VALUES(buyer_public_key),
-        tee_key_id = VALUES(tee_key_id),
+        seller_source_public_key = VALUES(seller_source_public_key),
+        reencryption_key = VALUES(reencryption_key),
         pcp_status = VALUES(pcp_status),
         download_token = VALUES(download_token),
         result_filename = VALUES(result_filename),
@@ -1095,11 +1118,13 @@ function registerPreRoutes({
     await dbQuery(sql, [
       record.transaction_id,
       record.business_contract_id,
+      record.current_attempt_id,
       record.pcp_contract_id,
       record.buyer_id,
       record.seller_id,
       record.buyer_public_key,
-      record.tee_key_id,
+      record.seller_source_public_key,
+      record.reencryption_key,
       record.pcp_status,
       record.download_token,
       record.result_filename,
@@ -1122,6 +1147,10 @@ function registerPreRoutes({
         overrides.businessContractId,
         baseRecord && baseRecord.business_contract_id
       ),
+      currentAttemptId: firstDefined(
+        overrides.currentAttemptId,
+        baseRecord && baseRecord.current_attempt_id
+      ),
       pcpContractId: firstDefined(
         overrides.pcpContractId,
         baseRecord && baseRecord.pcp_contract_id
@@ -1130,9 +1159,16 @@ function registerPreRoutes({
       sellerId: firstDefined(overrides.sellerId, baseRecord && baseRecord.seller_id),
       buyerPublicKey: firstDefined(
         overrides.buyerPublicKey,
-        baseRecord && baseRecord.buyer_public_key
+        parseJsonField(baseRecord && baseRecord.buyer_public_key)
       ),
-      teeKeyId: firstDefined(overrides.teeKeyId, baseRecord && baseRecord.tee_key_id),
+      sellerSourcePublicKey: firstDefined(
+        overrides.sellerSourcePublicKey,
+        parseJsonField(baseRecord && baseRecord.seller_source_public_key)
+      ),
+      reencryptionKey: firstDefined(
+        overrides.reencryptionKey,
+        parseJsonField(baseRecord && baseRecord.reencryption_key)
+      ),
       pcpStatus: firstDefined(
         overrides.pcpStatus,
         baseRecord && baseRecord.pcp_status,
@@ -1171,45 +1207,6 @@ function registerPreRoutes({
     return overrides;
   }
 
-  async function submitPreReEncryptTask({
-    record,
-    transaction,
-    digitalContract
-  }) {
-    if (!record?.buyer_public_key) {
-      const error = new Error('买方尚未上传 PRE 公钥');
-      error.statusCode = 400;
-      throw error;
-    }
-
-    const client = createPcpClient({
-      baseUrl: getPcpPreBaseUrl(),
-      entityId: transaction.buyer_address
-    });
-    const reEncryptResp = await client.post('/pre/re-encrypt', {
-      contract_id: record.pcp_contract_id,
-      buyer_public_key: record.buyer_public_key
-    });
-    const resultMetadata = extractPreResultMetadata(reEncryptResp?.data);
-    const saved = await upsertPreRecord(
-      mergePreRecordInput(record, {
-        transactionId: record.transaction_id,
-        businessContractId: digitalContract.contract_id,
-        pcpContractId: record.pcp_contract_id,
-        buyerId: transaction.buyer_address,
-        sellerId: transaction.seller_address,
-        pcpStatus: firstDefined(reEncryptResp?.data?.data?.status, 'QUEUED'),
-        lastError: null,
-        ...withPreResultMetadata(resultMetadata)
-      })
-    );
-
-    return {
-      saved,
-      reEncryptResp
-    };
-  }
-
   async function ensurePreContract({ transactionId, existingRecord }) {
     const { transaction, digitalContract } = await requirePreContext(transactionId);
     const currentRecord = existingRecord || await getPreRecordByTransactionId(transactionId);
@@ -1228,8 +1225,7 @@ function registerPreRoutes({
       businessContractId: digitalContract.contract_id
     });
     const client = createPcpClient({
-      baseUrl: getPcpPreBaseUrl(),
-      entityId: transaction.buyer_address
+      baseUrl: getPcpPreBaseUrl()
     });
     const contractResp = await client.post('/pre/contract', contractPayload);
     const pcpContractId = firstDefined(
@@ -1248,7 +1244,7 @@ function registerPreRoutes({
         pcpContractId,
         buyerId: transaction.buyer_address,
         sellerId: transaction.seller_address,
-        pcpStatus: firstDefined(contractResp?.data?.data?.status, 'CREATED'),
+        pcpStatus: firstDefined(contractResp?.data?.data?.status, 'ACTIVE'),
         lastError: null
       })
     );
@@ -1258,6 +1254,76 @@ function registerPreRoutes({
       transaction,
       digitalContract,
       created: true
+    };
+  }
+
+  async function submitPreAttempt({
+    record,
+    transaction,
+    digitalContract,
+    sourceCipherZipFile
+  }) {
+    const mappedRecord = mapPreRecordRow(record);
+
+    if (!mappedRecord?.buyer_public_key) {
+      const error = new Error('买方尚未上传 PRE 公钥');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (!mappedRecord?.seller_source_public_key) {
+      const error = new Error('卖方尚未提供 PRE source public key');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    if (!mappedRecord?.reencryption_key) {
+      const error = new Error('卖方尚未提供 PRE reencryption key');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    validatePreSourceArchive(sourceCipherZipFile);
+
+    const client = createPcpClient({
+      baseUrl: getPcpPreBaseUrl()
+    });
+    const form = new FormData();
+    form.append('metadata', JSON.stringify(buildPreAttemptMetadata({
+      contractId: record.pcp_contract_id,
+      sourcePublicKey: mappedRecord.seller_source_public_key,
+      targetPublicKey: mappedRecord.buyer_public_key,
+      reencryptionKey: mappedRecord.reencryption_key
+    })));
+    form.append('source_cipher_zip', sourceCipherZipFile.buffer, {
+      filename: sourceCipherZipFile.originalname || 'source.zip',
+      contentType: sourceCipherZipFile.mimetype || 'application/zip'
+    });
+
+    const attemptResp = await client.post(
+      `/pre/${encodeURIComponent(record.pcp_contract_id)}/attempts`,
+      form,
+      { headers: form.getHeaders() }
+    );
+    const attemptData = attemptResp?.data?.data || {};
+    const resultMetadata = extractPreResultMetadata(attemptResp?.data);
+    const saved = await upsertPreRecord(
+      mergePreRecordInput(record, {
+        transactionId: record.transaction_id,
+        businessContractId: digitalContract.contract_id,
+        currentAttemptId: firstDefined(attemptData.attempt_id, record.current_attempt_id),
+        pcpContractId: record.pcp_contract_id,
+        buyerId: transaction.buyer_address,
+        sellerId: transaction.seller_address,
+        pcpStatus: firstDefined(attemptData.status, 'QUEUED'),
+        lastError: null,
+        ...withPreResultMetadata(resultMetadata)
+      })
+    );
+
+    return {
+      saved,
+      attemptResp
     };
   }
 
@@ -1275,15 +1341,48 @@ function registerPreRoutes({
       let record = await getPreRecordByTransactionId(transactionId);
       let syncError = null;
 
-      if (record?.pcp_contract_id) {
+      if (record?.pcp_contract_id && record?.current_attempt_id) {
         try {
           const client = createPcpClient({
             baseUrl: getPcpPreBaseUrl(),
           });
-          const contractResp = await client.get(
-            `/contracts/${encodeURIComponent(record.pcp_contract_id)}`
+          const attemptResp = await client.get(
+            `/pre/${encodeURIComponent(record.pcp_contract_id)}/attempts/${encodeURIComponent(record.current_attempt_id)}/status`
           );
-          const contractData = extractContractStatus(contractResp?.data);
+          const attemptData = attemptResp?.data?.data || attemptResp?.data || {};
+          const resultTokens = Array.isArray(attemptData?.result_tokens)
+            ? attemptData.result_tokens
+            : [];
+          let buyerResultToken = resultTokens.find((item) => (
+            item?.result_role === 'pre_result' &&
+            item?.receiver_id === transaction.buyer_address
+          )) || null;
+
+          if (
+            buyerResultToken &&
+            !buyerResultToken.download_token &&
+            String(firstDefined(attemptData.status, record.pcp_status, '')).toUpperCase() === 'PAM_PASSED'
+          ) {
+            try {
+              const resendResp = await client.post('/tokens/resend', {
+                contract_id: record.pcp_contract_id,
+                attempt_id: firstDefined(attemptData.attempt_id, record.current_attempt_id),
+                receiver_id: transaction.buyer_address,
+                result_role: 'pre_result'
+              });
+              const resendData = resendResp?.data?.data || {};
+              buyerResultToken = {
+                ...buyerResultToken,
+                download_token: firstDefined(
+                  resendData.download_token,
+                  buyerResultToken.download_token,
+                  null
+                )
+              };
+            } catch (error) {
+              // Best-effort token recovery.
+            }
+          }
 
           record = await upsertPreRecord(
             mergePreRecordInput(record, {
@@ -1291,9 +1390,22 @@ function registerPreRoutes({
               businessContractId: digitalContract.contract_id,
               buyerId: transaction.buyer_address,
               sellerId: transaction.seller_address,
-              pcpContractId: firstDefined(contractData.contractId, record.pcp_contract_id),
-              pcpStatus: firstDefined(contractData.status, record.pcp_status),
-              lastError: record.last_error
+              currentAttemptId: firstDefined(attemptData.attempt_id, record.current_attempt_id),
+              pcpContractId: record.pcp_contract_id,
+              pcpStatus: firstDefined(attemptData.status, record.pcp_status),
+              downloadToken: firstDefined(
+                buyerResultToken?.download_token,
+                record.download_token
+              ),
+              resultFilename: firstDefined(
+                buyerResultToken?.filename,
+                record.result_filename
+              ),
+              resultStoragePath: firstDefined(
+                buyerResultToken?.result_uri,
+                record.result_storage_path
+              ),
+              lastError: firstDefined(attemptData.last_error, record.last_error)
             })
           );
         } catch (error) {
@@ -1325,33 +1437,18 @@ function registerPreRoutes({
   });
 
   app.get('/api/privacy/pre/tee-materials', async (req, res) => {
-    const entityId = String(req.query.entityId || req.query.sellerId || '').trim();
-
-    try {
-      const client = createPcpClient({
-        baseUrl: getPcpPreBaseUrl(),
-        entityId: entityId || undefined
-      });
-      const response = await client.get('/pre/tee-materials');
-      return res.status(200).json({
-        success: true,
-        item: response?.data?.data || response?.data || null
-      });
-    } catch (error) {
-      const routeError = formatPreRouteError(error);
-      return res.status(routeError.status).json({
-        success: false,
-        ...routeError.body
-      });
-    }
+    return res.status(410).json({
+      success: false,
+      code: 'PRE_TEE_MATERIALS_DEPRECATED',
+      message: 'PRE 已切换为 attempt 流程，不再需要 tee-materials，请升级前端提交流程'
+    });
   });
 
   app.post('/api/privacy/pre/buyer-public-key', async (req, res) => {
     const transactionId = String(req.body.transactionId || '').trim();
-    const buyerPublicKey = String(
-      firstDefined(req.body.buyerPublicKey, req.body.buyer_public_key, '')
-    ).trim();
-    const teeKeyId = firstDefined(req.body.teeKeyId, req.body.tee_key_id);
+    const buyerPublicKey = parseJsonField(
+      firstDefined(req.body.buyerPublicKey, req.body.buyer_public_key)
+    );
 
     if (!transactionId || !buyerPublicKey) {
       return res.status(400).json({
@@ -1361,7 +1458,7 @@ function registerPreRoutes({
     }
 
     try {
-      validatePreHexString(buyerPublicKey, 'buyerPublicKey');
+      validatePreJsonPayload(buyerPublicKey, 'buyerPublicKey');
       const ensured = await ensurePreContract({ transactionId });
       const saved = await upsertPreRecord(
         mergePreRecordInput(ensured.record, {
@@ -1371,7 +1468,6 @@ function registerPreRoutes({
           buyerId: ensured.transaction.buyer_address,
           sellerId: ensured.transaction.seller_address,
           buyerPublicKey,
-          teeKeyId: teeKeyId ? String(teeKeyId).trim() : ensured.record.tee_key_id,
           lastError: null
         })
       );
@@ -1399,58 +1495,35 @@ function registerPreRoutes({
   app.post(
     '/api/privacy/pre/publish',
     upload.fields([
-      { name: 'source_cipher_file', maxCount: 1 },
-      { name: 'source_wrapped_key_file', maxCount: 1 },
-      { name: 'source_meta_file', maxCount: 1 }
+      { name: 'source_cipher_zip', maxCount: 1 },
+      { name: 'file', maxCount: 1 }
     ]),
     async (req, res) => {
       const transactionId = String(req.body.transactionId || '').trim();
-      const keyPackage = String(
-        firstDefined(req.body.keyPackage, req.body.key_package, '')
-      ).trim();
-      const teeKeyId = firstDefined(req.body.teeKeyId, req.body.tee_key_id);
-      const sourceCipherFile = req.files?.source_cipher_file?.[0] || null;
-      const sourceWrappedKeyFile = req.files?.source_wrapped_key_file?.[0] || null;
-      const sourceMetaFile = req.files?.source_meta_file?.[0] || null;
+      const sellerSourcePublicKey = parseJsonField(
+        firstDefined(req.body.sellerSourcePublicKey, req.body.sourcePublicKey, req.body.source_public_key)
+      );
+      const reencryptionKey = parseJsonField(
+        firstDefined(req.body.reencryptionKey, req.body.reencryption_key)
+      );
+      const sourceCipherZipFile =
+        req.files?.source_cipher_zip?.[0] ||
+        req.files?.file?.[0] ||
+        null;
 
-      if (!transactionId || !keyPackage || !sourceCipherFile || !sourceWrappedKeyFile || !sourceMetaFile) {
+      if (!transactionId || !sellerSourcePublicKey || !reencryptionKey || !sourceCipherZipFile) {
         return res.status(400).json({
           success: false,
-          message: '缺少 transactionId / keyPackage / PRE 三件套'
+          message: '缺少 transactionId / sellerSourcePublicKey / reencryptionKey / source_cipher_zip'
         });
       }
 
       try {
-        validatePreHexString(keyPackage, 'keyPackage');
+        validatePreJsonPayload(sellerSourcePublicKey, 'sellerSourcePublicKey');
+        validatePreJsonPayload(reencryptionKey, 'reencryptionKey');
         let existing = await getPreRecordByTransactionId(transactionId);
         const ensured = await ensurePreContract({ transactionId, existingRecord: existing });
         existing = ensured.record;
-
-        const form = new FormData();
-        form.append('contract_id', existing.pcp_contract_id);
-        form.append('key_package', keyPackage);
-        form.append('source_cipher_file', sourceCipherFile.buffer, {
-          filename: sourceCipherFile.originalname || 'cipher.bin',
-          contentType: sourceCipherFile.mimetype || 'application/octet-stream'
-        });
-        form.append('source_wrapped_key_file', sourceWrappedKeyFile.buffer, {
-          filename: sourceWrappedKeyFile.originalname || 'wrapped_key.bin',
-          contentType: sourceWrappedKeyFile.mimetype || 'application/octet-stream'
-        });
-        form.append('source_meta_file', sourceMetaFile.buffer, {
-          filename: sourceMetaFile.originalname || 'meta.json',
-          contentType: sourceMetaFile.mimetype || 'application/json'
-        });
-
-        const client = createPcpClient({
-          baseUrl: getPcpPreBaseUrl(),
-          entityId: ensured.transaction.seller_address
-        });
-        const publishResp = await client.post('/pre/publish', form, {
-          headers: form.getHeaders()
-        });
-        const resultMetadata = extractPreResultMetadata(publishResp?.data);
-        const status = firstDefined(publishResp?.data?.data?.status, 'WAITING_INPUT');
 
         const saved = await upsertPreRecord(
           mergePreRecordInput(existing, {
@@ -1459,57 +1532,31 @@ function registerPreRoutes({
             pcpContractId: existing.pcp_contract_id,
             buyerId: ensured.transaction.buyer_address,
             sellerId: ensured.transaction.seller_address,
-            teeKeyId: teeKeyId ? String(teeKeyId).trim() : existing.tee_key_id,
-            pcpStatus: status,
+            sellerSourcePublicKey,
+            reencryptionKey,
             lastError: null,
-            ...withPreResultMetadata(resultMetadata)
           })
         );
 
-        let autoReEncrypt = null;
-        let finalSaved = saved;
-        let responseMessage = 'PRE 密态包已发布';
-
-        if (saved?.buyer_public_key) {
-          try {
-            const submitted = await submitPreReEncryptTask({
-              record: saved,
-              transaction: ensured.transaction,
-              digitalContract: ensured.digitalContract
-            });
-            finalSaved = submitted.saved;
-            autoReEncrypt = {
-              success: true,
-              item: submitted.saved,
-              pcp: submitted.reEncryptResp?.data || null
-            };
-            responseMessage = 'PRE 密态包已发布，并已自动发起重加密';
-          } catch (autoError) {
-            const routeError = formatPreRouteError(autoError);
-            autoReEncrypt = {
-              success: false,
-              message: autoError.statusCode
-                ? autoError.message
-                : routeError.body.message,
-              error: autoError.message
-            };
-            responseMessage = 'PRE 密态包已发布，但自动重加密未成功，请买方稍后手动发起';
-          }
-        }
+        const submitted = await submitPreAttempt({
+          record: saved,
+          transaction: ensured.transaction,
+          digitalContract: ensured.digitalContract,
+          sourceCipherZipFile
+        });
 
         return res.status(200).json({
           success: true,
-          message: responseMessage,
-          item: toPreResponseRecord(finalSaved, {
+          message: 'PRE attempt 已提交',
+          item: toPreResponseRecord(submitted.saved, {
             transaction_id: transactionId,
             business_contract_id: ensured.digitalContract.contract_id,
             buyer_id: ensured.transaction.buyer_address,
             seller_id: ensured.transaction.seller_address
           }),
           pcp: {
-            publish: publishResp?.data || null
-          },
-          autoReEncrypt
+            attempt: submitted.attemptResp?.data || null
+          }
         });
       } catch (error) {
         const routeError = formatPreRouteError(error);
@@ -1523,53 +1570,11 @@ function registerPreRoutes({
   );
 
   app.post('/api/privacy/pre/re-encrypt', async (req, res) => {
-    const transactionId = String(req.body.transactionId || '').trim();
-    if (!transactionId) {
-      return res.status(400).json({
-        success: false,
-        message: '缺少 transactionId'
-      });
-    }
-
-    try {
-      let existing = await getPreRecordByTransactionId(transactionId);
-      const ensured = await ensurePreContract({ transactionId, existingRecord: existing });
-      existing = ensured.record;
-
-      if (!['WAITING_INPUT', 'FAILED'].includes(String(existing.pcp_status || '').toUpperCase())) {
-        return res.status(400).json({
-          success: false,
-          message: '当前 PRE 交付状态不允许发起重加密，请等待卖方先完成交付'
-        });
-      }
-
-      const submitted = await submitPreReEncryptTask({
-        record: existing,
-        transaction: ensured.transaction,
-        digitalContract: ensured.digitalContract
-      });
-
-      return res.status(200).json({
-        success: true,
-        message: 'PRE 重加密任务已提交',
-        item: toPreResponseRecord(submitted.saved, {
-          transaction_id: transactionId,
-          business_contract_id: ensured.digitalContract.contract_id,
-          buyer_id: ensured.transaction.buyer_address,
-          seller_id: ensured.transaction.seller_address
-        }),
-        pcp: {
-          reEncrypt: submitted.reEncryptResp?.data || null
-        }
-      });
-    } catch (error) {
-      const routeError = formatPreRouteError(error);
-      return res.status(error.statusCode || routeError.status).json({
-        success: false,
-        ...routeError.body,
-        message: error.statusCode ? error.message : routeError.body.message
-      });
-    }
+    return res.status(410).json({
+      success: false,
+      code: 'PRE_REENCRYPT_DEPRECATED',
+      message: 'PRE 已切换为 publish 即创建 attempt 的流程，不再支持单独 re-encrypt 接口'
+    });
   });
 
   app.post(

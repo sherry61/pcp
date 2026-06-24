@@ -8,8 +8,8 @@ const HE_METHOD_LABEL = '同态加密';
 const FL_METHOD_LABEL = '联邦学习';
 const PRE_METHOD_LABEL = '代理重加密';
 const MPC_METHOD_LABEL = '安全多方计算';
-const HE_ENC_TYPE_OPTIONS = Object.freeze(['Paillier']);
-const HE_OPERATION_OPTIONS = Object.freeze(['ADD']);
+const HE_ENC_TYPE_OPTIONS = Object.freeze(['Paillier', 'ElGamal']);
+const HE_OPERATION_OPTIONS = Object.freeze(['ADD', 'MUL']);
 const PCP_STATUS_TEXT_MAP = Object.freeze({
   NOT_EXIST: '合同不存在',
   CREATED: '已创建',

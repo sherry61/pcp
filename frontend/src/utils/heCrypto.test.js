@@ -7,6 +7,7 @@ const {
   shouldRequirePrivateKeyUpload,
   createPrivateKeyDownload,
   parseHeKeyMaterial,
+  generateElGamalKeyPair,
 } = require('./heCrypto');
 
 test('buildPrivateKeyFilename creates deterministic filenames per algorithm and transaction', () => {
@@ -36,7 +37,7 @@ test('createPrivateKeyDownload and parseHeKeyMaterial round-trip HE key metadata
   const payload = createPrivateKeyDownload({
     algorithm: 'ElGamal',
     transactionId: 'TX_2',
-    keyMaterial: { p: '23', g: '5', x: '7' },
+    keyMaterial: { p: '23', q: '22', g: '5', x: '7' },
   });
 
   assert.equal(payload.filename, 'he-elgamal-private-TX_2.json');
@@ -45,5 +46,21 @@ test('createPrivateKeyDownload and parseHeKeyMaterial round-trip HE key metadata
   assert.equal(parsed.algorithm, 'ElGamal');
   assert.equal(parsed.transactionId, 'TX_2');
   assert.equal(parsed.keyType, 'private');
-  assert.deepEqual(parsed.keyMaterial, { p: 23n, g: 5n, x: 7n });
+  assert.deepEqual(parsed.keyMaterial, { p: 23n, q: 22n, g: 5n, x: 7n });
+});
+
+test('generateElGamalKeyPair returns PCC-compatible public key fields', () => {
+  global.self = { crypto: require('node:crypto').webcrypto };
+
+  const { publicKey, privateKey } = generateElGamalKeyPair();
+
+  assert.equal(publicKey.p > 0n, true);
+  assert.equal(publicKey.q, publicKey.p - 1n);
+  assert.equal(publicKey.g, 2n);
+  assert.equal(typeof publicKey.y, 'bigint');
+  assert.equal(privateKey.q, publicKey.q);
+  assert.equal(privateKey.y, publicKey.y);
+  assert.equal(typeof privateKey.x, 'bigint');
+
+  delete global.self;
 });

@@ -26,9 +26,43 @@ function buildPreContractPayload({ transaction, businessContractId }) {
   const sourceContractId = requireNonEmpty(businessContractId, 'businessContractId');
 
   return {
+    idempotency_key: `${sourceContractId}-pre-afgh`,
     buyer_id: buyerId,
     source_contract_id: sourceContractId,
-    seller_ids: [sellerId]
+    seller_ids: [sellerId],
+    pre_scheme: 'AFGH_PRE',
+    pre_params: {
+      curve: 'bn254',
+      cipher_format: 'scheme-native'
+    }
+  };
+}
+
+function buildPreAttemptMetadata({
+  contractId,
+  targetPublicKey,
+  reencryptionKey,
+  sourcePublicKey
+}) {
+  requireNonEmpty(contractId, 'contractId');
+
+  if (!targetPublicKey || typeof targetPublicKey !== 'object') {
+    throw new Error('targetPublicKey is required');
+  }
+
+  if (!reencryptionKey || typeof reencryptionKey !== 'object') {
+    throw new Error('reencryptionKey is required');
+  }
+
+  if (!sourcePublicKey || typeof sourcePublicKey !== 'object') {
+    throw new Error('sourcePublicKey is required');
+  }
+
+  return {
+    idempotency_key: `${contractId}-attempt-${Date.now()}`,
+    source_public_key: sourcePublicKey,
+    target_public_key: targetPublicKey,
+    reencryption_key: reencryptionKey
   };
 }
 
@@ -39,11 +73,13 @@ function normalizePreRecord(input = {}) {
       input.businessContractId,
       'businessContractId'
     ),
+    current_attempt_id: input.currentAttemptId ? String(input.currentAttemptId) : null,
     pcp_contract_id: input.pcpContractId ? String(input.pcpContractId) : null,
     buyer_id: requireNonEmpty(input.buyerId, 'buyerId'),
     seller_id: requireNonEmpty(input.sellerId, 'sellerId'),
-    buyer_public_key: input.buyerPublicKey ? String(input.buyerPublicKey) : null,
-    tee_key_id: input.teeKeyId ? String(input.teeKeyId) : null,
+    buyer_public_key: input.buyerPublicKey ? serializeJsonOrNull(input.buyerPublicKey) : null,
+    seller_source_public_key: input.sellerSourcePublicKey ? serializeJsonOrNull(input.sellerSourcePublicKey) : null,
+    reencryption_key: input.reencryptionKey ? serializeJsonOrNull(input.reencryptionKey) : null,
     pcp_status: input.pcpStatus ? String(input.pcpStatus) : 'CREATED',
     download_token: input.downloadToken ? String(input.downloadToken) : null,
     result_filename: input.resultFilename ? String(input.resultFilename) : null,
@@ -84,7 +120,13 @@ function mapPreRecordRow(row) {
 
   return {
     ...row,
+    current_attempt_id: row.current_attempt_id || null,
+    buyer_public_key: row.buyer_public_key ? JSON.parse(row.buyer_public_key) : null,
+    seller_source_public_key: row.seller_source_public_key ? JSON.parse(row.seller_source_public_key) : null,
+    reencryption_key: row.reencryption_key ? JSON.parse(row.reencryption_key) : null,
     buyer_public_key_ready: Boolean(row.buyer_public_key),
+    seller_source_public_key_ready: Boolean(row.seller_source_public_key),
+    reencryption_key_ready: Boolean(row.reencryption_key),
     result_ready: Boolean(row.download_token || row.result_storage_path)
   };
 }
@@ -125,12 +167,11 @@ function validatePreSourceArchive(file) {
   }
 }
 
-function validatePreHexString(value, fieldName) {
-  const normalized = requireNonEmpty(value, fieldName).trim();
-  if (!/^[0-9a-fA-F]+$/.test(normalized) || normalized.length % 2 !== 0) {
-    throw new Error(`${fieldName} must be an even-length hex string`);
+function validatePreJsonPayload(value, fieldName) {
+  if (!value || typeof value !== 'object') {
+    throw new Error(`${fieldName} must be a JSON object`);
   }
-  return normalized;
+  return value;
 }
 
 function normalizePreMetaFile(meta) {
@@ -159,12 +200,13 @@ function buildPrePublishPayloadSummary({ keyPackage, metaFile }) {
 
 module.exports = {
   buildPreContractPayload,
+  buildPreAttemptMetadata,
   normalizePreRecord,
   normalizePreResultSyncPayload,
   mapPreRecordRow,
   extractPreResultMetadata,
   validatePreSourceArchive,
-  validatePreHexString,
+  validatePreJsonPayload,
   buildPrePublishPayloadSummary,
   isAllowedPreSourceArchiveName
 };

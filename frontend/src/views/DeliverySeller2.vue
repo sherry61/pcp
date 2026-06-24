@@ -208,6 +208,7 @@
 
             <div class="dialog-hint compact-hint">
               <span>上传两个原始数字 CSV，浏览器会使用当前交易绑定的 HE 公钥先加密，再提交计算。</span>
+              <span>算法与操作符固定联动：Paillier 仅支持 ADD，ElGamal 仅支持 MUL。</span>
             </div>
           </div>
 
@@ -244,7 +245,7 @@
             <div v-if="preDialog.file" class="file-name inline-file-name">{{ preDialog.file.name }}</div>
 
             <div class="dialog-hint compact-hint">
-              <span>请选择卖方原始压缩包。当前 PRE 流程正在适配 PCC 新标准接口，后续会切换为标准 PRE attempt 材料提交。</span>
+              <span>请选择卖方原始压缩包。浏览器会在本地逐文件生成 PRE source ciphertext ZIP，再提交到 PCC attempt 流程。</span>
             </div>
           </div>
 
@@ -1325,7 +1326,13 @@ async verifyContract(assetRow) {
         this.$message?.success(response.data?.message || 'HE 计算已发起')
         this.closeHeDialog()
       } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'HE 提交失败'
+        const responseMessage = error?.response?.data?.message || ''
+        const responseError = error?.response?.data?.error || ''
+        const message = responseMessage
+          ? (responseMessage === 'HE 路由处理失败' && responseError
+            ? `${responseMessage}: ${responseError}`
+            : responseMessage)
+          : (error?.message || 'HE 提交失败')
         this.$message?.error(message)
       } finally {
         this.heDialog.submitting = false
@@ -1544,37 +1551,25 @@ async verifyContract(assetRow) {
       assetRow.processingPre = true
       try {
         preCrypto.ensureAllowedPreSourceFile(this.preDialog.file)
-        const teeResp = await axios.get(`${API_BASE}/api/privacy/pre/tee-materials`, {
-          params: { sellerId: assetRow.seller_address }
-        })
-        const teeMaterials = teeResp.data?.item || {}
-        if (!teeMaterials.public_key || !teeMaterials.key_id) {
-          throw new Error('TEE 材料返回不完整')
-        }
-
         const payload = await preCrypto.createPrePublishPayload({
           file: this.preDialog.file,
-          teePublicKeyHex: teeMaterials.public_key,
-          teeKeyId: teeMaterials.key_id,
-          producerId: assetRow.seller_address,
-          taskId: `CONTRACT-${assetRow.transaction_id}`,
-          contentType: 'archive'
+          buyerPublicKey: assetRow.preRecord?.buyer_public_key,
+          transactionId: assetRow.transaction_id,
+          sellerId: assetRow.seller_address
         })
 
         const formData = new FormData()
         formData.append('transactionId', assetRow.transaction_id)
-        formData.append('teeKeyId', teeMaterials.key_id)
-        formData.append('key_package', payload.keyPackageHex)
-        formData.append('source_cipher_file', payload.sourceCipherFile, payload.filenames.sourceCipherFile)
-        formData.append('source_wrapped_key_file', payload.sourceWrappedKeyFile, payload.filenames.sourceWrappedKeyFile)
-        formData.append('source_meta_file', payload.sourceMetaFile, payload.filenames.sourceMetaFile)
+        formData.append('sellerSourcePublicKey', JSON.stringify(payload.sourcePublicKey))
+        formData.append('reencryptionKey', JSON.stringify(payload.reencryptionKey))
+        formData.append('source_cipher_zip', payload.sourceCipherZipFile, payload.sourceCipherZipFile.name)
 
         const response = await axios.post(`${API_BASE}/api/privacy/pre/publish`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         })
 
         assetRow.preRecord = response.data?.item || assetRow.preRecord
-        this.$message?.success(response.data?.message || 'PRE 重加密已发起')
+        this.$message?.success(response.data?.message || 'PRE attempt 已提交')
         this.closePreDialog()
       } catch (error) {
         const message = error?.response?.data?.message || error?.message || 'PRE 提交失败'

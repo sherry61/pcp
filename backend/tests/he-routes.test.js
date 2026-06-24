@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 
 const {
+  buildPcpHePublicKey,
   normalizeHeRecord,
   normalizeHeResultSyncPayload,
   ensureCompatibleExistingHeContract,
@@ -16,13 +17,31 @@ test('normalizeHeRecord stores PCP contract id and uploaded public keys in a sin
     buyerId: 'buyer_addr',
     sellerId: 'seller_addr',
     paillierPublicKey: { n: '11', g: '12' },
-    elgamalPublicKey: { p: '23', g: '5', y: '9' }
+    elgamalPublicKey: { p: '23', q: '22', g: '5', y: '9' }
   });
 
   assert.equal(record.transaction_id, 'TX-001');
   assert.equal(record.business_contract_id, 'CONTRACT-001');
   assert.equal(record.pcp_status, 'WAITING_INPUT');
   assert.match(record.paillier_public_key_json, /"n":"11"/);
+  assert.match(record.elgamal_public_key_json, /"q":"22"/);
+});
+
+test('buildPcpHePublicKey converts ElGamal public keys into PCC format with q', () => {
+  const payload = buildPcpHePublicKey('ElGamal', {
+    p: '23',
+    q: '22',
+    g: '5',
+    y: '9'
+  });
+
+  assert.equal(payload.schema_version, 'pcc-he-public-key-v1');
+  assert.equal(payload.algorithm, 'ELGAMAL');
+  assert.deepEqual(Object.keys(payload.params), ['p', 'q', 'g', 'y']);
+  assert.equal(payload.params.p, 'Fw');
+  assert.equal(payload.params.q, 'Fg');
+  assert.equal(payload.params.g, 'BQ');
+  assert.equal(payload.params.y, 'CQ');
 });
 
 test('ensureCompatibleExistingHeContract rejects mismatched encType or operation', () => {

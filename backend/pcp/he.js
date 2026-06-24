@@ -113,10 +113,35 @@ function buildPcpHePublicKey(encType, publicKey) {
     };
   }
 
+  if (encType === 'ElGamal') {
+    const p = publicKey && publicKey.p ? String(publicKey.p) : '';
+    const q = publicKey && publicKey.q
+      ? String(publicKey.q)
+      : (p ? (BigInt(p) - 1n).toString() : '');
+    const g = publicKey && publicKey.g ? String(publicKey.g) : '';
+    const y = publicKey && publicKey.y ? String(publicKey.y) : '';
+
+    if (!p || !q || !g || !y) {
+      throw new Error('ElGamal 公钥缺少 p/q/g/y');
+    }
+
+    return {
+      schema_version: 'pcc-he-public-key-v1',
+      key_id: `he-key-${Date.now()}`,
+      algorithm: 'ELGAMAL',
+      params: {
+        p: encodeBase64UrlBigInt(p),
+        q: encodeBase64UrlBigInt(q),
+        g: encodeBase64UrlBigInt(g),
+        y: encodeBase64UrlBigInt(y)
+      }
+    };
+  }
+
   throw new Error(`当前尚未适配 ${encType} 的 PCC 公钥格式`);
 }
 
-function encodeBase64UrlBigInt(value) {
+function encodeBase64UrlBigInt(value, width) {
   const bigint = BigInt(String(value));
   if (bigint < 0n) {
     throw new Error('公钥参数必须是非负整数');
@@ -124,8 +149,25 @@ function encodeBase64UrlBigInt(value) {
 
   const hex = bigint.toString(16);
   const paddedHex = hex.length % 2 === 0 ? hex : `0${hex}`;
-  const buffer = Buffer.from(paddedHex, 'hex');
+  const rawBuffer = Buffer.from(paddedHex, 'hex');
+  const buffer = width == null
+    ? rawBuffer
+    : leftPadBuffer(rawBuffer, width);
   return buffer.toString('base64url');
+}
+
+function leftPadBuffer(buffer, width) {
+  if (buffer.length > width) {
+    throw new Error('公钥参数长度超过固定宽度');
+  }
+
+  if (buffer.length === width) {
+    return buffer;
+  }
+
+  const output = Buffer.alloc(width);
+  buffer.copy(output, width - buffer.length);
+  return output;
 }
 
 function serializeJsonOrNull(value) {

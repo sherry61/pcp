@@ -10,7 +10,21 @@ const { downloadTextFile, ensureFilenameExtension, JSON_MIME_TYPE } = require('.
 const HE_PRIVATE_KEY_TYPE = 'private';
 const HE_PUBLIC_KEY_TYPE = 'public';
 const PAILLIER_DEFAULT_BIT_LENGTH = 2048;
-const ELGAMAL_DEFAULT_BIT_LENGTH = 256;
+const ELGAMAL_DEFAULT_BIT_LENGTH = 2048;
+const ELGAMAL_MODP_GROUP_14_PRIME = BigInt(
+  `0xFFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD1` +
+  `29024E088A67CC74020BBEA63B139B22514A08798E3404DD` +
+  `EF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245` +
+  `E485B576625E7EC6F44C42E9A637ED6B0BFF5CB6F406B7ED` +
+  `EE386BFB5A899FA5AE9F24117C4B1FE649286651ECE45B3D` +
+  `C2007CB8A163BF0598DA48361C55D39A69163FA8FD24CF5F` +
+  `83655D23DCA3AD961C62F356208552BB9ED529077096966D` +
+  `670C354E4ABC9804F1746C08CA18217C32905E462E36CE3B` +
+  `E39E772C180E86039B2783A2EC07A28FB5C55DF06F4C52C9` +
+  `DE2BCBF6955817183995497CEA956AE515D2261898FA0510` +
+  `15728E5A8AACAA68FFFFFFFFFFFFFFFF`
+);
+const ELGAMAL_MODP_GROUP_14_GENERATOR = 2n;
 
 function normalizeAlgorithmName(algorithm) {
   const normalized = String(algorithm || '').trim().toLowerCase();
@@ -50,9 +64,17 @@ function buildPublicKeyFilename({ algorithm, transactionId }) {
 }
 
 function resolveOperationOptions(encType) {
-  return normalizeAlgorithmName(encType) === 'ElGamal'
-    ? ['MUL']
-    : [...HE_OPERATION_OPTIONS];
+  const normalizedAlgorithm = normalizeAlgorithmName(encType);
+
+  if (normalizedAlgorithm === 'ElGamal') {
+    return ['MUL'];
+  }
+
+  if (normalizedAlgorithm === 'Paillier') {
+    return ['ADD'];
+  }
+
+  return [...HE_OPERATION_OPTIONS];
 }
 
 function shouldRequirePrivateKeyUpload({ deliveryMethod, status }) {
@@ -331,73 +353,9 @@ function getPaillierCiphertextWidth(publicKeyMaterial) {
   return Math.max(1, Math.ceil(modulusSquared.toString(2).length / 8));
 }
 
-function isProbablePrime(candidate, rounds = 16) {
-  if (candidate === 2n || candidate === 3n) return true;
-  if (candidate < 2n || candidate % 2n === 0n) return false;
-
-  let d = candidate - 1n;
-  let s = 0n;
-  while (d % 2n === 0n) {
-    d /= 2n;
-    s += 1n;
-  }
-
-  for (let i = 0; i < rounds; i += 1) {
-    const a = randomBigIntBetween(2n, candidate - 2n);
-    let x = modPow(a, d, candidate);
-    if (x === 1n || x === candidate - 1n) {
-      continue;
-    }
-
-    let witness = true;
-    for (let j = 1n; j < s; j += 1n) {
-      x = modPow(x, 2n, candidate);
-      if (x === candidate - 1n) {
-        witness = false;
-        break;
-      }
-    }
-
-    if (witness) {
-      return false;
-    }
-  }
-
-  return true;
-}
-
-function generateProbablePrime(bitLength) {
-  let candidate = randomBigInt(bitLength);
-  while (!isProbablePrime(candidate)) {
-    candidate += 2n;
-  }
-  return candidate;
-}
-
-function generateSafePrime(bitLength) {
-  let q = generateProbablePrime(bitLength - 1);
-  let p = 2n * q + 1n;
-
-  while (!isProbablePrime(p)) {
-    q = generateProbablePrime(bitLength - 1);
-    p = 2n * q + 1n;
-  }
-
-  return { p, q };
-}
-
-function generateElGamalGenerator(p, q) {
-  let generator = null;
-
-  while (generator === null) {
-    const h = randomBigIntBetween(2n, p - 2n);
-    const g = modPow(h, 2n, p);
-    if (g !== 1n && modPow(g, q, p) === 1n) {
-      generator = g;
-    }
-  }
-
-  return generator;
+function getElGamalComponentWidth(publicKeyMaterial) {
+  const p = BigInt(publicKeyMaterial.p);
+  return Math.max(1, Math.ceil(p.toString(2).length / 8));
 }
 
 async function generatePaillierKeyPair(bitLength = PAILLIER_DEFAULT_BIT_LENGTH) {
@@ -419,14 +377,19 @@ async function generatePaillierKeyPair(bitLength = PAILLIER_DEFAULT_BIT_LENGTH) 
 }
 
 function generateElGamalKeyPair(bitLength = ELGAMAL_DEFAULT_BIT_LENGTH) {
-  const { p, q } = generateSafePrime(bitLength);
-  const g = generateElGamalGenerator(p, q);
+  if (bitLength !== ELGAMAL_DEFAULT_BIT_LENGTH) {
+    throw new Error(`ElGamal 当前固定使用 ${ELGAMAL_DEFAULT_BIT_LENGTH} bit 标准参数组。`);
+  }
+
+  const p = ELGAMAL_MODP_GROUP_14_PRIME;
+  const q = p - 1n;
+  const g = ELGAMAL_MODP_GROUP_14_GENERATOR;
   const x = randomBigIntBetween(2n, q - 1n);
   const y = modPow(g, x, p);
 
   return {
-    publicKey: { p, g, y },
-    privateKey: { p, g, y, x },
+    publicKey: { p, q, g, y },
+    privateKey: { p, q, g, y, x },
   };
 }
 
@@ -490,6 +453,53 @@ function selectHePublicKey(record, algorithm) {
   return null;
 }
 
+function assertHePrivateKeyMatchesRecord({
+  parsedKey,
+  algorithm,
+  transactionId,
+  record,
+}) {
+  const normalizedAlgorithm = normalizeAlgorithmName(algorithm || parsedKey?.algorithm);
+  if (!parsedKey || !normalizedAlgorithm) {
+    throw new Error('HE 私钥文件无效。');
+  }
+
+  if (parsedKey.algorithm !== normalizedAlgorithm) {
+    throw new Error('私钥算法与结果算法不匹配。');
+  }
+
+  if (
+    parsedKey.transactionId &&
+    transactionId &&
+    String(parsedKey.transactionId).trim() &&
+    String(transactionId).trim() &&
+    String(parsedKey.transactionId).trim() !== String(transactionId).trim()
+  ) {
+    throw new Error(`私钥文件不属于当前交易 ${transactionId}。`);
+  }
+
+  const expectedPublicKey = selectHePublicKey(record, normalizedAlgorithm);
+  if (!expectedPublicKey) {
+    return;
+  }
+
+  const keyMaterial = parsedKey.keyMaterial || {};
+  if (normalizedAlgorithm === 'Paillier') {
+    if (String(keyMaterial.n || '') !== String(expectedPublicKey.n || '')) {
+      throw new Error('私钥文件与当前交易的 Paillier 公钥不匹配。');
+    }
+    return;
+  }
+
+  if (
+    String(keyMaterial.p || '') !== String(expectedPublicKey.p || '') ||
+    String(keyMaterial.g || '') !== String(expectedPublicKey.g || '') ||
+    String(keyMaterial.y || '') !== String(expectedPublicKey.y || '')
+  ) {
+    throw new Error('私钥文件与当前交易的 ElGamal 公钥不匹配，请重新选择最新下载的私钥文件。');
+  }
+}
+
 function generatePaillierRandomR(n) {
   let r = 1n;
   while (r <= 1n || r >= n || gcd(r, n) !== 1n) {
@@ -517,18 +527,19 @@ function encryptPaillierValue(value, publicKeyMaterial) {
 
 function encryptElGamalValue(value, publicKeyMaterial) {
   const p = BigInt(publicKeyMaterial.p);
+  const q = publicKeyMaterial.q == null ? p - 1n : BigInt(publicKeyMaterial.q);
   const g = BigInt(publicKeyMaterial.g);
   const y = BigInt(publicKeyMaterial.y);
 
-  if (value < 0n) {
-    throw new Error('ElGamal 当前仅支持非负整数。');
+  if (value <= 0n) {
+    throw new Error('ElGamal 当前仅支持正整数。');
   }
 
   if (value >= p) {
     throw new Error('ElGamal 明文必须小于公钥 p。');
   }
 
-  const k = randomBigIntBetween(2n, p - 2n);
+  const k = randomBigIntBetween(2n, q - 1n);
   const c1 = modPow(g, k, p);
   const c2 = (modPow(y, k, p) * value) % p;
 
@@ -564,11 +575,14 @@ async function encryptHeCsv({
   }
 
   if (normalizedAlgorithm === 'ElGamal') {
+    const componentWidth = getElGamalComponentWidth(publicKeyMaterial);
     return serializeCsvRows([
-      ['c1', 'c2'],
+      ['cipher'],
       ...values.map((value) => {
         const encrypted = encryptElGamalValue(value, publicKeyMaterial);
-        return [encrypted.c1.toString(), encrypted.c2.toString()];
+        return [
+          `eg1.${base64UrlEncodeBytes(bigintToFixedWidthBytes(encrypted.c1, componentWidth))}.${base64UrlEncodeBytes(bigintToFixedWidthBytes(encrypted.c2, componentWidth))}`
+        ];
       })
     ]);
   }
@@ -621,17 +635,23 @@ function decryptElGamalCsv(csvText, privateKeyMaterial) {
   if (rows.length === 0) return 'result\n';
 
   const [header, ...dataRows] = rows;
-  const c1Index = header.indexOf('c1');
-  const c2Index = header.indexOf('c2');
+  const cipherIndex = header.indexOf('cipher');
 
-  if (c1Index === -1 || c2Index === -1) {
-    throw new Error('ElGamal 结果文件缺少 c1,c2 列。');
+  if (cipherIndex === -1) {
+    throw new Error('ElGamal 结果文件缺少 cipher 列。');
   }
 
+  const componentWidth = getElGamalComponentWidth(privateKeyMaterial);
   const decryptedRows = dataRows.map((cells) => {
+    const rawCipher = String(cells[cipherIndex] || '');
+    const parts = rawCipher.split('.');
+    if (parts.length !== 3 || parts[0] !== 'eg1') {
+      throw new Error('ElGamal 结果文件格式无效。');
+    }
+
     const result = decryptElGamalPair({
-      c1: cells[c1Index],
-      c2: cells[c2Index],
+      c1: fixedWidthBase64UrlToBigInt(parts[1], componentWidth),
+      c2: fixedWidthBase64UrlToBigInt(parts[2], componentWidth),
     }, privateKeyMaterial);
     return result.toString();
   });
@@ -686,6 +706,7 @@ module.exports = {
   createPrivateKeyDownload,
   downloadPrivateKeyFile,
   parseHeKeyMaterial,
+  assertHePrivateKeyMatchesRecord,
   generatePaillierKeyPair,
   generateElGamalKeyPair,
   generateHeKeyPairs,

@@ -3,11 +3,12 @@ const assert = require('node:assert/strict');
 
 const {
   buildPreContractPayload,
+  buildPreAttemptMetadata,
   normalizePreRecord,
   normalizePreResultSyncPayload,
   extractPreResultMetadata,
   validatePreSourceArchive,
-  validatePreHexString
+  validatePreJsonPayload
 } = require('../pcp/pre');
 
 test('buildPreContractPayload maps transaction and contract data to PCP /pre/contract body', () => {
@@ -20,25 +21,49 @@ test('buildPreContractPayload maps transaction and contract data to PCP /pre/con
   });
 
   assert.deepEqual(payload, {
+    idempotency_key: 'CONTRACT-001-pre-afgh',
     buyer_id: 'buyer_addr',
     source_contract_id: 'CONTRACT-001',
-    seller_ids: ['seller_addr']
+    seller_ids: ['seller_addr'],
+    pre_scheme: 'AFGH_PRE',
+    pre_params: {
+      curve: 'bn254',
+      cipher_format: 'scheme-native'
+    }
   });
 });
 
-test('normalizePreRecord stores buyer public key and PRE contract metadata in one row', () => {
+test('buildPreAttemptMetadata maps PRE attempt materials to PCP metadata body', () => {
+  const metadata = buildPreAttemptMetadata({
+    contractId: 'PCC_PRE_001',
+    sourcePublicKey: { key_id: 'seller-src-key' },
+    targetPublicKey: { key_id: 'buyer-key' },
+    reencryptionKey: { key_id: 'rk-001' }
+  });
+
+  assert.equal(metadata.source_public_key.key_id, 'seller-src-key');
+  assert.equal(metadata.target_public_key.key_id, 'buyer-key');
+  assert.equal(metadata.reencryption_key.key_id, 'rk-001');
+  assert.match(metadata.idempotency_key, /^PCC_PRE_001-attempt-/);
+});
+
+test('normalizePreRecord stores PRE attempt metadata in one row', () => {
   const record = normalizePreRecord({
     transactionId: 'TX-001',
     businessContractId: 'CONTRACT-001',
     buyerId: 'buyer_addr',
     sellerId: 'seller_addr',
-    buyerPublicKey: 'A1B2',
-    teeKeyId: 'tee-key-current'
+    currentAttemptId: 'ATT-001',
+    buyerPublicKey: { key_id: 'buyer-key' },
+    sellerSourcePublicKey: { key_id: 'seller-src-key' },
+    reencryptionKey: { key_id: 'rk-001' }
   });
 
   assert.equal(record.transaction_id, 'TX-001');
-  assert.equal(record.buyer_public_key, 'A1B2');
-  assert.equal(record.tee_key_id, 'tee-key-current');
+  assert.equal(record.current_attempt_id, 'ATT-001');
+  assert.match(record.buyer_public_key, /buyer-key/);
+  assert.match(record.seller_source_public_key, /seller-src-key/);
+  assert.match(record.reencryption_key, /rk-001/);
   assert.equal(record.pcp_status, 'CREATED');
 });
 
@@ -52,9 +77,11 @@ test('validatePreSourceArchive only allows the agreed archive formats', () => {
   }), /仅支持/);
 });
 
-test('validatePreHexString requires even-length hex strings', () => {
-  assert.equal(validatePreHexString('A1B2', 'buyerPublicKey'), 'A1B2');
-  assert.throws(() => validatePreHexString('XYZ', 'buyerPublicKey'), /hex string/);
+test('validatePreJsonPayload requires object input', () => {
+  assert.deepEqual(validatePreJsonPayload({ key_id: 'buyer-key' }, 'buyerPublicKey'), {
+    key_id: 'buyer-key'
+  });
+  assert.throws(() => validatePreJsonPayload('XYZ', 'buyerPublicKey'), /JSON object/);
 });
 
 test('extractPreResultMetadata and normalizePreResultSyncPayload read PCP result metadata', () => {
