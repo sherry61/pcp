@@ -39,13 +39,13 @@ test('ensureCompatibleExistingHeContract rejects mismatched encType or operation
   }, 'Paillier', 'MUL'), /operation/);
 });
 
-test('validateHeCsvFile enforces ElGamal c1,c2 headers', () => {
-  assert.throws(() => validateHeCsvFile('ElGamal', {
-    buffer: Buffer.from('cipher\n123')
-  }), /c1,c2/);
+test('validateHeCsvFile enforces PCC single cipher column schema', () => {
+  assert.throws(() => validateHeCsvFile('Paillier', {
+    buffer: Buffer.from('ciphertext\n123')
+  }), /cipher 列/);
 
-  assert.doesNotThrow(() => validateHeCsvFile('ElGamal', {
-    buffer: Buffer.from('c1,c2\n1,2')
+  assert.doesNotThrow(() => validateHeCsvFile('Paillier', {
+    buffer: Buffer.from('cipher\npai1.sample_cipher')
   }));
 });
 

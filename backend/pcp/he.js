@@ -21,9 +21,27 @@ function buildHeContractPayload({
   const buyerId = requireNonEmpty(transaction.buyer_address, 'buyer_address');
   const sellerId = requireNonEmpty(transaction.seller_address, 'seller_address');
   const sourceContractId = requireNonEmpty(businessContractId, 'businessContractId');
-  const normalizedOperation = requireNonEmpty(operation, 'operation').toUpperCase();
+  const heComputeMode = resolveHeComputeMode(encType, operation);
 
   if (!HE_ENC_TYPES.includes(encType)) {
+    throw new Error(`encType must be one of: ${HE_ENC_TYPES.join(', ')}`);
+  }
+
+  return {
+    idempotency_key: `${sourceContractId}-he-${heComputeMode}`,
+    buyer_id: buyerId,
+    source_contract_id: sourceContractId,
+    seller_ids: buildHeLogicalSellerIds(sellerId),
+    he_compute_mode: heComputeMode,
+    csv_format: 'SINGLE_CIPHER_COLUMN'
+  };
+}
+
+function resolveHeComputeMode(encType, operation) {
+  const normalizedEncType = requireNonEmpty(encType, 'encType');
+  const normalizedOperation = requireNonEmpty(operation, 'operation').toUpperCase();
+
+  if (!HE_ENC_TYPES.includes(normalizedEncType)) {
     throw new Error(`encType must be one of: ${HE_ENC_TYPES.join(', ')}`);
   }
 
@@ -31,15 +49,83 @@ function buildHeContractPayload({
     throw new Error(`operation must be one of: ${HE_OPERATIONS.join(', ')}`);
   }
 
+  if (normalizedEncType === 'Paillier' && normalizedOperation === 'ADD') {
+    return 'PAILLIER_ADD';
+  }
+
+  if (normalizedEncType === 'ElGamal' && normalizedOperation === 'MUL') {
+    return 'ELGAMAL_MUL';
+  }
+
+  throw new Error(`PCC 当前不支持 ${normalizedEncType} + ${normalizedOperation}`);
+}
+
+function buildHeLogicalSellerIds(sellerId) {
+  const normalizedSellerId = requireNonEmpty(sellerId, 'sellerId');
+  return [
+    `${normalizedSellerId}#file1`,
+    `${normalizedSellerId}#file2`
+  ];
+}
+
+function buildHeAttemptMetadata({
+  contractId,
+  sellerId,
+  publicKey
+}) {
+  requireNonEmpty(contractId, 'contractId');
+  const logicalSellerIds = buildHeLogicalSellerIds(sellerId);
+
+  if (!publicKey || typeof publicKey !== 'object') {
+    throw new Error('publicKey is required');
+  }
+
   return {
-    buyer_id: buyerId,
-    source_contract_id: sourceContractId,
-    seller_ids: [sellerId],
-    operation_type: normalizedOperation,
-    enc_type: encType,
-    data_type_1: 'ciphertext',
-    data_type_2: 'ciphertext'
+    idempotency_key: `${contractId}-attempt-${Date.now()}`,
+    public_key: publicKey,
+    seller_files: [
+      {
+        seller_id: logicalSellerIds[0],
+        file_field: 'file1'
+      },
+      {
+        seller_id: logicalSellerIds[1],
+        file_field: 'file2'
+      }
+    ]
   };
+}
+
+function buildPcpHePublicKey(encType, publicKey) {
+  if (encType === 'Paillier') {
+    const n = publicKey && publicKey.n ? String(publicKey.n) : '';
+    if (!n) {
+      throw new Error('Paillier 公钥缺少 n');
+    }
+
+    return {
+      schema_version: 'pcc-he-public-key-v1',
+      key_id: `he-key-${Date.now()}`,
+      algorithm: 'PAILLIER',
+      params: {
+        n: encodeBase64UrlBigInt(n)
+      }
+    };
+  }
+
+  throw new Error(`当前尚未适配 ${encType} 的 PCC 公钥格式`);
+}
+
+function encodeBase64UrlBigInt(value) {
+  const bigint = BigInt(String(value));
+  if (bigint < 0n) {
+    throw new Error('公钥参数必须是非负整数');
+  }
+
+  const hex = bigint.toString(16);
+  const paddedHex = hex.length % 2 === 0 ? hex : `0${hex}`;
+  const buffer = Buffer.from(paddedHex, 'hex');
+  return buffer.toString('base64url');
 }
 
 function serializeJsonOrNull(value) {
@@ -100,16 +186,8 @@ function validateHeCsvFile(encType, file) {
   }
 
   const headers = firstNonEmptyLine.split(',').map((part) => part.trim());
-
-  if (encType === 'ElGamal') {
-    if (!headers.includes('c1') || !headers.includes('c2')) {
-      throw new Error('ElGamal CSV 必须包含 c1,c2 列');
-    }
-    return;
-  }
-
-  if (!headers[0]) {
-    throw new Error('Paillier CSV 至少需要一列密文数据');
+  if (headers.length !== 1 || headers[0] !== 'cipher') {
+    throw new Error(`${encType} CSV 必须且只能包含 cipher 列`);
   }
 }
 
@@ -164,6 +242,7 @@ function normalizeHeRecord(input = {}) {
     ),
     buyer_id: requireNonEmpty(input.buyerId, 'buyerId'),
     seller_id: requireNonEmpty(input.sellerId, 'sellerId'),
+    current_attempt_id: input.currentAttemptId ? String(input.currentAttemptId) : null,
     pcp_contract_id: input.pcpContractId ? String(input.pcpContractId) : null,
     selected_enc_type: input.selectedEncType ? String(input.selectedEncType) : null,
     selected_operation: input.selectedOperation
@@ -190,6 +269,7 @@ function mapHeRecordRow(row) {
 
   return {
     ...row,
+    current_attempt_id: row.current_attempt_id || null,
     paillier_public_key: parseJsonOrNull(row.paillier_public_key_json),
     elgamal_public_key: parseJsonOrNull(row.elgamal_public_key_json),
     public_keys_ready:
@@ -200,6 +280,10 @@ function mapHeRecordRow(row) {
 
 module.exports = {
   buildHeContractPayload,
+  buildHeAttemptMetadata,
+  buildPcpHePublicKey,
+  buildHeLogicalSellerIds,
+  resolveHeComputeMode,
   normalizeHeRecord,
   normalizeHeResultSyncPayload,
   mapHeRecordRow,

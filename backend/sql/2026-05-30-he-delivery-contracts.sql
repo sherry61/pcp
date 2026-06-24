@@ -2,6 +2,7 @@ CREATE TABLE IF NOT EXISTS he_delivery_contracts (
   id BIGINT PRIMARY KEY AUTO_INCREMENT,
   transaction_id VARCHAR(128) NOT NULL,
   business_contract_id VARCHAR(128) NOT NULL,
+  current_attempt_id VARCHAR(128) DEFAULT NULL,
   pcp_contract_id VARCHAR(128) DEFAULT NULL,
   buyer_id VARCHAR(255) NOT NULL,
   seller_id VARCHAR(255) NOT NULL,

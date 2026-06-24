@@ -8,14 +8,19 @@ const HE_METHOD_LABEL = '同态加密';
 const FL_METHOD_LABEL = '联邦学习';
 const PRE_METHOD_LABEL = '代理重加密';
 const MPC_METHOD_LABEL = '安全多方计算';
-const HE_ENC_TYPE_OPTIONS = Object.freeze(['Paillier', 'ElGamal']);
+const HE_ENC_TYPE_OPTIONS = Object.freeze(['Paillier']);
 const HE_OPERATION_OPTIONS = Object.freeze(['ADD']);
 const PCP_STATUS_TEXT_MAP = Object.freeze({
   NOT_EXIST: '合同不存在',
   CREATED: '已创建',
   WAITING_INPUT: '等待输入',
+  WAITING_EPOCH_INPUT: '等待轮次输入',
   QUEUED: '排队中',
   RUNNING: '计算中',
+  COMPUTED: '已计算完成',
+  PAMING: '审计中',
+  PAM_PASSED: '审计通过',
+  PAM_FAILED: '审计失败',
   COMPLETED: '已完成',
   FAILED: '失败',
   AUDIT_FAILED: '审计失败',

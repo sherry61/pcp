@@ -10,6 +10,9 @@ const {
 const { createPcpClient } = require('./client');
 const {
   buildHeContractPayload,
+  buildHeAttemptMetadata,
+  buildPcpHePublicKey,
+  resolveHeComputeMode,
   normalizeHeRecord,
   mapHeRecordRow,
   ensureCompatibleExistingHeContract,
@@ -112,7 +115,7 @@ function getPcpHeBaseUrl() {
   return (
     process.env.PCP_HE_BASE_URL ||
     process.env.PCP_BASE_URL ||
-    'http://127.0.0.1:8123'
+    'http://127.0.0.1:8130'
   ).replace(/\/+$/, '');
 }
 
@@ -120,12 +123,21 @@ function getPcpPreBaseUrl() {
   return (
     process.env.PCP_PRE_BASE_URL ||
     process.env.PCP_BASE_URL ||
-    'http://127.0.0.1:8123'
+    'http://127.0.0.1:8130'
   ).replace(/\/+$/, '');
 }
 
 function normalizePcType(value) {
   return String(value || '').trim().toUpperCase();
+}
+
+function extractContractStatus(payload) {
+  const data = payload?.data || payload || {};
+  return {
+    contractId: data.contract_id || payload?.contract_id || null,
+    status: data.status || payload?.status || null,
+    contractParams: data.contract_params || payload?.contract_params || null
+  };
 }
 
 function assertPcTypeMatches(digitalContract, expectedPcType, label) {
@@ -261,6 +273,7 @@ function registerHeRoutes({
       return {
         transaction_id: fallback.transaction_id || fallback.transactionId || null,
         business_contract_id: businessContractId,
+        current_attempt_id: null,
         pcp_contract_id: null,
         buyer_id: buyerId,
         seller_id: sellerId,
@@ -281,6 +294,7 @@ function registerHeRoutes({
     return {
       transaction_id: mapped.transaction_id,
       business_contract_id: mapped.business_contract_id || businessContractId,
+      current_attempt_id: mapped.current_attempt_id || null,
       pcp_contract_id: mapped.pcp_contract_id || null,
       buyer_id: mapped.buyer_id || buyerId,
       seller_id: mapped.seller_id || sellerId,
@@ -306,6 +320,7 @@ function registerHeRoutes({
       INSERT INTO he_delivery_contracts (
         transaction_id,
         business_contract_id,
+        current_attempt_id,
         pcp_contract_id,
         buyer_id,
         seller_id,
@@ -318,9 +333,10 @@ function registerHeRoutes({
         result_filename,
         result_storage_path,
         last_error
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON DUPLICATE KEY UPDATE
         business_contract_id = VALUES(business_contract_id),
+        current_attempt_id = VALUES(current_attempt_id),
         pcp_contract_id = VALUES(pcp_contract_id),
         buyer_id = VALUES(buyer_id),
         seller_id = VALUES(seller_id),
@@ -338,6 +354,7 @@ function registerHeRoutes({
     await dbQuery(sql, [
       record.transaction_id,
       record.business_contract_id,
+      record.current_attempt_id,
       record.pcp_contract_id,
       record.buyer_id,
       record.seller_id,
@@ -366,6 +383,10 @@ function registerHeRoutes({
       businessContractId: firstDefined(
         overrides.businessContractId,
         baseRecord && baseRecord.business_contract_id
+      ),
+      currentAttemptId: firstDefined(
+        overrides.currentAttemptId,
+        baseRecord && baseRecord.current_attempt_id
       ),
       pcpContractId: firstDefined(
         overrides.pcpContractId,
@@ -551,13 +572,6 @@ function registerHeRoutes({
         });
       }
 
-      if (encType === 'ElGamal' && operation === 'ADD') {
-        return res.status(400).json({
-          success: false,
-          message: 'ElGamal 当前仅支持 MUL'
-        });
-      }
-
       if (!file1 || !file2) {
         return res.status(400).json({
           success: false,
@@ -585,15 +599,17 @@ function registerHeRoutes({
           });
         }
 
+        const heComputeMode = resolveHeComputeMode(encType, operation);
         ensureCompatibleExistingHeContract(mappedExisting, encType, operation);
         validateHeCsvFile(encType, file1);
         validateHeCsvFile(encType, file2);
 
         let pcpContractId = existing && existing.pcp_contract_id;
+        let currentAttemptId = existing && existing.current_attempt_id;
         let contractResponse = null;
+        let attemptResponse = null;
         const heClient = createPcpClient({
-          baseUrl: getPcpHeBaseUrl(),
-          entityId: transaction.buyer_address
+          baseUrl: getPcpHeBaseUrl()
         });
 
         if (!pcpContractId) {
@@ -620,15 +636,11 @@ function registerHeRoutes({
         }
 
         const form = new FormData();
-        form.append(
-          'data',
-          JSON.stringify({
-            contract_id: pcpContractId,
-            operation,
-            enc_type: encType,
-            public_keys: publicKeys
-          })
-        );
+        form.append('metadata', JSON.stringify(buildHeAttemptMetadata({
+          contractId: pcpContractId,
+          sellerId: transaction.seller_address,
+          publicKey: buildPcpHePublicKey(encType, publicKeys)
+        })));
         form.append('file1', file1.buffer, {
           filename: file1.originalname || 'file1.csv',
           contentType: file1.mimetype || 'text/csv'
@@ -638,22 +650,28 @@ function registerHeRoutes({
           contentType: file2.mimetype || 'text/csv'
         });
 
-        const calculateResp = await heClient.post('/he/calculate_csv', form, {
+        attemptResponse = await heClient.post(`/he/${encodeURIComponent(pcpContractId)}/attempts`, form, {
           headers: form.getHeaders()
         });
-        const resultMetadata = extractHeResultMetadata(calculateResp?.data);
+        currentAttemptId = firstDefined(
+          attemptResponse?.data?.data?.attempt_id,
+          attemptResponse?.data?.attempt_id,
+          currentAttemptId
+        );
+        const resultMetadata = extractHeResultMetadata(attemptResponse?.data);
 
         const saved = await upsertHeRecord(
           mergeHeRecordInput(existing, {
             transactionId,
             businessContractId: digitalContract.contract_id,
+            currentAttemptId,
             pcpContractId,
             buyerId: transaction.buyer_address,
             sellerId: transaction.seller_address,
             selectedEncType: encType,
             selectedOperation: operation,
             pcpStatus: firstDefined(
-              calculateResp?.data?.data?.status,
+              attemptResponse?.data?.data?.status,
               contractResponse?.data?.status,
               'QUEUED'
             ),
@@ -673,7 +691,8 @@ function registerHeRoutes({
           }),
           pcp: {
             contract: contractResponse,
-            calculate: calculateResp?.data || null
+            attempt: attemptResponse?.data || null,
+            he_compute_mode: heComputeMode
           }
         });
       } catch (error) {
@@ -701,17 +720,48 @@ function registerHeRoutes({
       let record = await getHeRecordByTransactionId(transactionId);
       let syncError = null;
 
-      if (record?.pcp_contract_id) {
+      if (record?.pcp_contract_id && record?.current_attempt_id) {
         try {
           const client = createPcpClient({
-            baseUrl: getPcpHeBaseUrl(),
-            entityId: transaction.buyer_address
+            baseUrl: getPcpHeBaseUrl()
           });
-          const statusResp = await client.get(
-            `/he/${encodeURIComponent(record.pcp_contract_id)}/status`
+          const attemptResp = await client.get(
+            `/he/${encodeURIComponent(record.pcp_contract_id)}/attempts/${encodeURIComponent(record.current_attempt_id)}/status`
           );
-          const statusData = statusResp?.data?.data || {};
-          const resultMetadata = extractHeResultMetadata(statusResp?.data);
+          const attemptData = attemptResp?.data?.data || attemptResp?.data || {};
+          const resultTokens = Array.isArray(attemptData?.result_tokens)
+            ? attemptData.result_tokens
+            : [];
+          let buyerResultToken = resultTokens.find((item) => (
+            item?.result_role === 'he_result' &&
+            item?.receiver_id === transaction.buyer_address
+          )) || null;
+
+          if (
+            buyerResultToken &&
+            !buyerResultToken.download_token &&
+            String(firstDefined(attemptData.status, record.pcp_status, '')).toUpperCase() === 'PAM_PASSED'
+          ) {
+            try {
+              const resendResp = await client.post('/tokens/resend', {
+                contract_id: record.pcp_contract_id,
+                attempt_id: firstDefined(attemptData.attempt_id, record.current_attempt_id),
+                receiver_id: transaction.buyer_address,
+                result_role: 'he_result'
+              });
+              const resendData = resendResp?.data?.data || {};
+              buyerResultToken = {
+                ...buyerResultToken,
+                download_token: firstDefined(
+                  resendData.download_token,
+                  buyerResultToken.download_token,
+                  null
+                )
+              };
+            } catch (error) {
+              // Keep best-effort status sync even if token resend fails.
+            }
+          }
 
           record = await upsertHeRecord(
             mergeHeRecordInput(record, {
@@ -719,10 +769,22 @@ function registerHeRoutes({
               businessContractId: digitalContract.contract_id,
               buyerId: transaction.buyer_address,
               sellerId: transaction.seller_address,
-              pcpContractId: firstDefined(statusData.contract_id, record.pcp_contract_id),
-              pcpStatus: firstDefined(statusData.status, record.pcp_status),
-              lastError: firstDefined(statusData.last_error, record.last_error),
-              ...withHeResultMetadata(resultMetadata)
+              currentAttemptId: firstDefined(attemptData.attempt_id, record.current_attempt_id),
+              pcpContractId: record.pcp_contract_id,
+              pcpStatus: firstDefined(attemptData.status, record.pcp_status),
+              downloadToken: firstDefined(
+                buyerResultToken?.download_token,
+                record.download_token
+              ),
+              resultFilename: firstDefined(
+                buyerResultToken?.filename,
+                record.result_filename
+              ),
+              resultStoragePath: firstDefined(
+                buyerResultToken?.result_uri,
+                record.result_storage_path
+              ),
+              lastError: firstDefined(attemptData.last_error, record.last_error)
             })
           );
         } catch (error) {
@@ -1217,13 +1279,11 @@ function registerPreRoutes({
         try {
           const client = createPcpClient({
             baseUrl: getPcpPreBaseUrl(),
-            entityId: transaction.buyer_address
           });
-          const statusResp = await client.get(
-            `/pre/${encodeURIComponent(record.pcp_contract_id)}/status`
+          const contractResp = await client.get(
+            `/contracts/${encodeURIComponent(record.pcp_contract_id)}`
           );
-          const statusData = statusResp?.data?.data || {};
-          const resultMetadata = extractPreResultMetadata(statusResp?.data);
+          const contractData = extractContractStatus(contractResp?.data);
 
           record = await upsertPreRecord(
             mergePreRecordInput(record, {
@@ -1231,10 +1291,9 @@ function registerPreRoutes({
               businessContractId: digitalContract.contract_id,
               buyerId: transaction.buyer_address,
               sellerId: transaction.seller_address,
-              pcpContractId: firstDefined(statusData.contract_id, record.pcp_contract_id),
-              pcpStatus: firstDefined(statusData.status, record.pcp_status),
-              lastError: firstDefined(statusData.last_error, record.last_error),
-              ...withPreResultMetadata(resultMetadata)
+              pcpContractId: firstDefined(contractData.contractId, record.pcp_contract_id),
+              pcpStatus: firstDefined(contractData.status, record.pcp_status),
+              lastError: record.last_error
             })
           );
         } catch (error) {

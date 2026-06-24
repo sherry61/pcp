@@ -169,10 +169,12 @@ async function loadPaillierBigint() {
 }
 
 function assertBrowserCrypto() {
-  const cryptoApi =
-    typeof window !== 'undefined'
-      ? (window.crypto || window.msCrypto || null)
-      : null;
+  const runtimeGlobal = typeof self !== 'undefined'
+    ? self
+    : (typeof window !== 'undefined' ? window : null);
+  const cryptoApi = runtimeGlobal
+    ? (runtimeGlobal.crypto || runtimeGlobal.msCrypto || null)
+    : null;
 
   if (!cryptoApi || typeof cryptoApi.getRandomValues !== 'function') {
     throw new Error('当前浏览器不支持 crypto.getRandomValues。');
@@ -268,6 +270,65 @@ function gcd(a, b) {
   }
 
   return left;
+}
+
+function base64UrlEncodeBytes(bytes) {
+  let binary = '';
+  bytes.forEach((item) => {
+    binary += String.fromCharCode(item);
+  });
+
+  const encoder = typeof btoa === 'function'
+    ? btoa
+    : (value) => Buffer.from(value, 'binary').toString('base64');
+
+  return encoder(binary)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function base64UrlDecodeToBytes(value) {
+  const normalized = String(value || '').replace(/-/g, '+').replace(/_/g, '/');
+  const padded = normalized + '='.repeat((4 - normalized.length % 4) % 4);
+  const decoder = typeof atob === 'function'
+    ? atob
+    : (input) => Buffer.from(input, 'base64').toString('binary');
+  const binary = decoder(padded);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function bigintToFixedWidthBytes(value, width) {
+  const hex = BigInt(value).toString(16);
+  const paddedHex = hex.length % 2 === 0 ? hex : `0${hex}`;
+  const bytes = Uint8Array.from(
+    paddedHex.match(/.{1,2}/g) || [],
+    (pair) => Number.parseInt(pair, 16)
+  );
+
+  if (bytes.length > width) {
+    throw new Error('密文长度超过固定宽度。');
+  }
+
+  const output = new Uint8Array(width);
+  output.set(bytes, width - bytes.length);
+  return output;
+}
+
+function fixedWidthBase64UrlToBigInt(value, width) {
+  const bytes = base64UrlDecodeToBytes(value);
+  if (bytes.length !== width) {
+    throw new Error('HE 密文宽度不正确。');
+  }
+
+  const hex = Array.from(bytes, (item) => item.toString(16).padStart(2, '0')).join('');
+  return BigInt(`0x${hex || '00'}`);
+}
+
+function getPaillierCiphertextWidth(publicKeyMaterial) {
+  const n = BigInt(publicKeyMaterial.n);
+  const modulusSquared = n * n;
+  return Math.max(1, Math.ceil(modulusSquared.toString(2).length / 8));
 }
 
 function isProbablePrime(candidate, rounds = 16) {
@@ -439,7 +500,7 @@ function generatePaillierRandomR(n) {
 
 function encryptPaillierValue(value, publicKeyMaterial) {
   const n = BigInt(publicKeyMaterial.n);
-  const g = BigInt(publicKeyMaterial.g);
+  const g = publicKeyMaterial.g == null ? n + 1n : BigInt(publicKeyMaterial.g);
   const nsq = n * n;
 
   if (value < 0n) {
@@ -492,9 +553,13 @@ async function encryptHeCsv({
   }
 
   if (normalizedAlgorithm === 'Paillier') {
+    const ciphertextWidth = getPaillierCiphertextWidth(publicKeyMaterial);
     return serializeCsvRows([
-      ['ciphertext'],
-      ...values.map((value) => [encryptPaillierValue(value, publicKeyMaterial).toString()])
+      ['cipher'],
+      ...values.map((value) => {
+        const ciphertext = encryptPaillierValue(value, publicKeyMaterial);
+        return [`pai1.${base64UrlEncodeBytes(bigintToFixedWidthBytes(ciphertext, ciphertextWidth))}`];
+      })
     ]);
   }
 
@@ -517,9 +582,10 @@ async function decryptPaillierCsv(csvText, privateKeyMaterial) {
   if (rows.length === 0) return 'result\n';
 
   const [header, ...dataRows] = rows;
+  const width = getPaillierCiphertextWidth(privateKeyMaterial);
   const publicKey = new paillier.PublicKey(
     BigInt(privateKeyMaterial.n),
-    BigInt(privateKeyMaterial.g)
+    privateKeyMaterial.g == null ? BigInt(privateKeyMaterial.n) + 1n : BigInt(privateKeyMaterial.g)
   );
   const privateKey = new paillier.PrivateKey(
     BigInt(privateKeyMaterial.lambda),
@@ -528,7 +594,11 @@ async function decryptPaillierCsv(csvText, privateKeyMaterial) {
   );
 
   const decryptedRows = dataRows.map((cells) => {
-    const cipher = BigInt(cells[0]);
+    const rawCipher = String(cells[0] || '');
+    if (!rawCipher.startsWith('pai1.')) {
+      throw new Error('Paillier 结果文件格式无效。');
+    }
+    const cipher = fixedWidthBase64UrlToBigInt(rawCipher.slice(5), width);
     return privateKey.decrypt(cipher).toString();
   });
 
