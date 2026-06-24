@@ -1,6 +1,7 @@
 const fs = require('fs').promises;
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const FormData = require('form-data');
 const { execFile } = require('child_process');
 
@@ -14,7 +15,8 @@ const {
   normalizeFlResultSyncPayload,
   normalizeSellerIds,
   validateHexString,
-  buildFlSellerResultKey
+  buildFlSellerResultKey,
+  buildRsaPublicKeyObjectFromPemHex
 } = require('./fl');
 
 function isMissingPcpTableError(error) {
@@ -82,7 +84,7 @@ function getPcpFlBaseUrl() {
   return (
     process.env.PCP_FL_BASE_URL ||
     process.env.PCP_BASE_URL ||
-    'http://127.0.0.1:8123'
+    'http://127.0.0.1:8130'
   ).replace(/\/+$/, '');
 }
 
@@ -106,6 +108,15 @@ function assertFlPcType(digitalContract) {
   }
 }
 
+function extractContractStatus(payload) {
+  const data = payload?.data || payload || {};
+  return {
+    contractId: data.contract_id || payload?.contract_id || null,
+    status: data.status || payload?.status || null,
+    contractParams: data.contract_params || payload?.contract_params || null
+  };
+}
+
 function extractFlNotificationPayload(body, firstDefined) {
   const payload = body?.data || body || {};
   const result = payload?.result || {};
@@ -118,16 +129,25 @@ function extractFlNotificationPayload(body, firstDefined) {
     receiverId: firstDefined(payload.receiver_id, body?.receiver_id),
     resultRole: firstDefined(payload.result_role, body?.result_role),
     batchIndex: firstDefined(payload.batch_index, body?.batch_index),
-    downloadToken: firstDefined(result.download_token, body?.download_token),
+    downloadToken: firstDefined(
+      payload.download_token,
+      result.download_token,
+      body?.download_token,
+      body?.data?.download_token
+    ),
     resultFilename: firstDefined(result.filename, body?.result_filename),
     resultStoragePath: firstDefined(result.result_uri, body?.result_uri, body?.result_storage_path),
     lastError: firstDefined(payload.last_error, body?.last_error)
   };
 }
 
-function runExecFile(file, args) {
+function runExecFile(file, args, options = {}) {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { maxBuffer: 10 * 1024 * 1024, encoding: 'buffer' }, (error, stdout, stderr) => {
+    execFile(file, args, {
+      maxBuffer: 10 * 1024 * 1024,
+      encoding: 'buffer',
+      cwd: options.cwd || undefined
+    }, (error, stdout, stderr) => {
       if (error) {
         error.stdout = stdout;
         error.stderr = stderr;
@@ -161,6 +181,14 @@ function resolveFlZipEntryMap(entryNames) {
     'label/wrapped_key.bin',
     'label/meta.json'
   ];
+
+  const hasAnyLegacyEntry = requiredSuffixes.some((suffix) => (
+    normalizedNames.some((name) => name === suffix || name.endsWith(`/${suffix}`))
+  ));
+
+  if (!hasAnyLegacyEntry) {
+    return null;
+  }
 
   const entryMap = {};
   for (const suffix of requiredSuffixes) {
@@ -205,59 +233,84 @@ async function parseFlBatchZip(file) {
       .split(/\r?\n/)
       .map((item) => item.trim())
       .filter(Boolean);
-    const entryMap = resolveFlZipEntryMap(entryNames);
+    const normalizedSet = new Set(
+      entryNames
+        .map(normalizeArchiveEntryName)
+        .filter(Boolean)
+        .filter((name) => !name.endsWith('/'))
+    );
 
-    const [
-      smashedCipherFile,
-      smashedWrappedKeyFile,
-      smashedMetaFile,
-      labelCipherFile,
-      labelWrappedKeyFile,
-      labelMetaFile
-    ] = await Promise.all([
-      extractZipEntryBuffer(zipPath, entryMap['smashed/cipher.bin']),
-      extractZipEntryBuffer(zipPath, entryMap['smashed/wrapped_key.bin']),
-      extractZipEntryBuffer(zipPath, entryMap['smashed/meta.json']),
-      extractZipEntryBuffer(zipPath, entryMap['label/cipher.bin']),
-      extractZipEntryBuffer(zipPath, entryMap['label/wrapped_key.bin']),
-      extractZipEntryBuffer(zipPath, entryMap['label/meta.json'])
-    ]);
+    const hasNativeEpochBundle =
+      normalizedSet.has('metadata.json') &&
+      normalizedSet.has('smashed.safetensors') &&
+      normalizedSet.has('labels.safetensors');
 
-    return {
-      smashedCipherFile: {
-        buffer: smashedCipherFile,
-        originalname: 'smashed.cipher.bin',
-        mimetype: 'application/octet-stream'
-      },
-      smashedWrappedKeyFile: {
-        buffer: smashedWrappedKeyFile,
-        originalname: 'smashed.wrapped_key.bin',
-        mimetype: 'application/octet-stream'
-      },
-      smashedMetaFile: {
-        buffer: smashedMetaFile,
-        originalname: 'smashed.meta.json',
-        mimetype: 'application/json'
-      },
-      labelCipherFile: {
-        buffer: labelCipherFile,
-        originalname: 'label.cipher.bin',
-        mimetype: 'application/octet-stream'
-      },
-      labelWrappedKeyFile: {
-        buffer: labelWrappedKeyFile,
-        originalname: 'label.wrapped_key.bin',
-        mimetype: 'application/octet-stream'
-      },
-      labelMetaFile: {
-        buffer: labelMetaFile,
-        originalname: 'label.meta.json',
-        mimetype: 'application/json'
+    if (hasNativeEpochBundle) {
+      const [metadataBuffer, smashedBuffer, labelsBuffer] = await Promise.all([
+        extractZipEntryBuffer(zipPath, 'metadata.json'),
+        extractZipEntryBuffer(zipPath, 'smashed.safetensors'),
+        extractZipEntryBuffer(zipPath, 'labels.safetensors')
+      ]);
+      let metadata;
+      try {
+        metadata = JSON.parse(String(metadataBuffer));
+      } catch (error) {
+        const parseError = new Error('seller_epoch_input.zip 中的 metadata.json 不是合法 JSON');
+        parseError.statusCode = 400;
+        throw parseError;
       }
-    };
+
+      return {
+        mode: 'native_epoch_bundle',
+        bundleBuffer: Buffer.from(file.buffer),
+        bundleMetadata: metadata,
+        smashedBuffer,
+        labelsBuffer
+      };
+    }
+
+    const legacyEntryMap = resolveFlZipEntryMap(entryNames);
+    if (legacyEntryMap) {
+      const error = new Error(
+        '当前 seller_epoch_input.zip 仍是旧加密碎片结构；PCC 现要求 metadata.json + smashed.safetensors + labels.safetensors'
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const invalidError = new Error(
+      'seller_epoch_input.zip 结构无效，必须包含 metadata.json、smashed.safetensors、labels.safetensors'
+    );
+    invalidError.statusCode = 400;
+    throw invalidError;
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
+}
+
+async function createZipFromBuffers(entries) {
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'pcp-fl-epoch-bundle-'));
+  try {
+    const inputDir = path.join(tempDir, 'input');
+    await fs.mkdir(inputDir, { recursive: true });
+
+    for (const [entryName, content] of Object.entries(entries || {})) {
+      const normalizedName = normalizeArchiveEntryName(entryName);
+      const outputPath = path.join(inputDir, normalizedName);
+      await fs.mkdir(path.dirname(outputPath), { recursive: true });
+      await fs.writeFile(outputPath, content);
+    }
+
+    const zipPath = path.join(tempDir, 'bundle.zip');
+    await runExecFile('zip', ['-rq', zipPath, '.'], { cwd: inputDir });
+    return fs.readFile(zipPath);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+function sha256WithPrefix(buffer) {
+  return `sha256:${crypto.createHash('sha256').update(buffer).digest('hex')}`;
 }
 
 function registerFlRoutes({
@@ -302,6 +355,192 @@ function registerFlRoutes({
     );
 
     return rows[0] || null;
+  }
+
+  function buildFlAttemptStatus(attemptId, status, currentEpoch) {
+    return {
+      attempt_id: attemptId || null,
+      status: status || null,
+      current_epoch_id: currentEpoch == null ? null : Number(currentEpoch)
+    };
+  }
+
+  async function syncCurrentFlAttempt(record) {
+    const mapped = mapFlRecordRow(record);
+    const attemptId = mapped?.seller_result_packages?.__attempt_id || null;
+    if (!record?.pcp_contract_id || !attemptId) {
+      return record;
+    }
+
+    try {
+      const client = createPcpClient({
+        baseUrl: getPcpFlBaseUrl()
+      });
+      const attemptResp = await client.get(
+        `/fl/${encodeURIComponent(record.pcp_contract_id)}/attempts/${encodeURIComponent(attemptId)}/status`
+      );
+      const attemptData = attemptResp?.data?.data || {};
+      const nextAttemptId = firstDefined(attemptData.attempt_id, attemptId);
+      const nextStatus = firstDefined(attemptData.status, record.pcp_status, 'WAITING_EPOCH_INPUT');
+      const nextEpoch = firstDefined(
+        attemptData.current_epoch_id,
+        attemptData.current_epoch,
+        record.current_epoch,
+        0
+      );
+      const tokenSyncState = await syncFlResultTokens({
+        record,
+        mapped,
+        attemptId: nextAttemptId,
+        attemptData,
+        client
+      });
+      const sellerResultPackages = {
+        ...(mapped?.seller_result_packages || {}),
+        ...(tokenSyncState.sellerResultPackages || {}),
+        __attempt_id: nextAttemptId
+      };
+
+      return await upsertFlRecord(
+        mergeFlRecordInput(record, {
+          transactionId: record.transaction_id,
+          businessContractId: record.business_contract_id,
+          pcpContractId: record.pcp_contract_id,
+          buyerId: record.buyer_id,
+          pcpStatus: nextStatus,
+          currentEpoch: nextEpoch,
+          buyerDownloadToken: tokenSyncState.buyerDownloadToken,
+          buyerResultFilename: tokenSyncState.buyerResultFilename,
+          buyerResultStoragePath: tokenSyncState.buyerResultStoragePath,
+          sellerResultPackages,
+          lastError: null
+        })
+      );
+    } catch (error) {
+      if (error?.response?.status === 404) {
+        const sellerResultPackages = { ...(mapped?.seller_result_packages || {}) };
+        delete sellerResultPackages.__attempt_id;
+
+        return await upsertFlRecord(
+          mergeFlRecordInput(record, {
+            transactionId: record.transaction_id,
+            businessContractId: record.business_contract_id,
+            pcpContractId: record.pcp_contract_id,
+            buyerId: record.buyer_id,
+            pcpStatus: 'ACTIVE',
+            currentEpoch: 0,
+            sellerResultPackages,
+            lastError: null
+          })
+        );
+      }
+
+      throw error;
+    }
+  }
+
+  async function syncFlResultTokens({
+    record,
+    mapped,
+    attemptId,
+    attemptData,
+    client
+  }) {
+    const resultTokens = Array.isArray(attemptData?.result_tokens)
+      ? attemptData.result_tokens
+      : [];
+    const sellerResultPackages = {
+      ...(mapped?.seller_result_packages || {})
+    };
+    let buyerDownloadToken = mapped?.buyer_download_token || null;
+    let buyerResultFilename = mapped?.buyer_result_filename || null;
+    let buyerResultStoragePath = mapped?.buyer_result_storage_path || null;
+
+    for (const tokenItem of resultTokens) {
+      if (!tokenItem || tokenItem.revoked) {
+        continue;
+      }
+
+      const receiverId = tokenItem.receiver_id ? String(tokenItem.receiver_id).trim() : '';
+      const resultRole = tokenItem.result_role ? String(tokenItem.result_role).trim() : '';
+      const epochId = Number.isInteger(tokenItem.epoch_id) ? tokenItem.epoch_id : null;
+
+      if (!receiverId || !resultRole) {
+        continue;
+      }
+
+      if (resultRole === 'fl_top_model') {
+        if (buyerDownloadToken) {
+          continue;
+        }
+
+        try {
+          const resendResp = await client.post('/tokens/resend', {
+            contract_id: record.pcp_contract_id,
+            attempt_id: attemptId,
+            receiver_id: receiverId,
+            result_role: resultRole
+          });
+          const resendData = resendResp?.data?.data || {};
+          buyerDownloadToken = firstDefined(
+            resendData.download_token,
+            buyerDownloadToken,
+            null
+          );
+        } catch (error) {
+          continue;
+        }
+        continue;
+      }
+
+      if (resultRole !== 'fl_gradient_epoch_bundle') {
+        continue;
+      }
+
+      const resultKey = buildFlSellerResultKey({
+        sellerId: receiverId,
+        resultRole,
+        batchIndex: null
+      });
+      if (sellerResultPackages[resultKey]?.download_token) {
+        continue;
+      }
+
+      try {
+        const resendResp = await client.post('/tokens/resend', {
+          contract_id: record.pcp_contract_id,
+          attempt_id: attemptId,
+          receiver_id: receiverId,
+          result_role: resultRole,
+          ...(epochId == null ? {} : { epoch_id: epochId })
+        });
+        const resendData = resendResp?.data?.data || {};
+        sellerResultPackages[resultKey] = {
+          ...(sellerResultPackages[resultKey] || {}),
+          seller_id: receiverId,
+          receiver_id: receiverId,
+          result_role: resultRole,
+          epoch_id: epochId,
+          batch_index: null,
+          download_token: firstDefined(
+            resendData.download_token,
+            sellerResultPackages[resultKey]?.download_token,
+            null
+          ),
+          result_filename: sellerResultPackages[resultKey]?.result_filename || null,
+          result_storage_path: sellerResultPackages[resultKey]?.result_storage_path || null
+        };
+      } catch (error) {
+        continue;
+      }
+    }
+
+    return {
+      buyerDownloadToken,
+      buyerResultFilename,
+      buyerResultStoragePath,
+      sellerResultPackages
+    };
   }
 
   async function requireFlContext(transactionId) {
@@ -350,6 +589,12 @@ function registerFlRoutes({
     }
 
     return {
+      summary: {
+        seller_join_count: Object.keys(mapped.seller_join_packages || {}).filter((key) => !key.startsWith('__')).length,
+        seller_bottom_model_ready_count: Object.values(mapped.seller_join_packages || {}).filter((item) => item?.download_token).length,
+        seller_gradient_ready_count: Object.values(mapped.seller_result_packages || {}).filter((item) => item?.download_token).length,
+        buyer_result_ready: Boolean(mapped.buyer_result_ready)
+      },
       transaction_id: mapped.transaction_id,
       business_contract_id: mapped.business_contract_id || businessContractId,
       pcp_contract_id: mapped.pcp_contract_id || null,
@@ -370,6 +615,8 @@ function registerFlRoutes({
       buyer_result_filename: mapped.buyer_result_filename || null,
       seller_join_packages: mapped.seller_join_packages || {},
       seller_result_packages: mapped.seller_result_packages || {},
+      current_attempt_id:
+        mapped.seller_result_packages?.__attempt_id || null,
       last_error: mapped.last_error || null
     };
   }
@@ -569,6 +816,28 @@ function registerFlRoutes({
       };
     }
 
+    if (payload.resultRole === 'fl_gradient_epoch_bundle') {
+      const sellerId = firstDefined(payload.receiverId, payload.sellerId);
+      if (!sellerId) {
+        throw new Error('sellerId is required for fl_gradient_epoch_bundle');
+      }
+
+      const resultKey = buildFlSellerResultKey({
+        sellerId,
+        resultRole: payload.resultRole,
+        batchIndex: payload.batchIndex
+      });
+      sellerResultPackages[resultKey] = {
+        seller_id: sellerId,
+        ...resultMetadata
+      };
+
+      return {
+        sellerJoinPackages,
+        sellerResultPackages
+      };
+    }
+
     return {
       sellerJoinPackages,
       sellerResultPackages
@@ -612,13 +881,85 @@ function registerFlRoutes({
       resultRole: resultRole || 'fl_gradient',
       batchIndex
     });
-    const resultItem = mapped?.seller_result_packages?.[resultKey] || null;
+    const resultItem = mapped?.seller_result_packages?.[resultKey] || (
+      resultRole === 'fl_gradient'
+        ? mapped?.seller_result_packages?.[buildFlSellerResultKey({
+          sellerId,
+          resultRole: 'fl_gradient_epoch_bundle',
+          batchIndex
+        })] || null
+        : null
+    );
 
     return {
       receiverId: sellerId,
       downloadToken: resultItem?.download_token || null,
       filename: resultItem?.result_filename || null
     };
+  }
+
+  async function tryResendFlSellerBottomModelToken(record, sellerId) {
+    if (!record?.pcp_contract_id || !sellerId) {
+      return record;
+    }
+
+    const mapped = mapFlRecordRow(record);
+    const joined = mapped?.seller_join_packages?.[sellerId] || null;
+    if (!joined || joined.download_token) {
+      return record;
+    }
+
+    try {
+      const client = createPcpClient({
+        baseUrl: getPcpFlBaseUrl()
+      });
+      const resendResp = await client.post('/tokens/resend', {
+        contract_id: record.pcp_contract_id,
+        attempt_id: 'CONTRACT_MATERIAL',
+        receiver_id: sellerId,
+        result_role: 'fl_bottom_model'
+      });
+      const resendData = resendResp?.data?.data || {};
+      const sellerJoinPackages = {
+        ...(mapped?.seller_join_packages || {})
+      };
+      sellerJoinPackages[sellerId] = {
+        ...(sellerJoinPackages[sellerId] || {}),
+        receiver_id: sellerId,
+        result_role: 'fl_bottom_model',
+        download_token: firstDefined(
+          resendData.download_token,
+          sellerJoinPackages[sellerId]?.download_token,
+          null
+        ),
+        token_status: firstDefined(
+          resendData.notify_status,
+          sellerJoinPackages[sellerId]?.token_status,
+          'RESENT'
+        )
+      };
+
+      return await upsertFlRecord(
+        mergeFlRecordInput(record, {
+          transactionId: record.transaction_id,
+          businessContractId: record.business_contract_id,
+          pcpContractId: record.pcp_contract_id,
+          buyerId: record.buyer_id,
+          sellerJoinPackages,
+          lastError: null
+        })
+      );
+    } catch (error) {
+      return await upsertFlRecord(
+        mergeFlRecordInput(record, {
+          transactionId: record.transaction_id,
+          businessContractId: record.business_contract_id,
+          pcpContractId: record.pcp_contract_id,
+          buyerId: record.buyer_id,
+          lastError: stringifyUpstreamErrorPayload(error?.response?.data) || error.message || null
+        })
+      );
+    }
   }
 
   app.get('/api/privacy/fl/tee-materials', async (req, res) => {
@@ -646,6 +987,8 @@ function registerFlRoutes({
   app.post(
     '/api/privacy/fl/create-contract',
     upload.fields([
+      { name: 'top_model_initial_package', maxCount: 1 },
+      { name: 'bottom_model_initial_package', maxCount: 1 },
       { name: 'top_model_cipher_file', maxCount: 1 },
       { name: 'top_model_wrapped_key_file', maxCount: 1 },
       { name: 'top_model_meta_file', maxCount: 1 },
@@ -662,24 +1005,13 @@ function registerFlRoutes({
         });
       }
 
-      const topModelCipherFile = req.files?.top_model_cipher_file?.[0] || null;
-      const topModelWrappedKeyFile = req.files?.top_model_wrapped_key_file?.[0] || null;
-      const topModelMetaFile = req.files?.top_model_meta_file?.[0] || null;
-      const bottomModelCipherFile = req.files?.bottom_model_cipher_file?.[0] || null;
-      const bottomModelWrappedKeyFile = req.files?.bottom_model_wrapped_key_file?.[0] || null;
-      const bottomModelMetaFile = req.files?.bottom_model_meta_file?.[0] || null;
+      const topModelInitialPackage = req.files?.top_model_initial_package?.[0] || null;
+      const bottomModelInitialPackage = req.files?.bottom_model_initial_package?.[0] || null;
 
-      if (
-        !topModelCipherFile ||
-        !topModelWrappedKeyFile ||
-        !topModelMetaFile ||
-        !bottomModelCipherFile ||
-        !bottomModelWrappedKeyFile ||
-        !bottomModelMetaFile
-      ) {
+      if (!topModelInitialPackage || !bottomModelInitialPackage) {
         return res.status(400).json({
           success: false,
-          message: '缺少 FL 合同初始化所需的 top/bottom model 加密包文件'
+          message: '缺少 FL 合同初始化所需的 top_model_initial_package / bottom_model_initial_package'
         });
       }
 
@@ -710,37 +1042,18 @@ function registerFlRoutes({
         });
 
         const form = new FormData();
-        Object.entries(contractPayload).forEach(([key, value]) => {
-          form.append(key, String(value));
+        form.append('metadata', JSON.stringify(contractPayload));
+        form.append('top_model_initial_package', topModelInitialPackage.buffer, {
+          filename: topModelInitialPackage.originalname || 'top-model.zip',
+          contentType: topModelInitialPackage.mimetype || 'application/zip'
         });
-        form.append('top_model_cipher_file', topModelCipherFile.buffer, {
-          filename: topModelCipherFile.originalname || 'cipher.bin',
-          contentType: topModelCipherFile.mimetype || 'application/octet-stream'
-        });
-        form.append('top_model_wrapped_key_file', topModelWrappedKeyFile.buffer, {
-          filename: topModelWrappedKeyFile.originalname || 'wrapped_key.bin',
-          contentType: topModelWrappedKeyFile.mimetype || 'application/octet-stream'
-        });
-        form.append('top_model_meta_file', topModelMetaFile.buffer, {
-          filename: topModelMetaFile.originalname || 'meta.json',
-          contentType: topModelMetaFile.mimetype || 'application/json'
-        });
-        form.append('bottom_model_cipher_file', bottomModelCipherFile.buffer, {
-          filename: bottomModelCipherFile.originalname || 'cipher.bin',
-          contentType: bottomModelCipherFile.mimetype || 'application/octet-stream'
-        });
-        form.append('bottom_model_wrapped_key_file', bottomModelWrappedKeyFile.buffer, {
-          filename: bottomModelWrappedKeyFile.originalname || 'wrapped_key.bin',
-          contentType: bottomModelWrappedKeyFile.mimetype || 'application/octet-stream'
-        });
-        form.append('bottom_model_meta_file', bottomModelMetaFile.buffer, {
-          filename: bottomModelMetaFile.originalname || 'meta.json',
-          contentType: bottomModelMetaFile.mimetype || 'application/json'
+        form.append('bottom_model_initial_package', bottomModelInitialPackage.buffer, {
+          filename: bottomModelInitialPackage.originalname || 'bottom-model.zip',
+          contentType: bottomModelInitialPackage.mimetype || 'application/zip'
         });
 
         const client = createPcpClient({
-          baseUrl: getPcpFlBaseUrl(),
-          entityId: transaction.buyer_address
+          baseUrl: getPcpFlBaseUrl()
         });
         const contractResp = await client.post('/fl/contract', form, {
           headers: form.getHeaders()
@@ -765,14 +1078,14 @@ function registerFlRoutes({
             pcpContractId,
             buyerId: transaction.buyer_address,
             sellerIds: contractPayload.seller_ids,
-            buyerResultPublicKey: contractPayload.buyer_result_public_key,
-            maxEpochs: contractPayload.max_epochs,
-            learningRate: contractPayload.learning_rate,
-            batchSize: contractPayload.batch_size,
-            lossFunction: contractPayload.loss_function,
-            dpNoiseScale: contractPayload.dp_noise_scale,
-            dpClippingThreshold: contractPayload.dp_clipping_threshold,
-            pcpStatus: firstDefined(contractResp?.data?.data?.status, 'WAITING_INPUT'),
+            buyerResultPublicKey: req.body.buyerResultPublicKey || req.body.buyer_result_public_key,
+            maxEpochs: contractPayload.training_params?.max_epochs,
+            learningRate: contractPayload.training_params?.learning_rate,
+            batchSize: contractPayload.training_params?.batch_size,
+            lossFunction: contractPayload.training_params?.loss_function,
+            dpNoiseScale: contractPayload.training_params?.dp_noise_scale,
+            dpClippingThreshold: contractPayload.training_params?.dp_clipping_threshold,
+            pcpStatus: firstDefined(contractResp?.data?.data?.status, 'ACTIVE'),
             currentEpoch: firstDefined(contractResp?.data?.data?.current_epoch, 0),
             buyerDownloadToken: resultMetadata.downloadToken,
             buyerResultFilename: resultMetadata.resultFilename,
@@ -833,36 +1146,36 @@ function registerFlRoutes({
       }
 
       const client = createPcpClient({
-        baseUrl: getPcpFlBaseUrl(),
-        entityId: sellerId
+        baseUrl: getPcpFlBaseUrl()
       });
-      const form = new FormData();
-      form.append('seller_public_key', sellerPublicKey);
       const joinResp = await client.post(
         `/fl/${encodeURIComponent(existing.pcp_contract_id)}/join`,
-        form,
-        { headers: form.getHeaders() }
+        {
+          idempotency_key: `${existing.pcp_contract_id}-${sellerId}-join`,
+          seller_id: sellerId,
+          seller_public_key: buildRsaPublicKeyObjectFromPemHex(sellerPublicKey, `${sellerId}-key`)
+        }
       );
 
       const joinData = joinResp?.data?.data || {};
-      const bottomModelPackage = joinData.bottom_model_package || {};
       const joinPackages = {
         ...(mapFlRecordRow(existing)?.seller_join_packages || {})
       };
       joinPackages[sellerId] = {
         seller_id: sellerId,
         seller_public_key: sellerPublicKey,
-        status: firstDefined(joinData.status, 'JOINED'),
+        status: firstDefined(joinData.join_status, joinData.status, 'JOINED'),
         key_id: joinData.key_id || null,
         mode: joinData.mode || null,
         public_key: joinData.public_key || null,
         attestation: joinData.attestation || null,
         receiver_id: sellerId,
         result_role: 'fl_bottom_model',
-        download_token: bottomModelPackage.download_token || null,
-        result_filename: bottomModelPackage.filename || null,
-        type: bottomModelPackage.type || null,
-        format: bottomModelPackage.format || null
+        download_token: null,
+        result_filename: null,
+        type: null,
+        format: null,
+        token_status: joinData.bottom_model_token_status || null
       };
 
       const saved = await upsertFlRecord(
@@ -932,6 +1245,7 @@ function registerFlRoutes({
       let labelWrappedKeyFile = req.files?.label_wrapped_key_file?.[0] || null;
       let labelMetaFile = req.files?.label_meta_file?.[0] || null;
 
+      let nativeEpochBundle = null;
       if (
         batchZipFile &&
         !smashedCipherFile &&
@@ -942,21 +1256,27 @@ function registerFlRoutes({
         !labelMetaFile
       ) {
         const unpacked = await parseFlBatchZip(batchZipFile);
-        smashedCipherFile = unpacked.smashedCipherFile;
-        smashedWrappedKeyFile = unpacked.smashedWrappedKeyFile;
-        smashedMetaFile = unpacked.smashedMetaFile;
-        labelCipherFile = unpacked.labelCipherFile;
-        labelWrappedKeyFile = unpacked.labelWrappedKeyFile;
-        labelMetaFile = unpacked.labelMetaFile;
+        if (unpacked?.mode === 'native_epoch_bundle') {
+          nativeEpochBundle = unpacked;
+        } else {
+          smashedCipherFile = unpacked.smashedCipherFile;
+          smashedWrappedKeyFile = unpacked.smashedWrappedKeyFile;
+          smashedMetaFile = unpacked.smashedMetaFile;
+          labelCipherFile = unpacked.labelCipherFile;
+          labelWrappedKeyFile = unpacked.labelWrappedKeyFile;
+          labelMetaFile = unpacked.labelMetaFile;
+        }
       }
 
       if (
-        !smashedCipherFile ||
-        !smashedWrappedKeyFile ||
-        !smashedMetaFile ||
-        !labelCipherFile ||
-        !labelWrappedKeyFile ||
-        !labelMetaFile
+        !nativeEpochBundle && (
+          !smashedCipherFile ||
+          !smashedWrappedKeyFile ||
+          !smashedMetaFile ||
+          !labelCipherFile ||
+          !labelWrappedKeyFile ||
+          !labelMetaFile
+        )
       ) {
         return res.status(400).json({
           success: false,
@@ -975,52 +1295,95 @@ function registerFlRoutes({
           });
         }
 
-        const client = createPcpClient({
-          baseUrl: getPcpFlBaseUrl(),
-          entityId: sellerId
-        });
+        const client = createPcpClient({ baseUrl: getPcpFlBaseUrl() });
+        let currentAttemptId = mapFlRecordRow(existing)?.seller_result_packages?.__attempt_id || null;
+        let currentEpoch = Number(existing.current_epoch || 0);
+
+        if (!currentAttemptId) {
+          const attemptResp = await client.post(
+            `/fl/${encodeURIComponent(existing.pcp_contract_id)}/attempts`,
+            {
+              idempotency_key: `${existing.pcp_contract_id}-attempt-${Date.now()}`
+            }
+          );
+          currentAttemptId = firstDefined(
+            attemptResp?.data?.data?.attempt_id,
+            attemptResp?.data?.attempt_id
+          );
+          currentEpoch = firstDefined(
+            attemptResp?.data?.data?.current_epoch_id,
+            attemptResp?.data?.data?.current_epoch,
+            1
+          );
+        } else if (!currentEpoch) {
+          currentEpoch = 1;
+        }
+
+        let zipBundle;
+        let metadataPayload;
+
+        if (nativeEpochBundle) {
+          metadataPayload = {
+            ...(nativeEpochBundle.bundleMetadata || {}),
+            schema_version: 'fl-epoch-input-v1',
+            contract_id: existing.pcp_contract_id,
+            attempt_id: currentAttemptId,
+            epoch_id: Number(currentEpoch),
+            seller_id: sellerId,
+            batch_count: Number(nativeEpochBundle.bundleMetadata?.batch_count || 1),
+            tensor_format: String(nativeEpochBundle.bundleMetadata?.tensor_format || 'safetensors'),
+            label_format: String(nativeEpochBundle.bundleMetadata?.label_format || 'safetensors'),
+            smashed_digest: sha256WithPrefix(nativeEpochBundle.smashedBuffer),
+            label_digest: sha256WithPrefix(nativeEpochBundle.labelsBuffer)
+          };
+          zipBundle = await createZipFromBuffers({
+            'metadata.json': Buffer.from(JSON.stringify(metadataPayload, null, 2), 'utf8'),
+            'smashed.safetensors': nativeEpochBundle.smashedBuffer,
+            'labels.safetensors': nativeEpochBundle.labelsBuffer
+          });
+        } else {
+          const error = new Error(
+            '当前仅支持 PCC 原生 FL epoch bundle：metadata.json + smashed.safetensors + labels.safetensors'
+          );
+          error.statusCode = 400;
+          throw error;
+        }
+
+        const bundleDigest = `sha256:${require('crypto').createHash('sha256').update(zipBundle).digest('hex')}`;
         const form = new FormData();
-        form.append('batch_index', String(batchIndex));
-        form.append('smashed_cipher_file', smashedCipherFile.buffer, {
-          filename: smashedCipherFile.originalname || 'cipher.bin',
-          contentType: smashedCipherFile.mimetype || 'application/octet-stream'
-        });
-        form.append('smashed_wrapped_key_file', smashedWrappedKeyFile.buffer, {
-          filename: smashedWrappedKeyFile.originalname || 'wrapped_key.bin',
-          contentType: smashedWrappedKeyFile.mimetype || 'application/octet-stream'
-        });
-        form.append('smashed_meta_file', smashedMetaFile.buffer, {
-          filename: smashedMetaFile.originalname || 'meta.json',
-          contentType: smashedMetaFile.mimetype || 'application/json'
-        });
-        form.append('label_cipher_file', labelCipherFile.buffer, {
-          filename: labelCipherFile.originalname || 'cipher.bin',
-          contentType: labelCipherFile.mimetype || 'application/octet-stream'
-        });
-        form.append('label_wrapped_key_file', labelWrappedKeyFile.buffer, {
-          filename: labelWrappedKeyFile.originalname || 'wrapped_key.bin',
-          contentType: labelWrappedKeyFile.mimetype || 'application/octet-stream'
-        });
-        form.append('label_meta_file', labelMetaFile.buffer, {
-          filename: labelMetaFile.originalname || 'meta.json',
-          contentType: labelMetaFile.mimetype || 'application/json'
+        form.append('metadata', JSON.stringify({
+          idempotency_key: `${existing.pcp_contract_id}-${currentAttemptId}-epoch-${currentEpoch}-${sellerId}`,
+          seller_id: sellerId,
+          bundle_digest: bundleDigest,
+          batch_count: Number(metadataPayload.batch_count || 1),
+          tensor_format: String(metadataPayload.tensor_format || 'safetensors'),
+          label_format: String(metadataPayload.label_format || 'safetensors')
+        }));
+        form.append('epoch_input_bundle', zipBundle, {
+          filename: `epoch-input-${currentEpoch}.zip`,
+          contentType: 'application/zip'
         });
 
         const batchResp = await client.post(
-          `/fl/${encodeURIComponent(existing.pcp_contract_id)}/batch`,
+          `/fl/${encodeURIComponent(existing.pcp_contract_id)}/attempts/${encodeURIComponent(currentAttemptId)}/epochs/${encodeURIComponent(currentEpoch)}/seller-input`,
           form,
           { headers: form.getHeaders() }
         );
 
         const batchData = batchResp?.data?.data || {};
+        const sellerResultPackages = {
+          ...(mapFlRecordRow(existing)?.seller_result_packages || {}),
+          __attempt_id: currentAttemptId
+        };
         const saved = await upsertFlRecord(
           mergeFlRecordInput(existing, {
             transactionId,
             businessContractId: digitalContract.contract_id,
             pcpContractId: existing.pcp_contract_id,
             buyerId: transaction.buyer_address,
-            pcpStatus: firstDefined(batchData.status, 'QUEUED'),
-            currentEpoch: firstDefined(batchData.current_epoch, batchIndex),
+            pcpStatus: firstDefined(batchData.status, 'WAITING_EPOCH_INPUT'),
+            currentEpoch: firstDefined(batchData.current_epoch_id, currentEpoch, 1),
+            sellerResultPackages,
             lastError: null
           })
         );
@@ -1069,27 +1432,22 @@ function registerFlRoutes({
       if (record?.pcp_contract_id) {
         try {
           const client = createPcpClient({
-            baseUrl: getPcpFlBaseUrl(),
-            entityId: entityId || transaction.buyer_address
+            baseUrl: getPcpFlBaseUrl()
           });
-          const statusResp = await client.get(
-            `/fl/${encodeURIComponent(record.pcp_contract_id)}/status`
+          const contractResp = await client.get(
+            `/contracts/${encodeURIComponent(record.pcp_contract_id)}`
           );
-          const statusData = statusResp?.data?.data || {};
-          const resultMetadata = extractFlResultMetadata(statusResp?.data);
+          const contractData = extractContractStatus(contractResp?.data);
 
           record = await upsertFlRecord(
             mergeFlRecordInput(record, {
               transactionId,
               businessContractId: digitalContract.contract_id,
               buyerId: transaction.buyer_address,
-              pcpContractId: firstDefined(statusData.contract_id, record.pcp_contract_id),
-              pcpStatus: firstDefined(statusData.status, record.pcp_status),
-              currentEpoch: firstDefined(statusData.current_epoch, record.current_epoch, 0),
-              buyerDownloadToken: firstDefined(resultMetadata.downloadToken, record.buyer_download_token),
-              buyerResultFilename: firstDefined(resultMetadata.resultFilename, record.buyer_result_filename),
-              buyerResultStoragePath: firstDefined(resultMetadata.resultStoragePath, record.buyer_result_storage_path),
-              lastError: firstDefined(statusData.last_error, record.last_error)
+              pcpContractId: firstDefined(contractData.contractId, record.pcp_contract_id),
+              pcpStatus: firstDefined(contractData.status, record.pcp_status),
+              currentEpoch: firstDefined(record.current_epoch, 0),
+              lastError: record.last_error
             })
           );
         } catch (error) {
@@ -1098,6 +1456,18 @@ function registerFlRoutes({
           }
           syncError = error.message;
         }
+      }
+
+      if (record?.pcp_contract_id) {
+        try {
+          record = await syncCurrentFlAttempt(record);
+        } catch (error) {
+          syncError = syncError || error.message;
+        }
+      }
+
+      if (record?.pcp_contract_id && entityId) {
+        record = await tryResendFlSellerBottomModelToken(record, entityId);
       }
 
       return res.status(200).json({
@@ -1285,13 +1655,17 @@ function registerFlRoutes({
 
     try {
       const { transaction, digitalContract } = await requireFlContext(transactionId);
-      const record = await getFlRecordByTransactionId(transactionId);
+      let record = await getFlRecordByTransactionId(transactionId);
 
       if (!record) {
         return res.status(404).json({
           success: false,
           message: '当前交易暂无 FL 记录'
         });
+      }
+
+      if (receiverRole === 'seller' && sellerId && resultRole === 'fl_bottom_model') {
+        record = await tryResendFlSellerBottomModelToken(record, sellerId);
       }
 
       const receiverData = pickFlReceiverToken(record, {

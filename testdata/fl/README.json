@@ -1,0 +1,21 @@
+{
+  "buyer_contract_files": {
+    "top_model_initial_package": "top_model_initial_package.zip",
+    "bottom_model_initial_package": "bottom_model_initial_package.zip"
+  },
+  "seller_files": {
+    "join_private_key": "seller_join_private.pem",
+    "join_public_key": "seller_join_public.pem",
+    "epoch_input_bundle_source_zip": "seller_epoch_input.zip"
+  },
+  "buyer_result_key_files": {
+    "buyer_result_private_key": "buyer_result_private.pem",
+    "buyer_result_public_key": "buyer_result_public.pem"
+  },
+  "notes": [
+    "买方页创建 FL 合同时上传两个 *_initial_package.zip。",
+    "卖方页提交训练时上传 seller_epoch_input.zip。",
+    "seller_epoch_input.zip 当前按 backend/pcp/fl-routes.js 的 ZIP 适配逻辑生成。",
+    "buyer_result_public.pem 可作为买方结果公钥参考；页面当前会自行生成本地密钥。"
+  ]
+}

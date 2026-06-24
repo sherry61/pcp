@@ -40,6 +40,20 @@ function validateHexString(value, fieldName) {
   return normalized;
 }
 
+function pemHexToPemText(value, fieldName) {
+  const normalized = validateHexString(value, fieldName);
+  return Buffer.from(normalized, 'hex').toString('utf8');
+}
+
+function buildRsaPublicKeyObjectFromPemHex(value, keyIdPrefix) {
+  const publicKeyPem = pemHexToPemText(value, `${keyIdPrefix}PublicKey`);
+  return {
+    key_id: `${keyIdPrefix}-${Date.now()}`,
+    algorithm: 'RSA-OAEP-SHA256',
+    public_key_pem: publicKeyPem
+  };
+}
+
 function normalizeSellerIds(value, fallbackSellerId = null) {
   if (Array.isArray(value)) {
     return value
@@ -86,6 +100,24 @@ function normalizeIntegerOrDefault(value, defaultValue) {
   return normalizeNumberOrDefault(value, defaultValue, (input) => parseInt(input, 10));
 }
 
+function normalizeFlLossFunction(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) {
+    return 'cross_entropy';
+  }
+  if (normalized === 'cross_entropy' || normalized === 'crossentropy') {
+    return 'cross_entropy';
+  }
+  if (
+    normalized === 'mse' ||
+    normalized === 'mean_squared_error' ||
+    normalized === 'meansquarederror'
+  ) {
+    return 'mse';
+  }
+  return normalized;
+}
+
 function buildFlContractPayload({
   transaction,
   businessContractId,
@@ -117,18 +149,22 @@ function buildFlContractPayload({
   }
 
   return {
+    idempotency_key: `fl-contract-${requireNonEmpty(businessContractId, 'businessContractId')}-${Date.now()}`,
     buyer_id: buyerId,
     source_contract_id: requireNonEmpty(businessContractId, 'businessContractId'),
-    seller_ids: normalizedSellerIds.join(','),
-    max_epochs: normalizeIntegerOrDefault(maxEpochs, 10),
-    learning_rate: normalizeNumberOrDefault(learningRate, 0.001),
-    batch_size: normalizeIntegerOrDefault(batchSize, 32),
-    loss_function: String(lossFunction || 'CrossEntropy').trim() || 'CrossEntropy',
-    dp_noise_scale: normalizeNumberOrDefault(dpNoiseScale, 0),
-    dp_clipping_threshold: normalizeNumberOrDefault(dpClippingThreshold, 1),
-    buyer_result_public_key: validateHexString(
+    seller_ids: normalizedSellerIds,
+    training_params: {
+      max_epochs: normalizeIntegerOrDefault(maxEpochs, 10),
+      learning_rate: normalizeNumberOrDefault(learningRate, 0.001),
+      batch_size: normalizeIntegerOrDefault(batchSize, 32),
+      loss_function: normalizeFlLossFunction(lossFunction),
+      optimizer: 'sgd',
+      dp_noise_scale: normalizeNumberOrDefault(dpNoiseScale, 0),
+      dp_clipping_threshold: normalizeNumberOrDefault(dpClippingThreshold, 1)
+    },
+    buyer_result_public_key: buildRsaPublicKeyObjectFromPemHex(
       buyerResultPublicKey,
-      'buyerResultPublicKey'
+      'buyer-result-key'
     )
   };
 }
@@ -149,7 +185,7 @@ function normalizeFlRecord(input = {}) {
     max_epochs: normalizeIntegerOrDefault(input.maxEpochs, 10),
     learning_rate: normalizeNumberOrDefault(input.learningRate, 0.001),
     batch_size: normalizeIntegerOrDefault(input.batchSize, 32),
-    loss_function: String(input.lossFunction || 'CrossEntropy'),
+    loss_function: normalizeFlLossFunction(input.lossFunction),
     dp_noise_scale: normalizeNumberOrDefault(input.dpNoiseScale, 0),
     dp_clipping_threshold: normalizeNumberOrDefault(input.dpClippingThreshold, 1),
     pcp_status: input.pcpStatus ? String(input.pcpStatus) : 'CREATED',
@@ -265,5 +301,7 @@ module.exports = {
   normalizeFlResultSyncPayload,
   normalizeSellerIds,
   validateHexString,
-  buildFlSellerResultKey
+  buildFlSellerResultKey,
+  pemHexToPemText,
+  buildRsaPublicKeyObjectFromPemHex
 };

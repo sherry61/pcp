@@ -10,10 +10,14 @@ const PCP_HE_STATUSES = [
   'NOT_EXIST',
   'CREATED',
   'WAITING_INPUT',
+  'PAMING',
+  'COMPUTED',
+  'PAM_PASSED',
+  'PAM_FAILED',
   'QUEUED',
   'RUNNING',
-  'COMPLETED',
   'FAILED',
+  'COMPLETED',
   'AUDIT_FAILED'
 ];
 
@@ -28,10 +32,14 @@ const PCP_PRE_STATUSES = [
   'NOT_EXIST',
   'CREATED',
   'WAITING_INPUT',
+  'PAMING',
+  'COMPUTED',
+  'PAM_PASSED',
+  'PAM_FAILED',
   'QUEUED',
   'RUNNING',
-  'COMPLETED',
   'FAILED',
+  'COMPLETED',
   'AUDIT_FAILED'
 ];
 
@@ -39,17 +47,23 @@ const PCP_FL_STATUSES = [
   'NOT_EXIST',
   'CREATED',
   'WAITING_INPUT',
+  'WAITING_EPOCH_INPUT',
   'JOINED',
+  'PAMING',
+  'COMPUTED',
+  'PAM_PASSED',
+  'PAM_FAILED',
   'QUEUED',
   'RUNNING',
-  'COMPLETED',
   'FAILED',
+  'COMPLETED',
   'AUDIT_FAILED'
 ];
 
 const PCP_FL_RESULT_ROLES = [
   'fl_bottom_model',
   'fl_gradient',
+  'fl_gradient_epoch_bundle',
   'fl_top_model'
 ];
 

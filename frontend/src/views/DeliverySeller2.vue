@@ -77,7 +77,7 @@
                     执行交付
                   </el-button>
                   <el-button
-                    v-if="isFlRow(row) && !getSellerJoinPackage(row)"
+                    v-if="isFlRow(row) && !hasSellerJoinedFl(row)"
                     size="small"
                     type="primary"
                     class="action-btn-primary"
@@ -85,7 +85,7 @@
                     @click="openFlJoinDialog(row)"
 
                   >
-                    执行交付
+                    {{ getSellerFlJoinActionLabel(row) }}
                   </el-button>
                   <el-button
                     v-else-if="isFlRow(row)"
@@ -94,7 +94,7 @@
                     class="action-btn-primary action-btn-disabled-primary"
                     disabled
                   >
-                    已完成
+                    {{ getSellerFlJoinedLabel(row) }}
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
@@ -105,7 +105,7 @@
                     :disabled="!canOpenFlBatchDialog(row)"
                     @click="openFlBatchDialog(row)"
                   >
-                    发起训练
+                    {{ getSellerFlBatchActionLabel(row) }}
                   </el-button>
                   <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)">
                     执行交付
@@ -130,7 +130,7 @@
                     :disabled="!getSellerBottomModelPackage(row)"
                     @click="downloadFlSellerBottomModel(row)"
                   >
-                    下载底模
+                    {{ getSellerFlBottomModelLabel(row) }}
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
@@ -141,7 +141,7 @@
                     :disabled="!getLatestSellerGradientPackage(row)"
                     @click="downloadFlSellerGradient(row)"
                   >
-                    下载梯度
+                    {{ getSellerFlGradientLabel(row) }}
                   </el-button>
                 </div>
               </template>
@@ -244,7 +244,7 @@
             <div v-if="preDialog.file" class="file-name inline-file-name">{{ preDialog.file.name }}</div>
 
             <div class="dialog-hint compact-hint">
-              <span>请选择卖方原始压缩包，浏览器会在本地生成 PRE 三件套和 key package，再通过后端转发 PCP。</span>
+              <span>请选择卖方原始压缩包。当前 PRE 流程正在适配 PCC 新标准接口，后续会切换为标准 PRE attempt 材料提交。</span>
             </div>
           </div>
 
@@ -264,7 +264,7 @@
             </div>
 
             <div class="dialog-hint compact-hint">
-              <span>提交后将为当前卖方在浏览器本地生成 FL RSA 密钥，并把公钥上传到 PCP 完成 join。</span>
+              <span>提交后将为当前卖方在浏览器本地生成 FL RSA 密钥，并把公钥上传到 PCC 完成 seller join。</span>
             </div>
 
             <div class="dialog-hint compact-hint">
@@ -305,7 +305,7 @@
             <div v-if="flBatchDialog.file" class="file-name">{{ flBatchDialog.file.name }}</div>
 
             <div class="dialog-hint compact-hint">
-              <span>请上传卖方本地封装好的 batch ZIP，内容需包含 smashed 与 label 两组加密材料。</span>
+              <span>请上传卖方本地封装好的 batch ZIP。系统会将其转换为 PCC 所需的 epoch input bundle 并提交训练。</span>
             </div>
           </div>
 
@@ -720,7 +720,40 @@ export default {
           COMPLETED: '已完成',
           FAILED: '失败'
         }
-        return labelMap[businessStatus] || '处理中'
+        let baseLabel = labelMap[businessStatus] || '处理中'
+        if (!this.isFlRow(rowOrStatus)) {
+          return baseLabel
+        }
+
+        const flStatus = String(rowOrStatus?.flRecord?.pcp_status || '').toUpperCase()
+        if (baseLabel === '待卖方交付' && flStatus === 'ACTIVE') {
+          baseLabel = '等待 seller join'
+        } else if (baseLabel === '待卖方交付' && flStatus === 'WAITING_EPOCH_INPUT') {
+          baseLabel = '等待提交 Epoch'
+        } else if (baseLabel === '处理中' && flStatus === 'PAMING') {
+          baseLabel = '审计中'
+        }
+
+        const extras = []
+        const hasActiveAttempt = Boolean(rowOrStatus?.flRecord?.current_attempt_id)
+        if (hasActiveAttempt) {
+          extras.push(`Attempt ${rowOrStatus.flRecord.current_attempt_id}`)
+        }
+        if (
+          hasActiveAttempt &&
+          Number.isFinite(Number(rowOrStatus?.flRecord?.current_epoch)) &&
+          Number(rowOrStatus.flRecord.current_epoch) > 0
+        ) {
+          extras.push(`Epoch ${Number(rowOrStatus.flRecord.current_epoch)}`)
+        }
+        if (rowOrStatus?.flRecord?.summary?.seller_bottom_model_ready_count) {
+          extras.push(`Bottom Ready ${rowOrStatus.flRecord.summary.seller_bottom_model_ready_count}`)
+        }
+        if (rowOrStatus?.flRecord?.summary?.seller_gradient_ready_count) {
+          extras.push(`Gradient Ready ${rowOrStatus.flRecord.summary.seller_gradient_ready_count}`)
+        }
+
+        return extras.length ? `${baseLabel} · ${extras.join(' · ')}` : baseLabel
       }
 
       return heConfig.getPcpStatusText(rowOrStatus)
@@ -783,20 +816,30 @@ export default {
         currentStatus === 'NOT_EXIST' ||
         currentStatus === 'CREATED' ||
         currentStatus === 'WAITING_INPUT' ||
+        currentStatus === 'WAITING_EPOCH_INPUT' ||
         currentStatus === 'JOINED'
       ) {
         return 'WAIT_SELLER'
       }
 
-      if (currentStatus === 'QUEUED' || currentStatus === 'RUNNING') {
+      if (
+        currentStatus === 'QUEUED' ||
+        currentStatus === 'RUNNING' ||
+        currentStatus === 'COMPUTED' ||
+        currentStatus === 'PAMING'
+      ) {
         return 'PROCESSING'
       }
 
-      if (currentStatus === 'COMPLETED') {
+      if (currentStatus === 'PAM_PASSED' || currentStatus === 'COMPLETED') {
         return 'COMPLETED'
       }
 
-      if (currentStatus === 'FAILED' || currentStatus === 'AUDIT_FAILED') {
+      if (
+        currentStatus === 'PAM_FAILED' ||
+        currentStatus === 'FAILED' ||
+        currentStatus === 'AUDIT_FAILED'
+      ) {
         return 'FAILED'
       }
 
@@ -1084,6 +1127,11 @@ async verifyContract(assetRow) {
       return joinPackage?.download_token ? joinPackage : null
     },
 
+    hasSellerJoinedFl(row) {
+      const joinPackage = this.getSellerJoinPackage(row)
+      return Boolean(joinPackage && (joinPackage.status || joinPackage.token_status || joinPackage.seller_public_key))
+    },
+
     getFlBottomModelDownloadKey(row) {
       return `flBottomDownloaded:${row?.transaction_id || ''}:${row?.seller_address || ''}`
     },
@@ -1108,12 +1156,76 @@ async verifyContract(assetRow) {
     },
 
     canOpenFlBatchDialog(row) {
-      return Boolean(this.getSellerJoinPackage(row) && this.hasDownloadedFlBottomModel(row))
+      return Boolean(this.hasSellerJoinedFl(row) && this.hasDownloadedFlBottomModel(row))
+    },
+
+    getSellerFlJoinActionLabel(row) {
+      const status = String(row?.flRecord?.pcp_status || '').toUpperCase()
+      if (!row?.flRecord?.pcp_contract_id) {
+        return '等待合同'
+      }
+      if (status === 'ACTIVE' || status === 'CREATED') {
+        return '加入训练'
+      }
+      return '加入训练'
+    },
+
+    getSellerFlJoinedLabel(row) {
+      const joinPackage = this.getSellerJoinPackage(row)
+      if (joinPackage?.download_token) {
+        return '已加入'
+      }
+      if (joinPackage?.token_status) {
+        return '已加入待回写'
+      }
+      return '已加入'
+    },
+
+    getSellerFlBatchActionLabel(row) {
+      const status = String(row?.flRecord?.pcp_status || '').toUpperCase()
+      if (!this.hasSellerJoinedFl(row)) {
+        return '先完成 Join'
+      }
+      if (!this.hasDownloadedFlBottomModel(row)) {
+        return '先下载底模'
+      }
+      if (status === 'WAITING_EPOCH_INPUT') {
+        return '提交 Epoch 输入'
+      }
+      if (status === 'PAMING') {
+        return '审计中'
+      }
+      if (status === 'PAM_PASSED' || status === 'COMPLETED') {
+        return '训练完成'
+      }
+      return '提交 Epoch 输入'
+    },
+
+    getSellerFlBottomModelLabel(row) {
+      const joinPackage = this.getSellerJoinPackage(row)
+      if (!joinPackage) {
+        return '等待 Join'
+      }
+      if (!joinPackage.download_token) {
+        return '等待底模回写'
+      }
+      return this.hasDownloadedFlBottomModel(row) ? '重新下载底模' : '下载底模'
+    },
+
+    getSellerFlGradientLabel(row) {
+      const gradientPackage = this.getLatestSellerGradientPackage(row)
+      if (!gradientPackage?.download_token) {
+        return '等待梯度回写'
+      }
+      return '下载梯度包'
     },
 
     getLatestSellerGradientPackage(row) {
       const packages = Object.values(row?.flRecord?.seller_result_packages || {})
-        .filter((item) => item?.seller_id === row?.seller_address && item?.result_role === 'fl_gradient')
+        .filter((item) => (
+          item?.seller_id === row?.seller_address &&
+          ['fl_gradient', 'fl_gradient_epoch_bundle'].includes(item?.result_role)
+        ))
         .sort((a, b) => Number(b?.batch_index ?? -1) - Number(a?.batch_index ?? -1))
       return packages[0] || null
     },
@@ -1269,8 +1381,8 @@ async verifyContract(assetRow) {
           return
         }
 
-        if (this.getSellerJoinPackage(row)) {
-          this.$message?.warning('当前卖方已提交材料，可直接下载底模')
+        if (this.hasSellerJoinedFl(row)) {
+          this.$message?.warning('当前卖方已完成 join，可直接下载底模')
           return
         }
 
@@ -1302,8 +1414,8 @@ async verifyContract(assetRow) {
           return
         }
 
-        if (!this.getSellerJoinPackage(row)) {
-          this.$message?.warning('请先提交材料')
+        if (!this.hasSellerJoinedFl(row)) {
+          this.$message?.warning('请先完成 seller join')
           return
         }
 
@@ -1356,7 +1468,7 @@ async verifyContract(assetRow) {
           privateKeyPem: keyMaterial.privateKeyPem
         })
         await this.refreshFlStatus(assetRow, false)
-        this.$message?.success('FL 材料已提交，请先下载底模')
+        this.$message?.success('FL seller join 已提交，请先下载底模')
         this.closeFlJoinDialog()
       } catch (error) {
         const message = error?.response?.data?.message || error?.message || 'FL 提交失败'
@@ -1380,8 +1492,8 @@ async verifyContract(assetRow) {
         return
       }
 
-      if (!this.getSellerJoinPackage(assetRow)) {
-        this.$message?.warning('请先提交材料')
+      if (!this.hasSellerJoinedFl(assetRow)) {
+        this.$message?.warning('请先完成 seller join')
         return
       }
 
@@ -1409,7 +1521,7 @@ async verifyContract(assetRow) {
 
         assetRow.flRecord = response.data?.item || assetRow.flRecord
         await this.refreshFlStatus(assetRow, false)
-        this.$message?.success(response.data?.message || 'FL 训练已发起')
+        this.$message?.success(response.data?.message || 'FL Epoch 输入已提交')
         this.closeFlBatchDialog()
       } catch (error) {
         const message = error?.response?.data?.message || error?.message || 'FL 提交失败'
@@ -1517,10 +1629,9 @@ async verifyContract(assetRow) {
     },
 
     async downloadFlSellerGradient(row) {
-      const gradientPackage = this.getLatestSellerGradientPackage(row)
       await this.downloadFlSellerResult(row, {
-        resultRole: 'fl_gradient',
-        batchIndex: gradientPackage?.batch_index ?? 0,
+        resultRole: 'fl_gradient_epoch_bundle',
+        batchIndex: null,
         rowLoadingKey: 'downloadingFlGradient',
         filename: ''
       })
@@ -1584,7 +1695,7 @@ async verifyContract(assetRow) {
           filename: this.flDecryptDialog.filename,
           resultRole: this.flDecryptDialog.resultRole,
           transactionId: this.flDecryptDialog.row?.transaction_id,
-          batchIndex: this.getLatestSellerGradientPackage(this.flDecryptDialog.row)?.batch_index ?? 0
+          batchIndex: this.getLatestSellerGradientPackage(this.flDecryptDialog.row)?.batch_index ?? null
         })
 
         if (this.flDecryptDialog.resultRole === 'fl_bottom_model') {

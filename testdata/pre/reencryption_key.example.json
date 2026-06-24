@@ -1,0 +1,4 @@
+{
+  "note": "placeholder only",
+  "warning": "当前仓库 PRE 仍是旧 TEE 流程，这里没有伪造一份假的标准 PRE reencryption_key。需要等 PRE 重构后按真实密码学方案生成。"
+}

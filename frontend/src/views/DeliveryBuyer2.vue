@@ -68,7 +68,7 @@
                     type="success"
                     class="action-btn-secondary"
                     :loading="row.downloading"
-                    :disabled="!row.heRecord?.result_ready"
+                    :disabled="!canDownloadHeResult(row)"
                     @click="downloadResult(row)"
                   >
                     下载结果
@@ -82,7 +82,7 @@
                     :disabled="Boolean(row.flRecord?.pcp_contract_id)"
                     @click="openFlContractDialog(row)"
                   >
-                    {{ row.flRecord?.pcp_contract_id ? '已完成' : '请求交付' }}
+                    {{ getBuyerFlActionLabel(row) }}
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
@@ -90,10 +90,10 @@
                     type="success"
                     class="action-btn-secondary"
                     :loading="row.downloadingFl"
-                    :disabled="!row.flRecord?.buyer_result_ready"
+                    :disabled="!canDownloadFlBuyerResult(row)"
                     @click="downloadFlResult(row)"
                   >
-                    下载结果
+                    下载 Top 模型
                   </el-button>
                   <el-button
                     v-if="isPreRow(row)"
@@ -112,7 +112,7 @@
                     type="success"
                     class="action-btn-secondary"
                     :loading="row.downloadingPre"
-                    :disabled="!row.preRecord?.result_ready"
+                    :disabled="!canDownloadPreResult(row)"
                     @click="downloadPreResult(row)"
                   >
                     下载结果
@@ -153,9 +153,9 @@
             </div>
             <div class="dialog-grid">
               <div class="dialog-field">
-                <span class="dialog-label">Top 模型</span>
+                <span class="dialog-label">Top 模型初始包</span>
                 <div class="file-action-group">
-                  <input ref="buyerFlTopModelInput" class="hidden-file-input" type="file" accept=".pt,.pth,.bin" @change="onFlBuyerFileChange('topModelFile', $event)" />
+                  <input ref="buyerFlTopModelInput" class="hidden-file-input" type="file" accept=".zip,application/zip" @change="onFlBuyerFileChange('topModelFile', $event)" />
                   <el-button size="small" plain @click="openFileSelector('buyerFlTopModelInput')">
                     选择文件
                   </el-button>
@@ -164,9 +164,9 @@
               </div>
 
               <div class="dialog-field">
-                <span class="dialog-label">Bottom 模型</span>
+                <span class="dialog-label">Bottom 模型初始包</span>
                 <div class="file-action-group">
-                  <input ref="buyerFlBottomModelInput" class="hidden-file-input" type="file" accept=".pt,.pth,.bin" @change="onFlBuyerFileChange('bottomModelFile', $event)" />
+                  <input ref="buyerFlBottomModelInput" class="hidden-file-input" type="file" accept=".zip,application/zip" @change="onFlBuyerFileChange('bottomModelFile', $event)" />
                   <el-button size="small" plain @click="openFileSelector('buyerFlBottomModelInput')">
                     选择文件
                   </el-button>
@@ -175,7 +175,7 @@
               </div>
             </div>
             <div class="dialog-hint compact-hint">
-              <span>浏览器会本地生成买方 RSA 密钥，并用 TEE 公钥加密 Top / Bottom 模型后创建合同。</span>
+              <span>请上传符合 PCC 要求的 Top / Bottom 初始模型 ZIP 包。浏览器会本地生成买方 RSA 密钥，并据此创建 FL 合同。</span>
             </div>
           </div>
 
@@ -756,20 +756,30 @@ export default {
         currentStatus === 'NOT_EXIST' ||
         currentStatus === 'CREATED' ||
         currentStatus === 'JOINED' ||
-        currentStatus === 'WAITING_INPUT'
+        currentStatus === 'WAITING_INPUT' ||
+        currentStatus === 'WAITING_EPOCH_INPUT'
       ) {
         return 'WAIT_SELLER'
       }
 
-      if (currentStatus === 'QUEUED' || currentStatus === 'RUNNING') {
+      if (
+        currentStatus === 'QUEUED' ||
+        currentStatus === 'RUNNING' ||
+        currentStatus === 'COMPUTED' ||
+        currentStatus === 'PAMING'
+      ) {
         return 'PROCESSING'
       }
 
-      if (currentStatus === 'COMPLETED') {
+      if (currentStatus === 'PAM_PASSED' || currentStatus === 'COMPLETED') {
         return 'COMPLETED'
       }
 
-      if (currentStatus === 'FAILED' || currentStatus === 'AUDIT_FAILED') {
+      if (
+        currentStatus === 'PAM_FAILED' ||
+        currentStatus === 'FAILED' ||
+        currentStatus === 'AUDIT_FAILED'
+      ) {
         return 'FAILED'
       }
 
@@ -784,8 +794,77 @@ export default {
         COMPLETED: '已完成',
         FAILED: '失败'
       }
+      let baseLabel = labelMap[this.getBuyerDeliveryStatus(row)] || '处理中'
+      if (!this.isFlRow(row)) {
+        return baseLabel
+      }
 
-      return labelMap[this.getBuyerDeliveryStatus(row)] || '处理中'
+      const flStatus = String(row?.flRecord?.pcp_status || '').toUpperCase()
+      if (baseLabel === '待卖方交付' && flStatus === 'ACTIVE') {
+        baseLabel = '等待卖方加入'
+      } else if (baseLabel === '待卖方交付' && flStatus === 'WAITING_EPOCH_INPUT') {
+        baseLabel = '等待卖方提交 Epoch'
+      } else if (baseLabel === '处理中' && flStatus === 'PAMING') {
+        baseLabel = '审计中'
+      }
+
+      const extras = []
+      const hasActiveAttempt = Boolean(row?.flRecord?.current_attempt_id)
+      if (hasActiveAttempt) {
+        extras.push(`Attempt ${row.flRecord.current_attempt_id}`)
+      }
+      if (
+        hasActiveAttempt &&
+        Number.isFinite(Number(row?.flRecord?.current_epoch)) &&
+        Number(row.flRecord.current_epoch) > 0
+      ) {
+        extras.push(`Epoch ${Number(row.flRecord.current_epoch)}`)
+      }
+      if (row?.flRecord?.summary?.seller_join_count) {
+        extras.push(`Joined ${row.flRecord.summary.seller_join_count}`)
+      }
+
+      return extras.length ? `${baseLabel} · ${extras.join(' · ')}` : baseLabel
+    },
+
+    canDownloadHeResult(row) {
+      const status = String(row?.heRecord?.pcp_status || '').toUpperCase()
+      return Boolean(row?.heRecord?.result_ready || status === 'PAM_PASSED' || status === 'COMPLETED')
+    },
+
+    canDownloadPreResult(row) {
+      const status = String(row?.preRecord?.pcp_status || '').toUpperCase()
+      return Boolean(row?.preRecord?.result_ready || status === 'PAM_PASSED' || status === 'COMPLETED')
+    },
+
+    canDownloadFlBuyerResult(row) {
+      const status = String(row?.flRecord?.pcp_status || '').toUpperCase()
+      return Boolean(row?.flRecord?.buyer_result_ready || status === 'PAM_PASSED' || status === 'COMPLETED')
+    },
+
+    getBuyerFlActionLabel(row) {
+      if (!row?.flRecord?.pcp_contract_id) {
+        return '创建合同'
+      }
+
+      const status = String(row?.flRecord?.pcp_status || '').toUpperCase()
+      if (status === 'ACTIVE') {
+        return '等待卖方加入'
+      }
+      if (status === 'WAITING_EPOCH_INPUT') {
+        return '等待 Epoch 输入'
+      }
+      if (status === 'PAMING') {
+        return '审计中'
+      }
+      if (status === 'PAM_PASSED' || status === 'COMPLETED') {
+        return '训练完成'
+      }
+      if (status === 'FAILED' || status === 'PAM_FAILED') {
+        return '流程失败'
+      }
+
+      return '合同已创建'
     },
 
     getStatusPillClass(row) {
@@ -1031,53 +1110,27 @@ export default {
         this.$message?.warning('请先选择 Top 模型和 Bottom 模型文件')
         return
       }
+      if (!String(this.flDialog.topModelFile.name || '').toLowerCase().endsWith('.zip')) {
+        this.$message?.warning('Top 模型初始包仅支持 zip 文件')
+        return
+      }
+      if (!String(this.flDialog.bottomModelFile.name || '').toLowerCase().endsWith('.zip')) {
+        this.$message?.warning('Bottom 模型初始包仅支持 zip 文件')
+        return
+      }
 
       const row = this.flDialog.row
       row.creatingFlContract = true
       this.flDialog.submitting = true
       try {
-        const [keyMaterial, teeResp] = await Promise.all([
-          flCrypto.generateFlKeyPair(),
-          axios.get(`${API_BASE}/api/privacy/fl/tee-materials`, {
-            params: { buyerId: row.buyer_address }
-          })
-        ])
-        const teeMaterials = teeResp.data?.item || {}
-        if (!teeMaterials.public_key || !teeMaterials.key_id) {
-          throw new Error('TEE 材料返回不完整')
-        }
-
-        const [topPayload, bottomPayload] = await Promise.all([
-          flCrypto.createFlPackagePayload({
-            file: this.flDialog.topModelFile,
-            teePublicKeyHex: teeMaterials.public_key,
-            teeKeyId: teeMaterials.key_id,
-            producerId: row.buyer_address,
-            taskId: `CONTRACT-${row.transaction_id}`,
-            contentType: 'torchscript',
-            logicalName: 'top_model'
-          }),
-          flCrypto.createFlPackagePayload({
-            file: this.flDialog.bottomModelFile,
-            teePublicKeyHex: teeMaterials.public_key,
-            teeKeyId: teeMaterials.key_id,
-            producerId: row.buyer_address,
-            taskId: `CONTRACT-${row.transaction_id}`,
-            contentType: 'model-bytes',
-            logicalName: 'bottom_model'
-          })
-        ])
+        const keyMaterial = await flCrypto.generateFlKeyPair()
 
         const formData = new FormData()
         formData.append('transactionId', row.transaction_id)
         formData.append('sellerIds', row.seller_address)
         formData.append('buyerResultPublicKey', keyMaterial.publicKeyHex)
-        formData.append('top_model_cipher_file', topPayload.cipherFile, topPayload.filenames.cipherFile)
-        formData.append('top_model_wrapped_key_file', topPayload.wrappedKeyFile, topPayload.filenames.wrappedKeyFile)
-        formData.append('top_model_meta_file', topPayload.metaFile, topPayload.filenames.metaFile)
-        formData.append('bottom_model_cipher_file', bottomPayload.cipherFile, bottomPayload.filenames.cipherFile)
-        formData.append('bottom_model_wrapped_key_file', bottomPayload.wrappedKeyFile, bottomPayload.filenames.wrappedKeyFile)
-        formData.append('bottom_model_meta_file', bottomPayload.metaFile, bottomPayload.filenames.metaFile)
+        formData.append('top_model_initial_package', this.flDialog.topModelFile, this.flDialog.topModelFile.name)
+        formData.append('bottom_model_initial_package', this.flDialog.bottomModelFile, this.flDialog.bottomModelFile.name)
 
         const response = await axios.post(`${API_BASE}/api/privacy/fl/create-contract`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
@@ -1103,7 +1156,7 @@ export default {
     },
 
     async downloadResult(row) {
-      if (!row?.transaction_id || !row.heRecord?.result_ready) {
+      if (!row?.transaction_id || !this.canDownloadHeResult(row)) {
         this.$message?.warning('当前结果尚不可下载')
         return
       }
@@ -1157,7 +1210,7 @@ export default {
     },
 
     async downloadPreResult(row) {
-      if (!row?.transaction_id || !row.preRecord?.result_ready) {
+      if (!row?.transaction_id || !this.canDownloadPreResult(row)) {
         this.$message?.warning('当前 PRE 结果尚不可下载')
         return
       }
@@ -1182,7 +1235,7 @@ export default {
     },
 
     async downloadFlResult(row) {
-      if (!row?.transaction_id || !row.flRecord?.buyer_result_ready) {
+      if (!row?.transaction_id || !this.canDownloadFlBuyerResult(row)) {
         this.$message?.warning('当前 Top 模型尚不可下载')
         return
       }

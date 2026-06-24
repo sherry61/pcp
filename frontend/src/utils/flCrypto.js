@@ -483,8 +483,20 @@ function parseJsonEntry(entries, path) {
   return JSON.parse(utf8Decode(requireEntry(entries, path)));
 }
 
+function tryParseJsonDocument(bufferLike) {
+  try {
+    return JSON.parse(utf8Decode(new Uint8Array(toArrayBuffer(bufferLike))));
+  } catch (error) {
+    return null;
+  }
+}
+
 function resolveFlResultExtension(contentType) {
   const normalized = String(contentType || '').trim().toLowerCase();
+
+  if (normalized === 'application/zip' || normalized === 'zip') {
+    return 'zip';
+  }
 
   if (normalized === 'torchscript' || normalized === 'model-bytes') {
     return 'pt';
@@ -536,6 +548,10 @@ function buildDefaultFlResultFilename({
     return `fl_gradient_${safeTransactionId}_batch_${normalizedBatchIndex}.${extension}`;
   }
 
+  if (normalizedRole === 'fl_gradient_epoch_bundle') {
+    return `fl_gradient_epoch_bundle_${safeTransactionId}.${extension}`;
+  }
+
   return `fl_result_${safeTransactionId}.${extension}`;
 }
 
@@ -545,6 +561,32 @@ async function decryptFlResultArchive({
 }) {
   const privateKeyMaterial = parseFlPrivateKeyMaterial(privateKeyText);
   const privateKey = await importRsaPrivateKeyFromPem(privateKeyMaterial.privateKeyPem);
+  const envelope = tryParseJsonDocument(encryptedTarBuffer);
+
+  if (envelope?.schema_version === 'pcc-envelope-v1') {
+    const resultDek = new Uint8Array(await decryptRsaOaep(
+      privateKey,
+      base64ToBytes(String(envelope.wrapped_key || ''))
+    ));
+    const plainBytes = new Uint8Array(await decryptAesGcm(
+      base64ToBytes(String(envelope.ciphertext || '')),
+      resultDek,
+      base64ToBytes(String(envelope.nonce || ''))
+    ));
+
+    return {
+      meta: {
+        content_type: envelope.content_type || 'application/octet-stream',
+        schema_version: envelope.schema_version,
+        encrypted_for: envelope.encrypted_for || '',
+        plaintext_sha256: envelope.plaintext_sha256 || ''
+      },
+      blob: new Blob([plainBytes], {
+        type: resolveFlResultMimeType(envelope.content_type)
+      })
+    };
+  }
+
   const entries = parseTarEntries(encryptedTarBuffer);
   parseJsonEntry(entries, 'manifest.json');
   const resultMeta = parseJsonEntry(entries, 'meta.json');

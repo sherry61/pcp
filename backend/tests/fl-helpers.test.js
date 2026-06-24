@@ -16,11 +16,11 @@ test('buildFlContractPayload maps buyer, sellers, and training params to PCP /fl
   const payload = buildFlContractPayload({
     transaction: {
       buyer_address: 'buyer_addr',
-      seller_address: 'seller_addr'
+      seller_address: 'seller_b'
     },
     businessContractId: 'CONTRACT-001',
-    sellerIds: ['seller_addr'],
-    buyerResultPublicKey: 'A1B2',
+    sellerIds: ['seller_a'],
+    buyerResultPublicKey: '2D2D2D2D2D424547494E205055424C4943204B45592D2D2D2D2D0A544553540A2D2D2D2D2D454E44205055424C4943204B45592D2D2D2D2D0A',
     maxEpochs: '3',
     learningRate: '0.01',
     batchSize: '16',
@@ -29,18 +29,22 @@ test('buildFlContractPayload maps buyer, sellers, and training params to PCP /fl
     dpClippingThreshold: '0.8'
   });
 
-  assert.deepEqual(payload, {
-    buyer_id: 'buyer_addr',
-    source_contract_id: 'CONTRACT-001',
-    seller_ids: 'seller_addr',
+  assert.equal(payload.buyer_id, 'buyer_addr');
+  assert.equal(payload.source_contract_id, 'CONTRACT-001');
+  assert.deepEqual(payload.seller_ids, ['seller_a']);
+  assert.match(payload.idempotency_key, /^fl-contract-CONTRACT-001-/);
+  assert.deepEqual(payload.training_params, {
     max_epochs: 3,
     learning_rate: 0.01,
     batch_size: 16,
     loss_function: 'BCE',
+    optimizer: 'sgd',
     dp_noise_scale: 0.2,
-    dp_clipping_threshold: 0.8,
-    buyer_result_public_key: 'A1B2'
+    dp_clipping_threshold: 0.8
   });
+  assert.equal(payload.buyer_result_public_key.algorithm, 'RSA-OAEP-SHA256');
+  assert.match(payload.buyer_result_public_key.key_id, /^buyer-result-key-/);
+  assert.equal(payload.buyer_result_public_key.public_key_pem, '-----BEGIN PUBLIC KEY-----\nTEST\n-----END PUBLIC KEY-----\n');
 });
 
 test('normalizeFlRecord and mapFlRecordRow preserve seller package state', () => {
