@@ -16,10 +16,14 @@ test('HE constants expose the only enabled delivery method and supported PCP enu
     'NOT_EXIST',
     'CREATED',
     'WAITING_INPUT',
+    'PAMING',
+    'COMPUTED',
+    'PAM_PASSED',
+    'PAM_FAILED',
     'QUEUED',
     'RUNNING',
-    'COMPLETED',
     'FAILED',
+    'COMPLETED',
     'AUDIT_FAILED'
   ]);
 });

@@ -11,5 +11,6 @@ test('PRE constants expose the delivery method, source archive extensions, and s
   assert.equal(DELIVERY_METHOD_PRE, 'pre');
   assert.deepEqual(PRE_ALLOWED_SOURCE_EXTENSIONS, ['.zip', '.tar', '.tar.gz', '.tgz']);
   assert.ok(PCP_PRE_STATUSES.includes('WAITING_INPUT'));
+  assert.ok(PCP_PRE_STATUSES.includes('PAM_PASSED'));
   assert.ok(PCP_PRE_STATUSES.includes('COMPLETED'));
 });
