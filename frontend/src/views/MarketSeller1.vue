@@ -40,11 +40,11 @@
               <span class="v">
                 <select v-model="a.pc_type" class="pc-select">
                   <option disabled value="">请选择类型</option>
-                  <option value="HE">HE</option>
-                  <option value="PRE">PRE</option>
-                  <option value="FL">FL</option>
-                  <option value="MPC">MPC</option>
-                  <option value="TEE">TEE</option>
+                  <option value="HE">同态加密</option>
+                  <option value="PRE">代理重加密</option>
+                  <option value="FL">联邦学习</option>
+                  <option value="MPC">安全多方计算</option>
+                  <option value="TEE">可信执行环境</option>
                 </select>
               </span>
             </div>

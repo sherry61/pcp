@@ -60,7 +60,7 @@
                     :disabled="row.heRecord?.public_keys_ready"
                     @click="uploadHePublicKeys(row)"
                   >
-                    {{ row.heRecord?.public_keys_ready ? '已完成' : '请求交付' }}
+                    {{ row.heRecord?.public_keys_ready ? '已申请' : '请求交付' }}
                   </el-button>
                   <el-button
                     v-if="isHeRow(row)"
@@ -187,18 +187,14 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="decryptDialog.visible" title="本地解密 HE 结果" width="620px">
+        <el-dialog v-model="decryptDialog.visible" title="下载交付结果" width="620px">
           <div v-if="decryptDialog.row" class="dialog-body">
             <div class="dialog-row">
-              <span class="dialog-label">交易ID</span>
-              <span>{{ decryptDialog.row.transaction_id }}</span>
-            </div>
-            <div class="dialog-row">
-              <span class="dialog-label">算法</span>
-              <span>{{ decryptDialog.algorithm }}</span>
+              <span class="dialog-label">交付算法</span>
+              <span>{{ getHeOperationLabel(decryptDialog.operation) }}</span>
             </div>
             <div class="dialog-row file-row">
-              <span class="dialog-label">私钥文件</span>
+              <span class="dialog-label">解密文件</span>
               <div class="file-action-group">
                 <input ref="hePrivateKeyInput" class="hidden-file-input" type="file" accept=".json" @change="onPrivateKeyFileChange" />
                 <el-button size="small" plain @click="openFileSelector('hePrivateKeyInput')">
@@ -210,14 +206,14 @@
               {{ decryptDialog.privateKeyFile.name }}
             </div>
             <div class="dialog-hint">
-              <span>请选择 `.json` 私钥文件，浏览器会在本地解密并直接导出结果。</span>
+              <span>请选择交付时下载的解密文件，系统会在本地解密并下载结果。</span>
             </div>
           </div>
 
           <template #footer>
             <el-button @click="closeDecryptDialog">取消</el-button>
             <el-button type="primary" :loading="decryptDialog.processing" @click="confirmDecryptResult">
-              解密并导出 CSV
+              解密并下载
             </el-button>
           </template>
         </el-dialog>
@@ -409,6 +405,7 @@ export default {
         visible: false,
         row: null,
         algorithm: '',
+        operation: '',
         encryptedText: '',
         privateKeyFile: null,
         processing: false
@@ -1049,6 +1046,10 @@ export default {
       return '-'
     },
 
+    getHeOperationLabel(operation) {
+      return String(operation || '').trim().toUpperCase() === 'MUL' ? '乘法' : '加法'
+    },
+
     formatMpcThreshold(row) {
       const threshold = row?.mpcRecord?.compute_params?.threshold
       return threshold === undefined || threshold === null || threshold === '' ? '-' : String(threshold)
@@ -1078,9 +1079,9 @@ export default {
         })
 
         await this.refreshHeStatus(row, false)
-        this.$message?.success('HE 公钥上传成功，私钥已下载到本地')
+        this.$message?.success('交付申请已提交，解密文件已下载')
       } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'HE 公钥上传失败'
+        const message = error?.response?.data?.message || error?.message || '交付申请提交失败'
         this.$message?.error(message)
       } finally {
         row.uploadingKeys = false
@@ -1174,6 +1175,7 @@ export default {
         this.decryptDialog.visible = true
         this.decryptDialog.row = row
         this.decryptDialog.algorithm = algorithm
+        this.decryptDialog.operation = row.heRecord?.selected_operation || ''
         this.decryptDialog.encryptedText = encryptedText
         this.decryptDialog.privateKeyFile = null
       } catch (error) {
@@ -1309,7 +1311,7 @@ export default {
 
     async confirmDecryptResult() {
       if (!this.decryptDialog.privateKeyFile || !this.decryptDialog.row) {
-        this.$message?.warning('请先选择私钥文件')
+        this.$message?.warning('请先选择解密文件')
         return
       }
 
@@ -1334,10 +1336,14 @@ export default {
           filename: `he_result_${this.decryptDialog.row.transaction_id}.csv`
         })
 
-        this.$message?.success('HE 结果已在浏览器内解密并导出')
+        this.$message?.success('交付结果已解密并下载')
         this.closeDecryptDialog()
       } catch (error) {
-        this.$message?.error(error?.message || '本地解密失败')
+        const rawMessage = error?.message || ''
+        const message = /match|mismatch|private key|Unsupported HE key file algorithm|transactionId/i.test(rawMessage)
+          ? '解密文件与当前交易不匹配，请重新选择。'
+          : (rawMessage || '结果解密失败')
+        this.$message?.error(message)
       } finally {
         this.decryptDialog.processing = false
       }
@@ -1347,6 +1353,7 @@ export default {
       this.decryptDialog.visible = false
       this.decryptDialog.row = null
       this.decryptDialog.algorithm = ''
+      this.decryptDialog.operation = ''
       this.decryptDialog.encryptedText = ''
       this.decryptDialog.privateKeyFile = null
       this.decryptDialog.processing = false

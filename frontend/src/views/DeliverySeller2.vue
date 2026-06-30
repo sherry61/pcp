@@ -149,34 +149,17 @@
           </el-table>
         </div>
 
-        <el-dialog v-model="heDialog.visible" title="发起 HE 计算" width="620px">
+        <el-dialog v-model="heDialog.visible" title="交付 - 同态加密" width="620px">
           <div v-if="heDialog.asset" class="dialog-body">
-            <div class="dialog-row">
-              <span class="dialog-label">交易ID</span>
-              <span class="dialog-value">{{ heDialog.asset.transaction_id }}</span>
-            </div>
-
-            <div class="dialog-grid">
+            <div class="dialog-grid dialog-grid-single">
               <div class="dialog-field">
-                <span class="dialog-label">加密算法</span>
-                <el-select v-model="heDialog.encType" placeholder="请选择算法" @change="handleEncTypeChange">
+                <span class="dialog-label">交付算法</span>
+                <el-select v-model="heDialog.operation" placeholder="请选择交付算法">
                   <el-option
-                    v-for="item in heEncTypeOptions"
-                    :key="item"
-                    :label="item"
-                    :value="item"
-                  />
-                </el-select>
-              </div>
-
-              <div class="dialog-field">
-                <span class="dialog-label">操作符</span>
-                <el-select v-model="heDialog.operation" placeholder="请选择操作符">
-                  <el-option
-                    v-for="item in heOperationOptions"
-                    :key="item"
-                    :label="item"
-                    :value="item"
+                    v-for="item in heOperationDisplayOptions"
+                    :key="item.value"
+                    :label="item.label"
+                    :value="item.value"
                   />
                 </el-select>
               </div>
@@ -184,7 +167,7 @@
 
             <div class="dialog-grid">
               <div class="dialog-field">
-                <span class="dialog-label">CSV 文件 1</span>
+                <span class="dialog-label">文件1</span>
                 <div class="file-action-group">
                   <input ref="heCsvFile1Input" class="hidden-file-input" type="file" accept=".csv" @change="onDialogFileChange('file1', $event)" />
                   <el-button size="small" plain @click="openFileSelector('heCsvFile1Input')">
@@ -195,7 +178,7 @@
               </div>
 
               <div class="dialog-field">
-                <span class="dialog-label">CSV 文件 2</span>
+                <span class="dialog-label">文件2</span>
                 <div class="file-action-group">
                   <input ref="heCsvFile2Input" class="hidden-file-input" type="file" accept=".csv" @change="onDialogFileChange('file2', $event)" />
                   <el-button size="small" plain @click="openFileSelector('heCsvFile2Input')">
@@ -205,17 +188,12 @@
                 <div v-if="heDialog.file2" class="file-name inline-file-name">{{ heDialog.file2.name }}</div>
               </div>
             </div>
-
-            <div class="dialog-hint compact-hint">
-              <span>上传两个原始数字 CSV，浏览器会使用当前交易绑定的 HE 公钥先加密，再提交计算。</span>
-              <span>算法与操作符固定联动：Paillier 仅支持 ADD，ElGamal 仅支持 MUL。</span>
-            </div>
           </div>
 
           <template #footer>
             <el-button @click="closeHeDialog">取消</el-button>
             <el-button type="primary" :loading="heDialog.submitting" @click="submitHeDelivery">
-              发起计算
+              执行交付
             </el-button>
           </template>
         </el-dialog>
@@ -507,11 +485,11 @@ export default {
     }
   },
   computed: {
-    heEncTypeOptions() {
-      return heConfig.HE_ENC_TYPE_OPTIONS
-    },
-    heOperationOptions() {
-      return heCrypto.resolveOperationOptions(this.heDialog.encType)
+    heOperationDisplayOptions() {
+      return [
+        { label: '加法', value: 'ADD' },
+        { label: '乘法', value: 'MUL' }
+      ]
     }
   },
   methods: {
@@ -1248,8 +1226,8 @@ async verifyContract(assetRow) {
 
         this.heDialog.visible = true
         this.heDialog.asset = row
-        this.heDialog.encType = row.heRecord?.selected_enc_type || heConfig.HE_ENC_TYPE_OPTIONS[0]
-        this.heDialog.operation = row.heRecord?.selected_operation || heCrypto.resolveOperationOptions(this.heDialog.encType)[0]
+        this.heDialog.encType = this.resolveHeEncTypeByOperation(row.heRecord?.selected_operation || 'ADD')
+        this.heDialog.operation = row.heRecord?.selected_operation || 'ADD'
         this.heDialog.file1 = null
         this.heDialog.file2 = null
       } catch (error) {
@@ -1260,11 +1238,8 @@ async verifyContract(assetRow) {
       }
     },
 
-    handleEncTypeChange() {
-      const allowedOperations = heCrypto.resolveOperationOptions(this.heDialog.encType)
-      if (!allowedOperations.includes(this.heDialog.operation)) {
-        [this.heDialog.operation] = allowedOperations
-      }
+    resolveHeEncTypeByOperation(operation) {
+      return String(operation || '').trim().toUpperCase() === 'MUL' ? 'ElGamal' : 'Paillier'
     },
 
     onDialogFileChange(field, event) {
@@ -1275,15 +1250,18 @@ async verifyContract(assetRow) {
     async submitHeDelivery() {
       if (!this.heDialog.asset) return
       if (!this.heDialog.file1 || !this.heDialog.file2) {
-        this.$message?.warning('请先选择两个 CSV 文件')
+        this.$message?.warning('请先选择文件1和文件2')
         return
       }
 
       this.heDialog.submitting = true
       try {
-        const publicKey = heCrypto.selectHePublicKey(this.heDialog.asset.heRecord, this.heDialog.encType)
+        const encType = this.resolveHeEncTypeByOperation(this.heDialog.operation)
+        this.heDialog.encType = encType
+
+        const publicKey = heCrypto.selectHePublicKey(this.heDialog.asset.heRecord, encType)
         if (!publicKey) {
-          throw new Error(`缺少 ${this.heDialog.encType} 对应的公钥`)
+          throw new Error(`缺少 ${encType} 对应的公钥`)
         }
 
         const [file1Text, file2Text] = await Promise.all([
@@ -1292,12 +1270,12 @@ async verifyContract(assetRow) {
         ])
         const [encryptedFile1Text, encryptedFile2Text] = await Promise.all([
           heCrypto.encryptHeCsv({
-            algorithm: this.heDialog.encType,
+            algorithm: encType,
             csvText: file1Text,
             publicKey
           }),
           heCrypto.encryptHeCsv({
-            algorithm: this.heDialog.encType,
+            algorithm: encType,
             csvText: file2Text,
             publicKey
           })
@@ -1305,7 +1283,7 @@ async verifyContract(assetRow) {
 
         const formData = new FormData()
         formData.append('transactionId', this.heDialog.asset.transaction_id)
-        formData.append('encType', this.heDialog.encType)
+        formData.append('encType', encType)
         formData.append('operation', this.heDialog.operation)
         formData.append(
           'file1',

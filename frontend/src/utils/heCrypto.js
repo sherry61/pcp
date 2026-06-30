@@ -52,9 +52,10 @@ function sanitizeFilenameSegment(value, fallback = 'unknown') {
 }
 
 function buildPrivateKeyFilename({ algorithm, transactionId }) {
-  const algorithmSlug = getAlgorithmSlug(algorithm);
   const safeTransactionId = sanitizeFilenameSegment(transactionId);
-  return `he-${algorithmSlug}-private-${safeTransactionId}.json`;
+  const normalizedAlgorithm = normalizeAlgorithmName(algorithm);
+  const operationLabel = normalizedAlgorithm === 'ElGamal' ? '乘法' : '加法';
+  return `交付结果解密文件-${operationLabel}-交易${safeTransactionId}.json`;
 }
 
 function buildPublicKeyFilename({ algorithm, transactionId }) {
