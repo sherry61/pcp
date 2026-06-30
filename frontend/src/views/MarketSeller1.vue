@@ -253,7 +253,7 @@ export default {
     .split(",")
     .map(s => s.trim())
     .filter(Boolean)
-    .map(s => (s === "所有权" ? "所有" : s));
+    .map(s => (s === "持有权" ? "持有" : s));
 
   const operationsStr = operationsArr.join(",");
 
@@ -290,11 +290,11 @@ export default {
     // --- Step 3: 处理所有链上交易（所有权和使用权）---
 
     const qualityList = qualityStr.split(',').map(q => q.trim());
-    let hasOwnership = qualityList.includes('所有权');
+    let hasOwnership = qualityList.includes('持有权');
 
     // 处理使用权 (BuyPermission)
     for (const rightType of qualityList) {
-      if (rightType === '所有权') continue; // 所有权单独处理
+      if (rightType === '持有权') continue; // 所有权单独处理
 
       const permissionPayload = {
         owner: asset.buyer_address,

@@ -1,7 +1,7 @@
 <template>
   <div class="login-page">
     <div class="login-container">
-      <h2 class="login-title">数字资产交易平台</h2>
+      <h2 class="login-title">基于区块链的数字资产流通系统</h2>
       <form @submit.prevent="login">
         <div class="form-group">
           <label for="username">用户名:</label>

@@ -131,7 +131,45 @@
                 <input type="file" id="file" @change="handleFileChange" required />
               </div>
             </div>
+            <div class="form-row">
+  <div class="form-group">
+    <button
+      type="button"
+      class="classify-btn"
+      @click="generateOmniPrint"
+      :disabled="form.fingerprintLoading || !form.file"
+    >
+      {{ form.fingerprintLoading ? '生成中...' : '生成数字指纹' }}
+    </button>
+  </div>
+
+  <div class="form-group">
+    <label>数字指纹</label>
+    <input
+      type="text"
+      v-model="form.fingerprint"
+      readonly
+      placeholder="点击生成数字指纹后自动填入"
+    />
+  </div>
+</div>
             
+    
+
+    <div class="form-group">
+  <label>
+    <span class="required-asterisk">*</span>
+    数字摘要文件
+  </label>
+
+  <input
+    type="file"
+    accept=".json"
+    @change="handleRecordsJsonChange"
+  />
+
+</div>
+
 <div class="form-row">
   <div class="form-group">
     <label for="asset-category">
@@ -169,7 +207,7 @@
       type="button"
       class="classify-btn"
       @click="analyzeAssetCombined"
-:disabled="classifyLoading || !form.file || !form.analysisMethod"
+:disabled="classifyLoading || !form.analysisMethod || summaryRecords.length === 0"
     >
       {{ classifyLoading ? '分类中...' : '分类分级' }}
     </button>
@@ -259,7 +297,7 @@
             <div class="form-row">
               
               <div class="form-group">
-                <el-checkbox v-model="form.isSellBody">允许出售所有权</el-checkbox>
+                <el-checkbox v-model="form.isSellBody">允许出售持有权</el-checkbox>
               </div>
               <div class="form-group">
                 <el-checkbox v-model="form.isSellReadRight">允许出售经营权</el-checkbox>
@@ -284,7 +322,7 @@
 </el-cascader>-->
 
               <!-- 这里使用el组件的级联选项添加一个资产交易地点，省市区 -->
-              <label class="full-width-label left-align">资产交易地点设置</label>
+              <!--<label class="full-width-label left-align">资产交易地点设置</label>
               <el-cascader v-model="selectedRegionOptions" :options="regionData" :props="cascaderProps"
                 @change="handleRegionChange" placeholder="请选择资产交易地点" clearable />
               <div class="form-group full-width">
@@ -305,7 +343,7 @@
                   :prefix-icon="'el-icon-time'" :clear-icon="'el-icon-circle-close'" :disabled-date="disabledEndDate"
                   :disabled-time="disabledEndTime" :align="left" :popper-append-to-body="true" :transfer="true"
                   :popper-options="{ boundariesElement: 'body' }" :scroll-to-option="true" />
-              </div>
+              </div> -->
 
 
             </div>
@@ -335,14 +373,7 @@
             <p><strong>模型选择:</strong> 
   {{ form.modelSelection === 'weighted_average' ? '加权平均' : form.modelSelection }}
 </p>
-            <p><strong>证书选择:</strong>
-              <select v-model="form.selectedCertificate" required>
-                <option value="">请选择证书</option>
-                <option v-for="certificate in certificates" :key="certificate.cert" :value="certificate.cert">
-                  {{ certificate.cert }}
-                </option>
-              </select>
-            </p>
+            
             <div class="form-group centered-button">
               <button @click="confirmForm" style="margin-right: 20px;">确认</button>
               <button @click="cancelForm">取消</button>
@@ -402,11 +433,8 @@
                 <p :class="{ 'success-text': blockchainSuccess, 'error-text': !blockchainSuccess }">
                   <strong>长安链返回信息:</strong> {{ blockchainResponseData.message || 'Mint 接口调用完成，但状态未知' }}
                 </p>
-                <p v-if="blockchainSuccess">
-
-                  <strong>Result:</strong> {{ blockchainResponseData.result }}
-                </p>
-                <p v-else-if="!blockchainSuccess" class="error-text">
+              
+                <p v-if="!blockchainSuccess" class="error-text">
                   Mint 接口调用失败，详细信息请检查返回数据
                 </p>
               </div>
@@ -578,7 +606,16 @@ gradingMethods: [
         modelSelection: '',
         analysisMethod: '',
 analysisResultText: '',
+fingerprint: '',
+fingerprintBits: '',
+fingerprintLoading: false,
       },
+
+      summarySourceFile: '',
+summaryRecords: [],
+summaryRecordsFileName: '',
+classificationRationale: '',
+gradeRationale: '',
 
       isQuantityLocked: false, // 控制数量输入框是否可编辑
 
@@ -739,7 +776,7 @@ if (indivisibleRawSet.has(raw)) return 'WH';
   this.form.industry = this.mapIndustryTo3(raw);
 
   // 3) 证书逻辑
-  this.fetchCertificates(this.form.industry);
+  //this.fetchCertificates(this.form.industry);
 
   // 4) 数量锁定：只有 WH 不可分割
   if (this.form.industry === 'WH') {
@@ -751,7 +788,110 @@ if (indivisibleRawSet.has(raw)) return 'WH';
 },
 
 
+async generateOmniPrint() {
+  if (!this.form.file) {
+    this.$message?.warning('请先选择文件');
+    return;
+  }
 
+  this.form.fingerprintLoading = true;
+
+  try {
+    const fd = new FormData();
+    fd.append('file', this.form.file);
+    fd.append('assetId', this.form.assetName || `asset-${Date.now()}`);
+
+    const res = await axios.post(
+      'http://10.112.47.214:3000/api/omniprint/fingerprint',
+      fd,
+      {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 300000
+      }
+    );
+
+    if (!res.data?.success) {
+      throw new Error(res.data?.message || '数字指纹生成失败');
+    }
+
+    this.form.fingerprint = res.data.fingerprint;
+    this.form.fingerprintBits = res.data.fingerprint_bits;
+
+    // 如果你想完全替换原来的哈希标识，就把 hashValue 也设置成新指纹
+    this.hashValue = res.data.fingerprint;
+
+    this.$message?.success('数字指纹生成成功');
+
+  } catch (err) {
+    if (err.response?.status === 409) {
+      this.$message?.error('发现相似资产，不能重复登记');
+      console.error('相似资产:', err.response.data?.similarAssets);
+    } else {
+      this.$message?.error(
+        err.response?.data?.message ||
+        err.message ||
+        '数字指纹生成失败'
+      );
+    }
+
+    this.form.fingerprint = '';
+    this.hashValue = '';
+  } finally {
+    this.form.fingerprintLoading = false;
+  }
+},
+
+async handleRecordsJsonChange(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  try {
+    const text = await file.text();
+    const json = JSON.parse(text);
+
+    if (!Array.isArray(json.records) || json.records.length === 0) {
+      throw new Error('records.json 中 records 不能为空');
+    }
+
+    const invalid = json.records.some(item => !item.extracted_text);
+    if (invalid) {
+      throw new Error('records 中每条记录都必须包含 extracted_text');
+    }
+
+    this.summarySourceFile = json.source_file || file.name;
+    this.summaryRecords = json.records;
+    this.summaryRecordsFileName = file.name;
+
+    this.$message?.success('records.json 读取成功');
+  } catch (err) {
+    console.error('读取 records.json 失败:', err);
+    this.summarySourceFile = '';
+    this.summaryRecords = [];
+    this.summaryRecordsFileName = '';
+    this.$message?.error(err.message || 'records.json 格式错误');
+  }
+},
+
+async fetchDefaultRegisterCertInfo() {
+  if (!this.userId) {
+    throw new Error('用户ID缺失，无法获取上链默认证书');
+  }
+
+  const res = await axios.get(
+    'http://10.112.47.214:3000/api/default-register-cert-info',
+    {
+      params: {
+        userId: this.userId
+      }
+    }
+  );
+
+  if (!res.data?.success || !res.data.cert?.address) {
+    throw new Error(res.data?.message || '未获取到上链默认证书地址');
+  }
+
+  return res.data.cert;
+},
        // 根据资产领域获取证书
     async fetchCertificates(industry) {
       try {
@@ -1025,7 +1165,7 @@ async confirmForm() {
   formData.append('file', this.form.file);
   formData.append('algorithm', this.form.algorithm);
 
-  console.log('选中的证书名称:', this.form.selectedCertificate); // 输出 selectedCertificate 的值
+  /*console.log('选中的证书名称:', this.form.selectedCertificate); // 输出 selectedCertificate 的值
 
   // 调用获取证书地址的方法
   await this.getCertAddr(this.form.selectedCertificate);
@@ -1037,7 +1177,28 @@ async confirmForm() {
       this.errorMessage = '无法获取证书地址，请检查证书登记信息';
     this.showUnifiedModal = false; // 隐藏统一模态框
     return; // 中止后续流程
-  }
+  }*/
+  try {
+  const defaultCert = await this.fetchDefaultRegisterCertInfo();
+
+  this.form.selectedCertificate = defaultCert.certificate_name;
+  this.certAddr = defaultCert.address;
+
+  console.log('默认上链证书:', defaultCert.certificate_name);
+  console.log('默认上链证书地址:', this.certAddr);
+} catch (error) {
+  console.error('获取上链默认证书失败:', error);
+
+  this.showError = true;
+  this.errorMessage =
+    error.response?.data?.message ||
+    error.message ||
+    '未设置上链默认证书，请先到个人中心设置';
+
+  this.showUnifiedModal = false;
+  this.loadingHash = false;
+  return;
+}
 
   try {
     const response = await axios.post('/api/generate-hash', formData, {
@@ -1105,7 +1266,7 @@ async confirmForm() {
   }
 },
 
-async analyzeAssetCombined() {
+/*async analyzeAssetCombined() {
   this.classifyError = '';
   this.gradingError = '';
 
@@ -1166,6 +1327,104 @@ async analyzeAssetCombined() {
     this.form.assetCategory = '';
     this.form.assetType = '';
     this.form.analysisResultText = '';
+  } finally {
+    this.classifyLoading = false;
+  }
+},*/
+async analyzeAssetCombined() {
+  this.classifyError = '';
+  this.gradingError = '';
+
+  if (!this.form.analysisMethod) {
+    this.classifyError = '请先选择分类分级方法。';
+    return;
+  }
+
+  if (!this.summaryRecords || this.summaryRecords.length === 0) {
+    this.classifyError = '请先上传 records.json。';
+    return;
+  }
+
+  this.classifyLoading = true;
+
+  try {
+    const classificationMethods = [
+      'type',
+      'income',
+      'liquidity',
+      'value-stability'
+    ];
+
+    const gradingMethods = [
+      'harm',
+      'security',
+      'sensitivity',
+      'vulnerability'
+    ];
+
+    let endpoint = '';
+
+    if (classificationMethods.includes(this.form.analysisMethod)) {
+      endpoint = `/api/summary-records/combined/classification/${this.form.analysisMethod}`;
+    } else if (gradingMethods.includes(this.form.analysisMethod)) {
+      endpoint = `/api/summary-records/combined/grading/${this.form.analysisMethod}`;
+    } else {
+      throw new Error('分类分级方法无效');
+    }
+
+    const response = await axios.post(
+      `http://10.112.47.214:3000${endpoint}`,
+      {
+        source_file: this.summarySourceFile,
+        records: this.summaryRecords,
+        model: 'qwen3:8b',
+        embedding_model: 'bge-m3',
+        rag_top_k: 3,
+        rag_recall_k: 20,
+        record_limit: 100,
+        base_url: 'http://127.0.0.1:11434'
+      },
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 300000
+      }
+    );
+
+    const entries = response.data.entries || [];
+    const first = entries[0] || {};
+
+    const classification = first.classification || '';
+    const grade = first.grade || '';
+
+    if (!classification || !grade) {
+      throw new Error('分类分级结果为空');
+    }
+
+    this.form.assetCategory = classification;
+    this.form.assetType = grade;
+    this.form.analysisResultText = `资产类别：${classification}；资产等级：${grade}`;
+
+    this.classificationRationale = first.classification_rationale || '';
+    this.gradeRationale = first.grade_rationale || '';
+
+    this.form.classificationMethod = response.data.classification_method_code || '';
+    this.form.gradingMethod = response.data.grading_method_code || '';
+
+    this.$message?.success(`分类分级完成：${classification} / ${grade}`);
+  } catch (error) {
+    console.error('分类分级失败:', error);
+
+    this.classifyError =
+      error.response?.data?.message ||
+      error.response?.data?.detail ||
+      error.message ||
+      '分类分级失败';
+
+    this.form.assetCategory = '';
+    this.form.assetType = '';
+    this.form.analysisResultText = '';
+    this.classificationRationale = '';
+    this.gradeRationale = '';
   } finally {
     this.classifyLoading = false;
   }

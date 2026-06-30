@@ -754,49 +754,40 @@ await Promise.all(
     /* =========================
      * ✅ 提交申请交付（调用新接口 /api/delivery/request-vm）
      * ========================= */
-    async submitRequestDelivery() {
-      const formRef = this.$refs.requestFormRef;
-      if (!formRef) return;
+    async submitRequestDelivery(asset) {
+  try {
+    const response = await axios.post(
+      'http://10.112.47.214:3000/api/delivery/request-secure',
+      {
+        transactionId: asset.transaction_id,
+        buyerAddress: asset.buyer_address,
+        sellerAddress: asset.seller_address,
+        assetId: asset.file_hash,
+        vmCpu: 4,
+        vmMemoryMb: 4096
+      },
+      {
+        timeout: 30000
+      }
+    );
 
-      formRef.validate(async valid => {
-        if (!valid) return;
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || '申请交付失败');
+    }
 
-        this.requestSubmitting = true;
-        if (this.currentRowRef) this.currentRowRef.requesting = true;
+    this.$message.success('交付申请已提交，等待卖家确认');
 
-        try {
-          await axios.post('http://10.112.47.214:3000/api/delivery/request-vm', {
-            transaction_id: this.requestForm.transaction_id,
-            buyer_address: this.requestForm.buyer_address,
-            seller_address: this.requestForm.seller_address,
-            vm_name: this.requestForm.vm_name,
-            vm_cpu: this.requestForm.vm_cpu,
-            vm_memory_mb: this.requestForm.vm_memory_mb,
-            note: this.requestForm.note
-          });
-
-          this.$message.success('交付申请已提交（待卖方审批）');
-          this.requestDialogVisible = false;
-
-          // 按钮文案（可选）
-          if (this.currentRowRef) this.currentRowRef.requestBtnText = '已申请';
-        } catch (e) {
-          // 处理后端 409：重复提交
-          const status = e?.response?.status;
-          if (status === 409) {
-            this.$message.warning('该交易已提交过交付申请，请勿重复提交');
-            this.requestDialogVisible = false;
-            if (this.currentRowRef) this.currentRowRef.requestBtnText = '已申请';
-          } else {
-            console.error('[submitRequestDelivery] 申请失败:', e?.message || e);
-            this.$message.error('申请交付失败');
-          }
-        } finally {
-          this.requestSubmitting = false;
-          if (this.currentRowRef) this.currentRowRef.requesting = false;
-        }
-      });
-    },
+    if (this.fetchPurchasedAssets) {
+      await this.fetchPurchasedAssets();
+    }
+  } catch (error) {
+    this.$message.error(
+      error.response?.data?.message ||
+      error.message ||
+      '申请交付失败'
+    );
+  }
+},
 
     /* =========================
      * 下载逻辑（复用你原系统）

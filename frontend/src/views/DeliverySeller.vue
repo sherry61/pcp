@@ -723,37 +723,40 @@ if (contractObj.transaction_id) formData.append('transactionId', contractObj.tra
 
 async confirmDelivery(asset) {
   if (!asset?.transaction_id) return;
-  if (!asset.buyerDeliveryRequested) return;
 
   asset.confirmingDelivery = true;
   asset.deliveryConfirmMsg = '';
 
   try {
-    const vmRes = await axios.post('http://10.112.47.214:3000/api/delivery/run-vm', {
-      transactionId: asset.transaction_id,
-      sellerAddress: asset.seller_address,
-      buyerAddress: asset.buyer_address,
-      assetId: asset.file_hash
-    });
+    const response = await axios.post(
+      'http://10.112.47.214:3000/api/delivery/secure-confirm',
+      {
+        transactionId: asset.transaction_id
+      },
+      {
+        timeout: 300000
+      }
+    );
 
-    if (!vmRes?.data?.success) {
-      throw new Error(vmRes?.data?.message || '虚拟机创建失败');
+    if (!response.data?.success) {
+      throw new Error(response.data?.message || '确认交付失败');
     }
 
-    console.log('虚拟机创建结果:', vmRes.data.vmResult);
+    asset.deliveryConfirmMsg = `虚机已启动：${response.data.vmId}`;
+    asset.vmId = response.data.vmId;
+    asset.vmStatus = response.data.status;
 
-    asset.deliveryConfirmMsg = '已触发虚拟机创建';
-    asset.buyerDeliveryRequested = false;
+    this.$message.success('确认交付成功，虚机已启动，密钥协商已完成');
 
-    this.$message?.success('确认交付成功，虚拟机创建任务已触发');
-  } catch (e) {
+    await this.fetchRequestedAssets();
+  } catch (error) {
     const msg =
-      e?.response?.data?.message ||
-      e?.message ||
-      '确认失败';
+      error.response?.data?.message ||
+      error.message ||
+      '确认交付失败';
 
-    this.$message?.error(`确认交付失败: ${msg}`);
-    console.error('confirmDelivery error:', e);
+    asset.deliveryConfirmMsg = msg;
+    this.$message.error(msg);
   } finally {
     asset.confirmingDelivery = false;
   }

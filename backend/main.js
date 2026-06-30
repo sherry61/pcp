@@ -46,10 +46,11 @@ const REMOTE_FL_BASE_URL =
 const FL_MODEL_DIR =
   process.env.FL_MODEL_DIR || '/home/super/r/localdata/fl_models';
 const ASSET_ANALYSIS_BASE_URL =
-  process.env.ASSET_ANALYSIS_BASE_URL || 'http://10.112.47.214:8002';
+  process.env.ASSET_ANALYSIS_BASE_URL || 'http://10.112.47.214:8003';
 const PRE_UPLOAD_DIR = process.env.PRE_UPLOAD_DIR || '/home/super/r/localdata/pre_uploads';
 const DIGITAL_CONTRACT_BASE_URL =
   process.env.DIGITAL_CONTRACT_BASE_URL || 'http://10.112.14.6:18080/api';
+const SUMMARY_API_BASE = 'http://10.112.47.214:8020';
 
  
 // 缓存 TTL
@@ -3147,6 +3148,470 @@ app.post('/api/digital-contract/verify', async (req, res) => {
       error: err.message
     });
   }
+});
+
+
+const OMNIPRINT_BASE = {
+  text: 'http://10.112.47.214:8110',
+  image: 'http://10.112.47.214:8111',
+  audio: 'http://10.112.47.214:8112',
+  video: 'http://10.112.47.214:8113'
+};
+
+function detectOmniPrintType(file) {
+  const mime = file.mimetype || '';
+  const name = file.originalname || '';
+
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('audio/')) return 'audio';
+  if (mime.startsWith('video/')) return 'video';
+
+  if (/\.(png|jpg|jpeg|bmp|webp)$/i.test(name)) return 'image';
+  if (/\.(mp3|wav|flac|m4a)$/i.test(name)) return 'audio';
+  if (/\.(mp4|avi|mov|mkv)$/i.test(name)) return 'video';
+
+  return 'text';
+}
+
+app.post('/api/omniprint/fingerprint', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: '缺少文件'
+      });
+    }
+
+    const assetId = req.body.assetId || `asset-${Date.now()}`;
+    const type = detectOmniPrintType(req.file);
+
+    let payload = {
+      asset_id: assetId,
+      save_output: false
+    };
+
+    let tempPath = '';
+
+    if (type === 'text') {
+      payload.text = req.file.buffer.toString('utf8');
+    } else {
+      const uploadDir = '/tmp/omniprint_uploads';
+      await fs.mkdir(uploadDir, { recursive: true });
+
+      tempPath = path.join(
+        uploadDir,
+        `${Date.now()}_${req.file.originalname}`
+      );
+
+      await fs.writeFile(tempPath, req.file.buffer);
+
+      if (type === 'image') payload.image_path = tempPath;
+      if (type === 'audio') payload.audio_path = tempPath;
+      if (type === 'video') payload.video_path = tempPath;
+    }
+
+    const remoteResp = await axios.post(
+      `${OMNIPRINT_BASE[type]}/fingerprint`,
+      payload,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 300000,
+        validateStatus: () => true
+      }
+    );
+
+    if (tempPath) {
+      fs.unlink(tempPath).catch(() => {});
+    }
+
+    if (remoteResp.status === 409) {
+      return res.status(409).json({
+        success: false,
+        message: '发现相似资产，未生成新数字指纹',
+        similarAssets: remoteResp.data
+      });
+    }
+
+    if (remoteResp.status < 200 || remoteResp.status >= 300) {
+      return res.status(remoteResp.status).json({
+        success: false,
+        message: 'OmniPrint 指纹生成失败',
+        remote: remoteResp.data
+      });
+    }
+
+    return res.json({
+      success: true,
+      type,
+      fingerprint: remoteResp.data.fingerprint,
+      fingerprint_bits: remoteResp.data.fingerprint_bits,
+      raw: remoteResp.data
+    });
+
+  } catch (err) {
+    console.error('[omniprint/fingerprint] error:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'OmniPrint 服务异常',
+      error: err.message
+    });
+  }
+});
+
+
+app.post('/api/summary-records/combined/:kind/:method', async (req, res) => {
+  try {
+    const { kind, method } = req.params;
+
+    const allowedClassification = [
+      'type',
+      'income',
+      'liquidity',
+      'value-stability'
+    ];
+
+    const allowedGrading = [
+      'harm',
+      'security',
+      'sensitivity',
+      'vulnerability'
+    ];
+
+    if (!['classification', 'grading'].includes(kind)) {
+      return res.status(400).json({
+        success: false,
+        message: 'kind 参数无效'
+      });
+    }
+
+    if (kind === 'classification' && !allowedClassification.includes(method)) {
+      return res.status(400).json({
+        success: false,
+        message: '分类方法无效'
+      });
+    }
+
+    if (kind === 'grading' && !allowedGrading.includes(method)) {
+      return res.status(400).json({
+        success: false,
+        message: '分级方法无效'
+      });
+    }
+
+    if (!Array.isArray(req.body.records) || req.body.records.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'records 不能为空'
+      });
+    }
+
+    const targetUrl =
+      `${SUMMARY_API_BASE}/api/summary-records/combined/${kind}/${method}`;
+
+    const remoteResp = await axios.post(
+      targetUrl,
+      req.body,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 300000,
+        validateStatus: () => true
+      }
+    );
+
+    return res.status(remoteResp.status).json(remoteResp.data);
+  } catch (err) {
+    console.error('[summary-records/combined] error:', err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || 'summary-records 服务异常'
+    });
+  }
+});
+
+app.post('/api/save-default-cert', (req, res) => {
+  const {
+    userId,
+    defaultRegisterCert,
+    defaultTradeCert
+  } = req.body;
+
+  if (!userId) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 userId'
+    });
+  }
+
+  const sql = `
+    UPDATE user_management.users
+    SET default_register_cert = ?,
+        default_trade_cert = ?
+    WHERE id = ?
+  `;
+
+  db.query(
+    sql,
+    [
+      defaultRegisterCert || null,
+      defaultTradeCert || null,
+      userId
+    ],
+    (err, result) => {
+      if (err) {
+        console.error('保存默认证书失败:', err);
+        return res.status(500).json({
+          success: false,
+          message: '保存默认证书失败',
+          error: err.message
+        });
+      }
+
+      return res.json({
+        success: true,
+        message: '默认证书保存成功'
+      });
+    }
+  );
+});
+
+app.get('/api/default-cert', (req, res) => {
+  const userId = req.query.userId;
+
+  if (!userId) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 userId'
+    });
+  }
+
+  const sql = `
+    SELECT default_register_cert,
+           default_trade_cert
+    FROM user_management.users
+    WHERE id = ?
+    LIMIT 1
+  `;
+
+  db.query(sql, [userId], (err, rows) => {
+    if (err) {
+      console.error('查询默认证书失败:', err);
+      return res.status(500).json({
+        success: false,
+        message: '查询默认证书失败',
+        error: err.message
+      });
+    }
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({
+        success: false,
+        message: '用户不存在'
+      });
+    }
+
+    return res.json({
+      success: true,
+      default_register_cert: rows[0].default_register_cert || '',
+      default_trade_cert: rows[0].default_trade_cert || ''
+    });
+  });
+});
+
+app.get('/api/user-certificates', (req, res) => {
+  const userId = req.query.userId;
+
+  if (!userId) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 userId'
+    });
+  }
+
+  const sql = `
+    SELECT
+      certificate_name AS cert,
+      org AS organization,
+      address,
+      sign_cert_path,
+      tls_cert_path,
+      pem_path,
+      expires_at,
+      created_at
+    FROM certificate_registry
+    WHERE user_id = ?
+    ORDER BY created_at DESC
+  `;
+
+  db.query(sql, [userId], (err, rows) => {
+    if (err) {
+      console.error('查询用户证书失败:', err);
+      return res.status(500).json({
+        success: false,
+        message: '查询用户证书失败',
+        error: err.message
+      });
+    }
+
+    return res.json({
+      success: true,
+      certificates: rows || []
+    });
+  });
+});
+
+// 查询默认上链证书完整信息
+app.get('/api/default-register-cert-info', (req, res) => {
+  const userId = req.query.userId;
+
+  if (!userId) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 userId'
+    });
+  }
+
+  const userSql = `
+    SELECT default_register_cert
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+  `;
+
+  userDb.query(userSql, [userId], (err, userRows) => {
+    if (err) {
+      console.error('查询默认上链证书失败:', err);
+      return res.status(500).json({
+        success: false,
+        message: '查询默认上链证书失败',
+        error: err.message
+      });
+    }
+
+    const certName = userRows?.[0]?.default_register_cert;
+
+    if (!certName) {
+      return res.status(400).json({
+        success: false,
+        message: '未设置上链默认证书，请先到个人中心设置'
+      });
+    }
+
+    const certSql = `
+      SELECT
+        certificate_name,
+        org,
+        address,
+        sign_cert_path,
+        tls_cert_path,
+        pem_path,
+        expires_at
+      FROM certificate_registry
+      WHERE user_id = ?
+        AND certificate_name = ?
+      LIMIT 1
+    `;
+
+    db.query(certSql, [userId, certName], (certErr, certRows) => {
+      if (certErr) {
+        console.error('查询上链证书详情失败:', certErr);
+        return res.status(500).json({
+          success: false,
+          message: '查询上链证书详情失败',
+          error: certErr.message
+        });
+      }
+
+      if (!certRows || certRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: '上链默认证书不存在或不属于当前用户'
+        });
+      }
+
+      return res.json({
+        success: true,
+        cert: certRows[0]
+      });
+    });
+  });
+});
+
+
+// 查询默认交易证书完整信息
+app.get('/api/default-trade-cert-info', (req, res) => {
+  const userId = req.query.userId;
+
+  if (!userId) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 userId'
+    });
+  }
+
+  const userSql = `
+    SELECT default_trade_cert
+    FROM users
+    WHERE id = ?
+    LIMIT 1
+  `;
+
+  userDb.query(userSql, [userId], (err, userRows) => {
+    if (err) {
+      console.error('查询默认交易证书失败:', err);
+      return res.status(500).json({
+        success: false,
+        message: '查询默认交易证书失败',
+        error: err.message
+      });
+    }
+
+    const certName = userRows?.[0]?.default_trade_cert;
+
+    if (!certName) {
+      return res.status(400).json({
+        success: false,
+        message: '未设置交易默认证书，请先到个人中心设置'
+      });
+    }
+
+    const certSql = `
+      SELECT
+        certificate_name,
+        org,
+        address,
+        sign_cert_path,
+        tls_cert_path,
+        pem_path,
+        expires_at
+      FROM certificate_registry
+      WHERE user_id = ?
+        AND certificate_name = ?
+      LIMIT 1
+    `;
+
+    db.query(certSql, [userId, certName], (certErr, certRows) => {
+      if (certErr) {
+        console.error('查询交易证书详情失败:', certErr);
+        return res.status(500).json({
+          success: false,
+          message: '查询交易证书详情失败',
+          error: certErr.message
+        });
+      }
+
+      if (!certRows || certRows.length === 0) {
+        return res.status(404).json({
+          success: false,
+          message: '交易默认证书不存在或不属于当前用户'
+        });
+      }
+
+      return res.json({
+        success: true,
+        cert: certRows[0]
+      });
+    });
+  });
 });
   // 定义定时任务，每天检查一次过期代币
 cron.schedule('0 0 * * *', () => {

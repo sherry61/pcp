@@ -14,7 +14,8 @@
             <p class="main-number">{{ todayTransactionVolume }}</p>
             <p class="main-label">今日交易量</p>
             <p class="sub-metric">总交易量 <span class="sub-metric-value">{{ totalTransactionVolume }}</span></p>
-            <p class="details">较昨日{{ trend }} <span :class="trendClass">{{ transactionChangePercent }}</span></p>
+            <p class="sub-metric">可支持的最大单日订单处理量 <span class="sub-metric-value">{{ 70000 }}</span></p>
+            <!--<p class="details">较昨日{{ trend }} <span :class="trendClass">{{ transactionChangePercent }}</span></p>-->
           </div>
           <div class="dashboard-item">
   <div class="header">
@@ -33,6 +34,7 @@
   </div>
 
   <p class="main-number">{{ currentTPS }}</p>
+  <p class="main-label">底链吞吐量</p>
 </div>
           <div class="dashboard-item">
             <div class="header">

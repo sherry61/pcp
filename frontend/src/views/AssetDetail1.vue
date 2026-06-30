@@ -104,13 +104,13 @@
       >
         数据项
       </div>
-      <div
+      <!--<div
         class="tab-item"
         :class="{ active: activeTab === 'usageLimit' }"
         @click="activeTab = 'usageLimit'"
       >
         使用限制说明
-      </div>
+      </div>-->
       <!--<div
         class="tab-item"
         :class="{ active: activeTab === 'guide' }"
@@ -208,15 +208,7 @@
             <p><strong>账户余额:</strong> {{ userBalance }} RMB</p>
             <p v-if="insufficientBalance" style="color: red;">余额不足，无法完成购买。</p>
             <!-- 证书选择 -->
-            <div class="form-row">
-              <label for="certificate-select"><strong>选择证书:</strong></label>
-              <select id="certificate-select" v-model="selectedCertificate" required>
-                <option value="">请选择证书</option>
-                <option v-for="certificate in certificates" :key="certificate.cert" :value="certificate.cert">
-                  {{ certificate.cert }}
-                </option>
-              </select>
-            </div>
+            
             <!-- 添加勾选，查阅权，加工权，所有权 -->
             <div class="form-row">
               <!-- 权限勾选列表 -->
@@ -366,6 +358,7 @@ export default {
       insufficientBalance: false,
       certificates: [],
       selectedCertificate: '', // 用户选择的证书
+      defaultTradeCert: null,
       transactionId: null, // 保存返回的交易ID
 
        modelOptions: [],          // 下拉模型列表
@@ -393,7 +386,7 @@ export default {
 
     
   showExpirationInput() {
-    return this.selectedPermissions.some(p => p !== '所有权');
+    return this.selectedPermissions.some(p => p !== '持有权');
   }
 
   },
@@ -418,8 +411,8 @@ export default {
         console.log('资产ID:', assetId);
         await this.fetchAssetDetails(assetId);
 
-        // 4. 获取证书（现在 userId 已经有值了）
-        await this.fetchCertificates();
+      await this.fetchDefaultTradeCertInfo();
+       
 
         this.drawPriceHistoryChart();
         console.log('页面初始化完成');
@@ -432,6 +425,31 @@ export default {
 },
 
   methods: {
+
+    async fetchDefaultTradeCertInfo() {
+  if (!this.userId) {
+    throw new Error('用户ID缺失，无法获取交易默认证书');
+  }
+
+  const res = await axios.get(
+    'http://10.112.47.214:3000/api/default-trade-cert-info',
+    {
+      params: {
+        userId: this.userId
+      }
+    }
+  );
+
+  if (!res.data?.success || !res.data.cert?.address) {
+    throw new Error(res.data?.message || '未获取到交易默认证书地址');
+  }
+
+  this.defaultTradeCert = res.data.cert;
+  this.selectedCertificate = res.data.cert.certificate_name;
+
+  return res.data.cert;
+},
+
     formatTimestamp(ts) {
   if (!ts) return '暂无限制';
 
@@ -596,7 +614,7 @@ async openPurchaseModal() {
     : !!this.asset.can_sell_process;
 
   this.permissions = [
-    { name: '所有权', canSell: canSellAsset },
+    { name: '持有权', canSell: canSellAsset },
     { name: '经营权', canSell: canSellView },
     { name: '加工使用权', canSell: canSellProcess }
   ];
@@ -664,11 +682,22 @@ async openPurchaseModal() {
     async confirmPurchase() {
   if (this.insufficientBalance) return;
 
-  const certAddr = await this.getCertAddr(this.selectedCertificate);
-  if (!certAddr) {
-    alert("请选择有效的证书！");
+ let certAddr = this.defaultTradeCert?.address;
+
+if (!certAddr) {
+  try {
+    const defaultCert = await this.fetchDefaultTradeCertInfo();
+    certAddr = defaultCert.address;
+  } catch (error) {
+    console.error('获取交易默认证书失败:', error);
+    alert(
+      error.response?.data?.message ||
+      error.message ||
+      '未设置交易默认证书，请先到个人中心设置'
+    );
     return;
   }
+}
 
   // 如果未选择任何权限，则默认选择所有权
   if (!this.selectedPermissions || this.selectedPermissions.length === 0) {

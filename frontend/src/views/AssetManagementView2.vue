@@ -56,7 +56,7 @@
                   <th class="nowrap">安全等级</th>
                   <th>资产介绍</th>
                   <th v-if="isSeller" class="nowrap">数量</th>
-                  <th>性质</th>
+                  <!--<th>性质</th>-->
                   <th>状态</th>
                   <th>可出售权益</th> <!-- 新增字段 -->
                 
@@ -80,7 +80,7 @@
     <td>{{ item.assetType }}</td>
     <td>{{ item.description }}</td>
     <td v-if="isSeller" class="nowrap">{{ item.number }}</td>
-    <td class="nowrap">{{ isIndivisible(item.industry) ? '不可分割' : '可分割' }}</td>
+    <!--<td class="nowrap">{{ isIndivisible(item.industry) ? '不可分割' : '可分割' }}</td>-->
     <td class="nowrap" :class="{
       'gray-text': item.txperm === 0,
       'yellow-text': item.txperm === 1 || item.txperm === 2,
@@ -99,14 +99,18 @@
 
     <!-- 可出售权益字段，根据已购买或已登记资产来显示 -->
     <td>
-      {{ item.canSellAsset ? '所有' : '' }} 
-      {{ item.canSellView ? '查阅' : '' }} 
+      {{ item.canSellAsset ? '持有' : '' }} 
+      {{ item.canSellView ? '经营' : '' }} 
       {{ item.canSellProcess ? '加工' : '' }}
     </td>
 
     <!--<td>{{ formatRemarks(item.email, item.address) }}</td>-->
 
-<td v-if="isSeller"><button @click="openEditModal(item)" class="edit-button">编辑</button></td>
+<td v-if="isSeller" class="action-cell">
+  <button @click="openEditModal(item)" class="edit-button">
+    编辑
+  </button>
+</td>
 <td v-if="isSeller">
   <button :disabled="item.isProxied === 0" @click="handleAuthorization(item)" class="edit-button">授权</button>
 </td>
@@ -125,11 +129,11 @@
           <div v-if="showAuthorizationModal" class="modal">
             <div class="modal-content wide-modal">
               <h3>确认授权</h3>
-              <p>请选择目标地址并确认授权数量</p>
+              <p>请填写授权码并确认授权数量</p>
 
               <div class="form-row">
                 <div class="form-group">
-                  <label for="target-address">目标地址</label>
+                  <label for="target-address">授权码</label>
                   <input type="text" id="target-address" v-model="authorizationData.targetAddress" placeholder="请输入目标地址"
                     required />
                 </div>
@@ -243,72 +247,17 @@
               </select>
             </div>
           </div>
-         <!-- 权益多选框 -->
-        <div class="form-row">
+          
+        <!-- <div class="form-row">
           <label for="asset-permissions">选择可出售权益</label>
           <div>
             <input type="checkbox" id="can_sell_asset" v-model="editAsset.canSellAsset" /> 允许出售所有权
             <input type="checkbox" id="can_sell_view" v-model="editAsset.canSellView" /> 允许出售查阅权
             <input type="checkbox" id="can_sell_process" v-model="editAsset.canSellProcess" /> 允许出售加工权
           </div>
-        </div>
+        </div>-->
 
-   <div class="form-row">
-  <div class="form-group">
-    <label for="transaction-start-time">交易开始时间</label>
-    <el-time-picker
-      v-model="transactionStartTime"
-      placeholder="选择开始时间"
-      :picker-options="startTimePickerOptions"
-      @change="validateTimeRange"
-      :clearable="true"
-      :editable="false"
-      :arrow-control="false"
-      :format="'HH:mm:ss'"
-      :value-format="'HH:mm:ss'"
-      :picker-type="'time'"
-      :use-12h="false"
-      :start-placeholder="'开始时间'"
-      :end-placeholder="'结束时间'"
-      :range-separator="'至'"
-    />
-  </div>
-  <div class="form-group">
-    <label for="transaction-end-time">交易结束时间</label>
-    <el-time-picker
-      v-model="transactionEndTime"
-      placeholder="选择结束时间"
-      :picker-options="endTimePickerOptions"
-      @change="validateTimeRange"
-      :clearable="true"
-      :editable="false"
-      :arrow-control="false"
-      :format="'HH:mm:ss'"
-      :value-format="'HH:mm:ss'"
-      :picker-type="'time'"
-      :use-12h="false"
-      :start-placeholder="'开始时间'"
-      :end-placeholder="'结束时间'"
-      :range-separator="'至'"
-    />
-  </div>
-</div>
-
-
-        <!-- 交易地点选择 -->
-        <div class="form-row">
-          <div class="form-group">
-            <label for="transaction-location">交易地点</label>
-            <el-cascader
-              v-model="selectedRegionOptions"
-              :options="regionData"
-              :props="cascaderProps"
-              @change="handleRegionChange"
-              placeholder="请选择交易地点"
-              clearable
-            />
-          </div>
-        </div>
+  
 
 
           <div class="form-row buttons">
@@ -1800,10 +1749,10 @@ isIndivisible(industry) {
     getSellPermissions(item) {
   const rights = [];
   if (item.canSellAsset === 1 || item.canSellAsset === '1') {
-    rights.push('所有');
+    rights.push('持有');
   }
   if (item.canSellView === 1 || item.canSellView === '1') {
-    rights.push('查阅');
+    rights.push('经营');
   }
   if (item.canSellProcess === 1 || item.canSellProcess === '1') {
     rights.push('加工');
@@ -2599,6 +2548,13 @@ async confirmEdit() {
 
 
 <style scoped>
+
+.action-cell {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
 .nowrap {
   white-space: nowrap;
 }

@@ -58,18 +58,64 @@
           </template>
         </el-dialog>
 
-        <!-- 表格展示 -->
-        <el-card>
-          <div class="table">
-            <!-- 主表格 -->
-            <el-table :data="tableData" border style="width: 100%" v-loading="loading" empty-text="暂无数据">
-              <el-table-column prop="cert" label="证书名称" />
-              <el-table-column prop="organization" label="所属组织" />
-              <el-table-column prop="createdAt" label="创建时间" />
-              <el-table-column prop="expirationAt" label="过期时间" />
-            </el-table>
-          </div>
-        </el-card>
+
+<!-- 默认证书设置 -->
+<el-card class="default-cert-card">
+  <h3>默认证书设置</h3>
+
+  <el-form label-width="140px">
+    <el-form-item label="上链默认证书">
+      <el-select
+        v-model="defaultRegisterCert"
+        placeholder="请选择上链登记使用的证书"
+        style="width: 360px"
+      >
+        <el-option
+  v-for="item in defaultCertOptions"
+  :key="item.cert + '-register'"
+  :label="`${item.cert}（${item.organization}）`"
+  :value="item.cert"
+/>
+      </el-select>
+    </el-form-item>
+
+    <el-form-item label="交易默认证书">
+      <el-select
+        v-model="defaultTradeCert"
+        placeholder="请选择买家交易使用的证书"
+        style="width: 360px"
+      >
+        <el-option
+  v-for="item in defaultCertOptions"
+  :key="item.cert + '-register'"
+  :label="`${item.cert}（${item.organization}）`"
+  :value="item.cert"
+/>
+      </el-select>
+    </el-form-item>
+
+    <el-button
+      type="primary"
+      :loading="savingDefaultCert"
+      @click="saveDefaultCert"
+    >
+      保存默认证书
+    </el-button>
+  </el-form>
+</el-card>
+
+<!-- 表格展示 -->
+<el-card>
+  <div class="table">
+    <el-table :data="tableData" border style="width: 100%" v-loading="loading" empty-text="暂无数据">
+      <el-table-column prop="cert" label="证书名称" />
+      <el-table-column prop="organization" label="所属组织" />
+      <el-table-column prop="createdAt" label="创建时间" />
+      <el-table-column prop="expirationAt" label="过期时间" />
+    </el-table>
+  </div>
+</el-card>
+      
 
         <!-- 提示信息 -->
         <el-alert v-if="message" :title="message" type="info" show-icon></el-alert>
@@ -102,6 +148,11 @@ export default {
     const searchQuery = ref(""); // 搜索关键词
     const message = ref(""); // 提示信息
     const formError = ref("");
+    const defaultRegisterCert = ref('');
+    const defaultTradeCert = ref('');
+    const savingDefaultCert = ref(false);
+
+    const defaultCertOptions = ref([]);
 
     const form = ref({
       certificateName: "",
@@ -109,6 +160,91 @@ export default {
     });
 
     const certContent = ref("");
+
+    const fetchDefaultCertOptions = async () => {
+  if (!userId.value) return;
+
+  try {
+    const res = await axios.get(
+      'http://10.112.47.214:3000/api/user-certificates',
+      {
+        params: {
+          userId: userId.value
+        }
+      }
+    );
+
+    if (res.data?.success) {
+      defaultCertOptions.value = res.data.certificates || [];
+    }
+  } catch (error) {
+    console.error('获取默认证书候选列表失败:', error);
+    defaultCertOptions.value = [];
+  }
+};
+
+    const fetchDefaultCert = async () => {
+      if (!userId.value) return;
+
+      try {
+        const res = await axios.get(
+          'http://10.112.47.214:3000/api/default-cert',
+          {
+            params: {
+              userId: userId.value
+            }
+          }
+        );
+
+        if (res.data?.success) {
+          defaultRegisterCert.value = res.data.default_register_cert || '';
+          defaultTradeCert.value = res.data.default_trade_cert || '';
+        }
+      } catch (error) {
+        console.error('获取默认证书失败:', error);
+      }
+    };
+
+    const saveDefaultCert = async () => {
+      if (!userId.value) {
+        message.value = '用户ID缺失，无法保存默认证书';
+        return;
+      }
+
+      if (!defaultRegisterCert.value) {
+        message.value = '请选择上链默认证书';
+        return;
+      }
+
+      if (!defaultTradeCert.value) {
+        message.value = '请选择交易默认证书';
+        return;
+      }
+
+      try {
+        savingDefaultCert.value = true;
+
+        const res = await axios.post(
+          'http://10.112.47.214:3000/api/save-default-cert',
+          {
+            userId: userId.value,
+            defaultRegisterCert: defaultRegisterCert.value,
+            defaultTradeCert: defaultTradeCert.value
+          }
+        );
+
+        if (res.data?.success) {
+          message.value = '默认证书保存成功';
+        } else {
+          message.value = res.data?.message || '默认证书保存失败';
+        }
+      } catch (error) {
+        console.error('保存默认证书失败:', error);
+        message.value = '保存默认证书失败，请检查后端服务';
+      } finally {
+        savingDefaultCert.value = false;
+      }
+    };
 
     const submitApplication = async () => {
       formError.value = "";
@@ -379,7 +515,7 @@ const fetchUserCertificate = async (userId) => {
     };
 
     // 挂载后操作
-  onMounted(() => {
+  /*onMounted(() => {
   const token = localStorage.getItem("token");
   if (token) {
     const payload = parseJwt(token);
@@ -389,6 +525,22 @@ const fetchUserCertificate = async (userId) => {
         fetchUserCertificate(userId.value); // 获取用户所有证书
       }
     });
+  }
+});*/
+onMounted(async () => {
+  const token = localStorage.getItem("token");
+
+  if (token) {
+    const payload = parseJwt(token);
+    username.value = decodeURIComponent(payload.username);
+
+    await fetchUserId(username.value);
+
+    if (userId.value) {
+      await fetchUserCertificate(userId.value);
+      await fetchDefaultCertOptions();               // 新增：下拉框候选项
+      await fetchDefaultCert();                      // 已保存的默认值
+    }
   }
 });
 
@@ -408,11 +560,28 @@ const fetchUserCertificate = async (userId) => {
       searchCertificates,
       submitApplication,
       viewCertificate,
+      defaultRegisterCert,
+      defaultTradeCert,
+      savingDefaultCert,
+      fetchDefaultCert,
+      saveDefaultCert,
+      certificates,
+      defaultCertOptions,
+      fetchDefaultCertOptions,
     };
   },
 };
 </script>
 <style scoped>
+.default-cert-card {
+  margin-bottom: 20px;
+}
+
+.default-cert-card h3 {
+  margin: 0 0 20px;
+  font-size: 18px;
+  color: #1a2a6c;
+}
 
 .personal-center {
   width: 100%;
