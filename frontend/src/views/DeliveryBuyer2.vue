@@ -18,7 +18,7 @@
         <div class="asset-upload-container">
           <el-table
             class="delivery-table"
-            :data="resultList"
+            :data="pagedResultList"
             border
             v-loading="isLoading"
             style="width: 100%"
@@ -143,6 +143,17 @@
               </template>
             </el-table-column>
           </el-table>
+
+          <div v-if="resultList.length" class="pagination-bar">
+            <el-pagination
+              background
+              layout="prev, pager, next"
+              :current-page="pagination.page"
+              :page-size="pagination.pageSize"
+              :total="resultList.length"
+              @current-change="handleBuyerPageChange"
+            />
+          </div>
         </div>
 
         <el-dialog v-model="flDialog.visible" title="创建 FL 合同" width="680px">
@@ -400,6 +411,10 @@ export default {
       username: '',
       isLoading: false,
       resultList: [],
+      pagination: {
+        page: 1,
+        pageSize: 10
+      },
       contractInfo: { visible: false, data: null },
       decryptDialog: {
         visible: false,
@@ -449,6 +464,12 @@ export default {
   async created() {
     await this.initUser()
     await this.refreshResults()
+  },
+  computed: {
+    pagedResultList() {
+      const start = (this.pagination.page - 1) * this.pagination.pageSize
+      return this.resultList.slice(start, start + this.pagination.pageSize)
+    }
   },
   methods: {
     parseJwt(token) {
@@ -573,15 +594,8 @@ export default {
         }
 
         this.resultList = rows.sort((left, right) => this.compareTransactionIdDesc(left, right))
-        await Promise.all(this.resultList.map((row) => (
-          this.isHeRow(row)
-            ? this.refreshHeStatus(row, false)
-            : (this.isFlRow(row)
-              ? this.refreshFlStatus(row, false)
-              : (this.isPreRow(row)
-                ? this.refreshPreStatus(row, false)
-                : this.refreshMpcStatus(row, false)))
-        )))
+        this.ensureBuyerPageInRange()
+        await this.syncBuyerPageStatus()
       } catch (error) {
         console.error('加载结果失败:', error)
         this.$message?.error('加载结果失败')
@@ -657,6 +671,28 @@ export default {
       }
 
       return rightId.localeCompare(leftId, 'zh-CN')
+    },
+
+    ensureBuyerPageInRange() {
+      const totalPages = Math.max(1, Math.ceil(this.resultList.length / this.pagination.pageSize))
+      this.pagination.page = Math.min(Math.max(this.pagination.page, 1), totalPages)
+    },
+
+    async syncBuyerPageStatus() {
+      await Promise.all(this.pagedResultList.map((row) => (
+        this.isHeRow(row)
+          ? this.refreshHeStatus(row, false)
+          : (this.isFlRow(row)
+            ? this.refreshFlStatus(row, false)
+            : (this.isPreRow(row)
+              ? this.refreshPreStatus(row, false)
+              : this.refreshMpcStatus(row, false)))
+      )))
+    },
+
+    async handleBuyerPageChange(page) {
+      this.pagination.page = page
+      await this.syncBuyerPageStatus()
     },
 
     async refreshHeStatus(row, showMessage = true) {
@@ -1610,6 +1646,12 @@ export default {
   padding: 0;
   margin: 0 12px 20px;
   box-shadow: var(--shadow-soft);
+}
+
+.pagination-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
 }
 
 .method-pill {

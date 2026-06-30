@@ -15,7 +15,7 @@
         </div>
 
         <div class="asset-upload-container">
-          <el-table class="delivery-table" :data="requestedAssets" border v-loading="isLoadingTransactions" style="width: 100%">
+          <el-table class="delivery-table" :data="pagedRequestedAssets" border v-loading="isLoadingTransactions" style="width: 100%">
             <el-table-column
               prop="transaction_id"
               label="交易ID"
@@ -147,6 +147,17 @@
               </template>
             </el-table-column>
           </el-table>
+
+          <div v-if="requestedAssets.length" class="pagination-bar">
+            <el-pagination
+              background
+              layout="prev, pager, next"
+              :current-page="pagination.page"
+              :page-size="pagination.pageSize"
+              :total="requestedAssets.length"
+              @current-change="handleSellerPageChange"
+            />
+          </div>
         </div>
 
         <el-dialog v-model="heDialog.visible" title="交付 - 同态加密" width="620px">
@@ -432,6 +443,10 @@ export default {
       username: '',
       userId: '',
       requestedAssets: [],
+      pagination: {
+        page: 1,
+        pageSize: 10
+      },
       isLoadingTransactions: false,
       contractInfo: { visible: false, data: null },
       heDialog: {
@@ -490,6 +505,10 @@ export default {
         { label: '加法', value: 'ADD' },
         { label: '乘法', value: 'MUL' }
       ]
+    },
+    pagedRequestedAssets() {
+      const start = (this.pagination.page - 1) * this.pagination.pageSize
+      return this.requestedAssets.slice(start, start + this.pagination.pageSize)
     }
   },
   methods: {
@@ -597,19 +616,47 @@ export default {
           }
         }
 
-        this.requestedAssets = rows
-        await Promise.all(this.requestedAssets.map((row) => (
-          this.isHeRow(row)
-            ? this.refreshHeStatus(row, false)
-            : (this.isFlRow(row)
-              ? this.refreshFlStatus(row, false)
-              : (this.isPreRow(row)
-                ? this.refreshPreStatus(row, false)
-                : this.refreshMpcStatus(row, false)))
-        )))
+        this.requestedAssets = rows.sort((left, right) => this.compareTransactionIdDesc(left, right))
+        this.ensureSellerPageInRange()
+        await this.syncSellerPageStatus()
       } finally {
         this.isLoadingTransactions = false
       }
+    },
+
+    compareTransactionIdDesc(left, right) {
+      const leftId = String(left?.transaction_id || '')
+      const rightId = String(right?.transaction_id || '')
+      const leftNumber = Number.parseInt(leftId, 10)
+      const rightNumber = Number.parseInt(rightId, 10)
+
+      if (Number.isFinite(leftNumber) && Number.isFinite(rightNumber) && leftNumber !== rightNumber) {
+        return rightNumber - leftNumber
+      }
+
+      return rightId.localeCompare(leftId, 'zh-CN')
+    },
+
+    ensureSellerPageInRange() {
+      const totalPages = Math.max(1, Math.ceil(this.requestedAssets.length / this.pagination.pageSize))
+      this.pagination.page = Math.min(Math.max(this.pagination.page, 1), totalPages)
+    },
+
+    async syncSellerPageStatus() {
+      await Promise.all(this.pagedRequestedAssets.map((row) => (
+        this.isHeRow(row)
+          ? this.refreshHeStatus(row, false)
+          : (this.isFlRow(row)
+            ? this.refreshFlStatus(row, false)
+            : (this.isPreRow(row)
+              ? this.refreshPreStatus(row, false)
+              : this.refreshMpcStatus(row, false)))
+      )))
+    },
+
+    async handleSellerPageChange(page) {
+      this.pagination.page = page
+      await this.syncSellerPageStatus()
     },
 
     normalizePcType(value) {
@@ -1862,6 +1909,12 @@ async verifyContract(assetRow) {
   color: var(--text-muted);
   font-size: 13px;
   line-height: 1.5;
+}
+
+.pagination-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 18px;
 }
 
 .asset-upload-container {
