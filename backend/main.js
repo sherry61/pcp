@@ -52,6 +52,12 @@ const DIGITAL_CONTRACT_BASE_URL =
   process.env.DIGITAL_CONTRACT_BASE_URL || 'http://10.112.14.6:18080/api';
 const SUMMARY_API_BASE = 'http://10.112.47.214:8020';
 
+const VM_HOST_BASE_URL = 'http://10.112.14.6:8000';
+const VM_TOKEN = process.env.VM_TOKEN ||
+'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+const VM_SERVICE_BASE_URL = 'http://虚机服务IP:18080/api';
+
+
  
 // 缓存 TTL
 const KEY_CACHE_TTL_MIN = parseInt(process.env.KEY_CACHE_TTL_MIN || '30', 10);
@@ -3150,6 +3156,281 @@ app.post('/api/digital-contract/verify', async (req, res) => {
   }
 });
 
+
+function vmHeaders() {
+  return {
+    Authorization: `Bearer ${VM_TOKEN}`,
+    'Content-Type': 'application/json',
+    'X-Request-Id': `req-${Date.now()}`,
+    timestamp: String(Date.now())
+  };
+}
+
+async function updateJob(transactionId, fields) {
+  const keys = Object.keys(fields);
+
+  const sql = `
+    UPDATE delivery_secure_jobs
+    SET ${keys.map(k => `${k} = ?`).join(', ')}
+    WHERE transaction_id = ?
+  `;
+
+  await dbQuery(sql, [
+    ...keys.map(k => fields[k]),
+    transactionId
+  ]);
+}
+
+function generateEcKeyPairPem() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1'
+  });
+
+  return {
+    publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }),
+    privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' })
+  };
+}
+
+async function negotiateKey(vmId, purpose) {
+  const { publicKeyPem, privateKeyPem } = generateEcKeyPairPem();
+
+  const response = await axios.post(
+    `${VM_SERVICE_BASE_URL}/receive-key`,
+    {
+      vmId,
+      ecPublicKey: publicKeyPem
+    },
+    {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 60000,
+      validateStatus: () => true
+    }
+  );
+
+  if (response.status !== 200 || response.data?.code !== 200) {
+    throw new Error(`${purpose} 密钥协商失败：${JSON.stringify(response.data)}`);
+  }
+
+  return {
+    purpose,
+    publicKeyPem,
+    privateKeyPem,
+    encryptedKeyMaterial: response.data
+  };
+}
+
+async function createVm({ cpu = 4, memoryMb = 4096 }) {
+  const response = await axios.post(
+    `${VM_HOST_BASE_URL}/api/v2/vms`,
+    {
+      cpu: String(cpu),
+      memoryMb: String(memoryMb)
+    },
+    {
+      headers: vmHeaders(),
+      timeout: 120000,
+      validateStatus: () => true
+    }
+  );
+
+  if (!response.data?.success || !response.data?.vmId) {
+    throw new Error(`虚机创建失败：${JSON.stringify(response.data)}`);
+  }
+
+  return response.data;
+}
+
+async function startVm(vmId) {
+  const response = await axios.post(
+    `${VM_HOST_BASE_URL}/api/v2/vms/${vmId}/start`,
+    {},
+    {
+      headers: vmHeaders(),
+      timeout: 120000,
+      validateStatus: () => true
+    }
+  );
+
+  if (!response.data?.success) {
+    throw new Error(`虚机启动失败：${JSON.stringify(response.data)}`);
+  }
+
+  return response.data;
+}
+
+app.post('/api/delivery/request-secure', async (req, res) => {
+  const {
+    transactionId,
+    buyerAddress,
+    sellerAddress,
+    assetId,
+    vmCpu,
+    vmMemoryMb
+  } = req.body;
+
+  if (!transactionId) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 transactionId'
+    });
+  }
+
+  try {
+    await dbQuery(
+      `
+      INSERT INTO delivery_secure_jobs (
+        transaction_id,
+        buyer_address,
+        seller_address,
+        asset_id,
+        vm_cpu,
+        vm_memory_mb,
+        status,
+        step
+      ) VALUES (?, ?, ?, ?, ?, ?, 'PENDING', 'BUYER_REQUESTED')
+      ON DUPLICATE KEY UPDATE
+        buyer_address = VALUES(buyer_address),
+        seller_address = VALUES(seller_address),
+        asset_id = VALUES(asset_id),
+        vm_cpu = VALUES(vm_cpu),
+        vm_memory_mb = VALUES(vm_memory_mb),
+        status = 'PENDING',
+        step = 'BUYER_REQUESTED',
+        last_error = NULL
+      `,
+      [
+        transactionId,
+        buyerAddress || null,
+        sellerAddress || null,
+        assetId || null,
+        vmCpu || 4,
+        vmMemoryMb || 4096
+      ]
+    );
+
+    return res.json({
+      success: true,
+      message: '交付申请已提交'
+    });
+  } catch (err) {
+    console.error('[request-secure] error:', err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || '交付申请失败'
+    });
+  }
+});
+
+app.post('/api/delivery/secure-confirm', async (req, res) => {
+  const { transactionId } = req.body;
+
+  if (!transactionId) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 transactionId'
+    });
+  }
+
+  try {
+    const results = await dbQuery(
+      `
+      SELECT *
+      FROM delivery_secure_jobs
+      WHERE transaction_id = ?
+      LIMIT 1
+      `,
+      [transactionId]
+    );
+
+    const job = results[0];
+
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到买家交付申请'
+      });
+    }
+
+    await updateJob(transactionId, {
+      status: 'RUNNING',
+      step: 'KEY_0_NEGOTIATING',
+      last_error: null
+    });
+
+    const key0 = await negotiateKey(
+      `pre-${transactionId}`,
+      'KEY_0_MODEL_IMAGE'
+    );
+
+    await updateJob(transactionId, {
+      key0_status: 'READY',
+      step: 'VM_CREATING'
+    });
+
+    const createResult = await createVm({
+      cpu: job.vm_cpu || 4,
+      memoryMb: job.vm_memory_mb || 4096
+    });
+
+    const vmId = createResult.vmId;
+
+    await updateJob(transactionId, {
+      vm_id: vmId,
+      vm_status: createResult.status || 'created',
+      step: 'VM_STARTING'
+    });
+
+    const startResult = await startVm(vmId);
+
+    await updateJob(transactionId, {
+      vm_status: startResult.status || 'running',
+      qemu_pid: startResult.qemu_pid || startResult.qemuPid || null,
+      step: 'KEY_1_NEGOTIATING'
+    });
+
+    const key1 = await negotiateKey(vmId, 'KEY_1_CONTRACT');
+
+    await updateJob(transactionId, {
+      key1_status: 'READY',
+      step: 'KEY_2_NEGOTIATING'
+    });
+
+    const key2 = await negotiateKey(vmId, 'KEY_2_DATA_WEIGHT');
+
+    await updateJob(transactionId, {
+      key2_status: 'READY',
+      status: 'VM_RUNNING_WAITING_FILES',
+      step: 'WAITING_CONTRACT_AND_FILES'
+    });
+
+    return res.json({
+      success: true,
+      message: '虚机已创建并启动，密钥0/1/2已完成协商',
+      transactionId,
+      vmId,
+      status: 'VM_RUNNING_WAITING_FILES',
+      createResult,
+      startResult,
+      key0: key0.encryptedKeyMaterial,
+      key1: key1.encryptedKeyMaterial,
+      key2: key2.encryptedKeyMaterial
+    });
+  } catch (err) {
+    console.error('[secure-confirm] error:', err);
+
+    await updateJob(transactionId, {
+      status: 'FAILED',
+      step: 'FAILED',
+      last_error: err.message
+    }).catch(() => {});
+
+    return res.status(500).json({
+      success: false,
+      message: err.message || '安全交付流程失败'
+    });
+  }
+});
 
 const OMNIPRINT_BASE = {
   text: 'http://10.112.47.214:8110',
