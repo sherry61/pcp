@@ -159,7 +159,7 @@
     <div class="form-group">
   <label>
     <span class="required-asterisk">*</span>
-    数字摘要文件
+    上传摘要
   </label>
 
   <input
@@ -441,6 +441,23 @@
             </transition>
           </div>
 
+          <!-- 目录发布状态 -->
+          <div class="modal-section" v-show="!loadingDatabase && !loadingBlockchain">
+            <transition name="fade" mode="out-in" appear>
+              <div key="catalogResult">
+                <el-icon v-if="getCatalogPublishSuccess()" class="success-icon">
+                  <check />
+                </el-icon>
+                <el-icon v-else class="error-icon">
+                  <close />
+                </el-icon>
+                <p :class="{ 'success-text': getCatalogPublishSuccess(), 'error-text': !getCatalogPublishSuccess() }">
+                  <strong>目录发布状态:</strong> {{ getCatalogPublishMessage() }}
+                </p>
+              </div>
+            </transition>
+          </div>
+
 
           <!-- FISCO 链状态 -->
 
@@ -621,6 +638,7 @@ gradeRationale: '',
 
       certificates: [], // 存储从接口获取的证书列表
       certAddr: '',
+      defaultRegisterCertInfo: null,
       showConfirmation: false,
       showHashSuccess: false,
       showDatabaseSuccess: false,
@@ -891,6 +909,66 @@ async fetchDefaultRegisterCertInfo() {
   }
 
   return res.data.cert;
+},
+async publishToDataCatalog() {
+  if (!this.form.fingerprint) {
+    return {
+      success: false,
+      message: '缺少数字指纹，无法发布目录'
+    };
+  }
+
+  try {
+    const response = await axios.post(
+      'http://10.112.47.214:3000/api/datacatalog/publish-asset',
+      {
+        fingerprint: this.form.fingerprint,
+        assetName: this.form.assetName,
+        description: this.form.description,
+        assetType: this.form.assetType,
+        userId: this.userId,
+        certOrg: this.defaultRegisterCertInfo?.org || ''
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      }
+    );
+
+    return {
+      success: response.data?.success === true,
+      message: response.data?.message || '目录发布成功',
+      data: response.data || null
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message:
+        error.response?.data?.message ||
+        error.message ||
+        '目录发布失败',
+      data: error.response?.data || null
+    };
+  }
+},
+getCatalogPublishSuccess() {
+  return this.blockchainResponseData?.catalogPublish?.success === true;
+},
+getCatalogPublishMessage() {
+  if (!this.blockchainSuccess) {
+    return '主链上链未成功，未执行目录发布';
+  }
+
+  if (!this.form.fingerprint) {
+    return '未执行，未生成数字指纹';
+  }
+
+  if (!this.blockchainResponseData?.catalogPublish) {
+    return '未返回目录发布结果';
+  }
+
+  return this.blockchainResponseData.catalogPublish.message || '目录发布状态未知';
 },
        // 根据资产领域获取证书
     async fetchCertificates(industry) {
@@ -1181,6 +1259,7 @@ async confirmForm() {
   try {
   const defaultCert = await this.fetchDefaultRegisterCertInfo();
 
+  this.defaultRegisterCertInfo = defaultCert;
   this.form.selectedCertificate = defaultCert.certificate_name;
   this.certAddr = defaultCert.address;
 
@@ -1251,6 +1330,21 @@ async confirmForm() {
     if (chainmakerResponse.code === 0) {
       this.blockchainSuccess = true;
       this.blockchainResponseData = chainmakerResponse;
+
+      if (databaseResponse.status === 201) {
+        const catalogResponse = await this.publishToDataCatalog();
+        this.blockchainResponseData = {
+          ...this.blockchainResponseData,
+          catalogPublish: catalogResponse,
+        };
+
+        if (catalogResponse.success) {
+          this.blockchainResponseData.message = `${this.blockchainResponseData.message}，目录发布成功`;
+        } else {
+          this.errorMessage = `目录发布失败：${catalogResponse.message}`;
+          this.$message?.warning(this.errorMessage);
+        }
+      }
     } else {
       this.blockchainSuccess = false;
       this.errorMessage = `Mint 接口调用失败：${chainmakerResponse.message}`;
@@ -1782,6 +1876,8 @@ formData.append('trade_end_ts', tradeEndTs);
         result: null,
       };
     }
+
+    return this.blockchainResponseData;
   }
 }
 ,

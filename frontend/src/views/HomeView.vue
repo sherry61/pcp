@@ -38,6 +38,14 @@
 </div>
           <div class="dashboard-item">
             <div class="header">
+              <h3>已监管账户数量</h3>
+              <img src="@/assets/audited-icon.png" alt="Supervision Icon" class="dashboard-icon">
+            </div>
+            <p class="main-number">{{ detectedAccounts }}</p>
+            <p class="details">异常账户占比 <span class="detail-overload">{{ anomalyAccountRatio }}</span></p>
+          </div>
+          <div class="dashboard-item">
+            <div class="header">
               <h3>已审计交易</h3>
               <img src="@/assets/audited-icon.png" alt="Audited Icon" class="dashboard-icon">
             </div>
@@ -63,7 +71,7 @@ import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import LineChart from '@/components/LineChart.vue'
 import axios from 'axios'
-
+const MODEL_API_BASE = process.env.VUE_APP_MODEL_API_BASE || 'http://10.112.47.214:8000'
 export default {
   name: 'HomeView',
   components: {
@@ -82,6 +90,9 @@ data() {
     transactionHistory:[],
     trend: '',
     currentTPS: '25411',
+    detectedAccounts: 0,
+    anomalyAccountRatio: '0.00%',
+    supervisionTimer: null,
     tpsLoading: false
   }
 },
@@ -90,8 +101,12 @@ mounted() {
   this.fetchTodayTransaction();
   this.fetchTotalTransaction();
   this.fetchTransactionHistory();
+  this.fetchSupervisionOverview();
+  this.supervisionTimer = window.setInterval(this.fetchSupervisionOverview, 5000);
 },
-
+beforeUnmount() {
+  if (this.supervisionTimer) window.clearInterval(this.supervisionTimer);
+},
   methods: {
     refreshChart() {
     this.chartKey++;  // 更新 key 强制重新渲染组件
@@ -146,6 +161,23 @@ mounted() {
       console.log('总交易量', this.totalTransactionVolume);
     } catch (error) {
       console.error('获取总交易量失败:', error);
+    }
+  },
+
+    async fetchSupervisionOverview() {
+    try {
+      const response = await axios.get(
+        `${MODEL_API_BASE}/api/supervision/overview`,
+        { timeout: 10000 }
+      );
+      const overview = response.data || {};
+      this.detectedAccounts = Number(overview.detected_accounts) || 0;
+      const ratio = Number(overview.anomaly_ratio);
+      this.anomalyAccountRatio = Number.isFinite(ratio)
+        ? `${(ratio * 100).toFixed(2)}%`
+        : '0.00%';
+    } catch (error) {
+      console.error('获取监管状态失败:', error);
     }
   },
 

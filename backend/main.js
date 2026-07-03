@@ -51,6 +51,16 @@ const PRE_UPLOAD_DIR = process.env.PRE_UPLOAD_DIR || '/home/super/r/localdata/pr
 const DIGITAL_CONTRACT_BASE_URL =
   process.env.DIGITAL_CONTRACT_BASE_URL || 'http://10.112.14.6:18080/api';
 const SUMMARY_API_BASE = 'http://10.112.47.214:8020';
+const DATA_CATALOG_BASE_URL =
+  process.env.DATA_CATALOG_BASE_URL || 'http://127.0.0.1:8008';
+const DATA_CATALOG_ORG_DID =
+  process.env.DATA_CATALOG_ORG_DID || 'did:web:data.web';
+const DATA_CATALOG_PLATFORM_NAME =
+  process.env.DATA_CATALOG_PLATFORM_NAME || '数字资产交易平台';
+const DATA_CATALOG_PLATFORM_DID =
+  process.env.DATA_CATALOG_PLATFORM_DID || 'did:web:data.web';
+const DATA_CATALOG_PLATFORM_URL =
+  process.env.DATA_CATALOG_PLATFORM_URL || 'http://10.112.47.214';
 
 const VM_HOST_BASE_URL = 'http://10.112.14.6:8000';
 const VM_TOKEN = process.env.VM_TOKEN ||
@@ -88,6 +98,15 @@ function dbQuery(sql, params = []) {
   });
 }
 
+function userDbQuery(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    userDb.query(sql, params, (err, results) => {
+      if (err) return reject(err);
+      resolve(results);
+    });
+  });
+}
+
 function firstDefined(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null && value !== '') {
@@ -96,6 +115,47 @@ function firstDefined(...values) {
   }
 
   return null;
+}
+
+async function getDefaultRegisterCertInfoByUserId(userId) {
+  const userRows = await userDbQuery(
+    `
+      SELECT default_register_cert
+      FROM users
+      WHERE id = ?
+      LIMIT 1
+    `,
+    [userId]
+  );
+
+  const certName = userRows?.[0]?.default_register_cert;
+  if (!certName) {
+    throw new Error('未设置上链默认证书，请先到个人中心设置');
+  }
+
+  const certRows = await dbQuery(
+    `
+      SELECT
+        certificate_name,
+        org,
+        address,
+        sign_cert_path,
+        tls_cert_path,
+        pem_path,
+        expires_at
+      FROM certificate_registry
+      WHERE user_id = ?
+        AND certificate_name = ?
+      LIMIT 1
+    `,
+    [userId, certName]
+  );
+
+  if (!certRows || certRows.length === 0) {
+    throw new Error('上链默认证书不存在或不属于当前用户');
+  }
+
+  return certRows[0];
 }
 
 // ====== 新增：工具函数 ======
@@ -3768,53 +3828,113 @@ app.get('/api/default-register-cert-info', (req, res) => {
       });
     }
 
-    const certName = userRows?.[0]?.default_register_cert;
+    getDefaultRegisterCertInfoByUserId(userId)
+      .then((cert) => {
+        return res.json({
+          success: true,
+          cert
+        });
+      })
+      .catch((certErr) => {
+        const message = certErr.message || '查询上链证书详情失败';
+        const status = message.includes('不存在') ? 404 : 400;
 
-    if (!certName) {
-      return res.status(400).json({
+        console.error('查询上链证书详情失败:', certErr);
+        return res.status(status).json({
+          success: false,
+          message,
+          error: certErr.message
+        });
+      });
+  });
+});
+
+app.post('/api/datacatalog/publish-asset', async (req, res) => {
+  const {
+    fingerprint,
+    assetName,
+    description,
+    assetType,
+    userId,
+    certOrg
+  } = req.body || {};
+
+  if (!fingerprint) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 fingerprint'
+    });
+  }
+
+  if (!assetName) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 assetName'
+    });
+  }
+
+  try {
+    let resolvedOrgId = certOrg || null;
+
+    if (!resolvedOrgId && userId) {
+      const certInfo = await getDefaultRegisterCertInfoByUserId(userId);
+      resolvedOrgId = certInfo.org || null;
+    }
+
+    if (!resolvedOrgId) {
+      throw new Error('无法确定目录发布使用的组织信息');
+    }
+
+    const payload = {
+      id: fingerprint,
+      code: fingerprint,
+      name: assetName,
+      remark: description || assetName,
+      orgId: resolvedOrgId,
+      orgDID: DATA_CATALOG_ORG_DID,
+      version: 1,
+      dataVersion: '1',
+      status: 1,
+      asseType: assetType || '',
+      platform_name: DATA_CATALOG_PLATFORM_NAME,
+      platform_DID: DATA_CATALOG_PLATFORM_DID,
+      platform_url: DATA_CATALOG_PLATFORM_URL,
+      chain_type: 'Chainmaker'
+    };
+
+    const response = await axios.post(
+      `${DATA_CATALOG_BASE_URL}/contract/datacatalog/publish`,
+      payload,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 60000,
+        validateStatus: () => true
+      }
+    );
+
+    if (response.status < 200 || response.status >= 300 || response.data?.bizCode !== 'SUCCESS') {
+      return res.status(response.status >= 400 ? response.status : 502).json({
         success: false,
-        message: '未设置上链默认证书，请先到个人中心设置'
+        message: response.data?.message || '目录发布失败',
+        bizCode: response.data?.bizCode || 'CATALOG_PUBLISH_FAILED',
+        payload,
+        upstream: response.data || null
       });
     }
 
-    const certSql = `
-      SELECT
-        certificate_name,
-        org,
-        address,
-        sign_cert_path,
-        tls_cert_path,
-        pem_path,
-        expires_at
-      FROM certificate_registry
-      WHERE user_id = ?
-        AND certificate_name = ?
-      LIMIT 1
-    `;
-
-    db.query(certSql, [userId, certName], (certErr, certRows) => {
-      if (certErr) {
-        console.error('查询上链证书详情失败:', certErr);
-        return res.status(500).json({
-          success: false,
-          message: '查询上链证书详情失败',
-          error: certErr.message
-        });
-      }
-
-      if (!certRows || certRows.length === 0) {
-        return res.status(404).json({
-          success: false,
-          message: '上链默认证书不存在或不属于当前用户'
-        });
-      }
-
-      return res.json({
-        success: true,
-        cert: certRows[0]
-      });
+    return res.json({
+      success: true,
+      message: '目录发布成功',
+      payload,
+      result: response.data
     });
-  });
+  } catch (err) {
+    console.error('[datacatalog/publish-asset] error:', err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || '目录发布失败'
+    });
+  }
 });
 
 

@@ -78,7 +78,7 @@
     <td>{{ item.userId }}</td>
     <td>{{ item.assetName }}</td>
     <td>{{ item.assetType }}</td>
-    <td>{{ item.description }}</td>
+    <td class="center-cell">{{ item.description }}</td>
     <td v-if="isSeller" class="nowrap">{{ item.number }}</td>
     <!--<td class="nowrap">{{ isIndivisible(item.industry) ? '不可分割' : '可分割' }}</td>-->
     <td class="nowrap" :class="{
@@ -106,7 +106,7 @@
 
     <!--<td>{{ formatRemarks(item.email, item.address) }}</td>-->
 
-<td v-if="isSeller" class="action-cell">
+<td v-if="isSeller" class="action-cell center-cell">
   <button @click="openEditModal(item)" class="edit-button">
     编辑
   </button>
@@ -2548,6 +2548,10 @@ async confirmEdit() {
 
 
 <style scoped>
+.center-cell{
+    text-align:center;
+    vertical-align:middle;
+}
 
 .action-cell {
     display: flex;
@@ -2776,10 +2780,17 @@ body {
 }
 
 /* 资产介绍和可出售权益的特殊处理 */
-.styled-table td:nth-child(5), /* 资产介绍 */
-.styled-table td:nth-child(9) { /* 备注 */
-  text-align: left;
+.styled-table td:nth-child(5),
+.styled-table td:nth-child(9) {
+  text-align: center;
+  vertical-align: middle;
   line-height: 1.4;
+}
+
+/* 编辑按钮单元格居中 */
+.styled-table td.action-cell {
+  text-align: center;
+  vertical-align: middle;
 }
 
 /* 长文本显示省略号，hover时显示完整内容 */

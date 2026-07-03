@@ -27,7 +27,7 @@
 
           <div v-if="!serviceStatus.api_ready" class="service-warning">
             <strong>模型 API 当前未运行</strong>
-            <span>监管数据暂停刷新，打开下方“模型 API”开关即可恢复服务。</span>
+            <span>监管数据暂停刷新，请联系系统管理员启动相关服务。</span>
           </div>
 
           <section class="kpi-grid">
@@ -45,20 +45,7 @@
                 <h3>监管流水线</h3>
               </div>
               <div class="toolbar">
-                <div class="service-control">
-                  <span>模型 API</span>
-                  <el-switch
-                    v-model="modelApiSwitch"
-                    :loading="serviceActionBusy"
-                    inline-prompt
-                    active-text="开"
-                    inactive-text="关"
-                    @change="toggleModelApi"
-                  />
-                  <b :class="{ online: serviceStatus.api_ready }">
-                    {{ serviceStatus.api_ready ? '服务正常' : '服务停止' }}
-                  </b>
-                </div>
+                
                 <span class="auto-state" :class="autoStatus.status">
                   {{ autoStatusText }}
                 </span>
@@ -94,6 +81,41 @@
           <section class="data-section">
             <div class="section-heading">
               <div>
+                <p class="section-kicker">异常检测记录</p>
+                <h3>异常账户检测快照</h3>
+              </div>
+              <span>{{ anomalyRecords.length }} 条</span>
+            </div>
+            <el-table
+              :data="anomalyRecords"
+              stripe
+              height="280"
+              empty-text="暂无异常账户检测记录"
+              row-class-name="clickable-row"
+              @row-click="openAccountDetail"
+            >
+              <el-table-column prop="address" label="账户地址" min-width="280" show-overflow-tooltip />
+              <el-table-column label="异常类别" width="130">
+                <template #default="{ row }">{{ labelText(row.display_label) }}</template>
+              </el-table-column>
+              <el-table-column label="异常概率" width="120">
+                <template #default="{ row }">{{ formatPercent(row.anomaly_probability) }}</template>
+              </el-table-column>
+              <el-table-column label="风险等级" width="110">
+                <template #default="{ row }">{{ riskLevelText(row.risk_level) }}</template>
+              </el-table-column>
+              <el-table-column prop="num_nodes" label="节点" width="80" />
+              <el-table-column prop="num_edges" label="边" width="80" />
+              <el-table-column label="检测时间" width="180">
+                <template #default="{ row }">{{ formatTime(row.detected_at) }}</template>
+              </el-table-column>
+              <el-table-column prop="model_version" label="模型版本" min-width="220" show-overflow-tooltip />
+            </el-table>
+          </section>
+
+          <section class="data-section">
+            <div class="section-heading">
+              <div>
                 <p class="section-kicker">任务队列</p>
                 <h3>正在检测与最近任务</h3>
               </div>
@@ -101,9 +123,6 @@
             </div>
             <el-table :data="tasks" stripe height="280" empty-text="暂无检测任务">
               <el-table-column prop="address" label="账户地址" min-width="280" show-overflow-tooltip />
-              <el-table-column prop="source" label="来源" width="120">
-                <template #default="{ row }">{{ sourceText(row.source) }}</template>
-              </el-table-column>
               <el-table-column label="状态" width="120">
                 <template #default="{ row }">
                   <el-tag :type="taskTagType(row.status)" effect="plain">{{ taskStatusText(row.status) }}</el-tag>
@@ -277,7 +296,6 @@
           <div ref="processGraph" class="process-graph"></div>
           <div v-if="!processTask.subgraph_path" class="process-waiting">
             <strong>{{ processTask.status === 'queued' ? '等待采样任务启动' : '正在生成账户交易子图' }}</strong>
-            <span>子图文件生成后，节点会以 2.5 秒间隔逐步显示。</span>
           </div>
         </section>
       </div>
@@ -390,6 +408,7 @@ export default {
       userId: localStorage.getItem('userId') || '-',
       overview: {},
       tasks: [],
+      anomalyRecords: [],
       accounts: [],
       riskTransactions: [],
       autoStatus: { status: 'stopped' },
@@ -555,17 +574,19 @@ export default {
       const requests = [
         axios.get(`${MODEL_API_BASE}/api/supervision/overview`, { timeout: GET_TIMEOUT }),
         axios.get(`${MODEL_API_BASE}/api/supervision/tasks`, { params: { page: 1, page_size: 50 }, timeout: GET_TIMEOUT }),
+        axios.get(`${MODEL_API_BASE}/api/supervision/anomaly-records`, { params: { page: 1, page_size: 100 }, timeout: GET_TIMEOUT }),
         axios.get(`${MODEL_API_BASE}/api/supervision/accounts`, { params: { page: 1, page_size: 100 }, timeout: GET_TIMEOUT }),
         axios.get(`${MODEL_API_BASE}/api/supervision/risk-transactions`, { params: { page: 1, page_size: 50 }, timeout: GET_TIMEOUT }),
         axios.get(`${MODEL_API_BASE}/api/supervision/auto/status`, { timeout: GET_TIMEOUT }),
         axios.get(`${SERVICE_CONTROL_BASE}/api/service/model/status`, { timeout: GET_TIMEOUT })
       ]
-      const [overview, tasks, accounts, risks, auto, service] = await Promise.allSettled(requests)
+      const [overview, tasks, anomalyRecords, accounts, risks, auto, service] = await Promise.allSettled(requests)
       if (overview.status === 'fulfilled') this.overview = overview.value.data
       if (tasks.status === 'fulfilled') {
         this.tasks = tasks.value.data.items || []
         this.syncProcessTask()
       }
+      if (anomalyRecords.status === 'fulfilled') this.anomalyRecords = anomalyRecords.value.data.items || []
       if (accounts.status === 'fulfilled') this.accounts = accounts.value.data.items || []
       if (risks.status === 'fulfilled') this.riskTransactions = risks.value.data.items || []
       if (auto.status === 'fulfilled') {
@@ -904,6 +925,9 @@ export default {
       return {
         manual: '人工补检',
         prebuilt: '自动发现',
+        selected_case: '精选案例',
+        local_parquet: '实时采样',
+        api_cache: '采样缓存',
         watchlist: '观察名单',
         transaction_stream: '交易流',
         risk_expand: '风险扩展',
