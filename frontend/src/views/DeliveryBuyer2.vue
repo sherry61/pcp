@@ -451,12 +451,19 @@ export default {
         visible: false,
         row: null,
         result: null
-      }
+      },
+      statusPollTimer: null
     }
   },
   async created() {
     await this.initUser()
     await this.refreshResults()
+  },
+  mounted() {
+    this.startStatusPolling()
+  },
+  beforeUnmount() {
+    this.stopStatusPolling()
   },
   computed: {
     pagedResultList() {
@@ -686,6 +693,41 @@ export default {
     async handleBuyerPageChange(page) {
       this.pagination.page = page
       await this.syncBuyerPageStatus()
+    },
+
+    startStatusPolling() {
+      this.stopStatusPolling()
+      this.statusPollTimer = window.setInterval(() => {
+        this.pollCurrentPageStatus()
+      }, 5000)
+    },
+
+    stopStatusPolling() {
+      if (this.statusPollTimer) {
+        window.clearInterval(this.statusPollTimer)
+        this.statusPollTimer = null
+      }
+    },
+
+    async pollCurrentPageStatus() {
+      if (this.isLoading) {
+        return
+      }
+
+      const rows = this.pagedResultList.filter((row) => row?.transaction_id)
+      if (!rows.length) {
+        return
+      }
+
+      await Promise.all(rows.map((row) => (
+        this.isHeRow(row)
+          ? this.refreshHeStatus(row, false)
+          : (this.isFlRow(row)
+            ? this.refreshFlStatus(row, false)
+            : (this.isPreRow(row)
+              ? this.refreshPreStatus(row, false)
+              : this.refreshMpcStatus(row, false)))
+      )))
     },
 
     async refreshHeStatus(row, showMessage = true) {

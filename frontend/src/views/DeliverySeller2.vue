@@ -405,6 +405,7 @@ export default {
         file: null,
         submitting: false
       },
+      statusPollTimer: null,
       contractVerified: false,
 
     contractVerifyLoading: false,
@@ -425,6 +426,12 @@ export default {
       const start = (this.pagination.page - 1) * this.pagination.pageSize
       return this.requestedAssets.slice(start, start + this.pagination.pageSize)
     }
+  },
+  mounted() {
+    this.startStatusPolling()
+  },
+  beforeUnmount() {
+    this.stopStatusPolling()
   },
   methods: {
     parseJwt(token) {
@@ -574,6 +581,41 @@ export default {
     async handleSellerPageChange(page) {
       this.pagination.page = page
       await this.syncSellerPageStatus()
+    },
+
+    startStatusPolling() {
+      this.stopStatusPolling()
+      this.statusPollTimer = window.setInterval(() => {
+        this.pollCurrentPageStatus()
+      }, 5000)
+    },
+
+    stopStatusPolling() {
+      if (this.statusPollTimer) {
+        window.clearInterval(this.statusPollTimer)
+        this.statusPollTimer = null
+      }
+    },
+
+    async pollCurrentPageStatus() {
+      if (this.isLoadingTransactions) {
+        return
+      }
+
+      const rows = this.pagedRequestedAssets.filter((row) => row?.transaction_id)
+      if (!rows.length) {
+        return
+      }
+
+      await Promise.all(rows.map((row) => (
+        this.isHeRow(row)
+          ? this.refreshHeStatus(row, false)
+          : (this.isFlRow(row)
+            ? this.refreshFlStatus(row, false)
+            : (this.isPreRow(row)
+              ? this.refreshPreStatus(row, false)
+              : this.refreshMpcStatus(row, false)))
+      )))
     },
 
     normalizePcType(value) {
@@ -869,7 +911,7 @@ export default {
 
     getSellerMpcActionLabel(row) {
       if (!row?.mpcRecord?.remote_task_id) {
-        return '等待买方创建'
+        return row?.syncingMpc ? '检查中' : '检查状态'
       }
 
       switch (String(row?.mpcRecord?.task_status || '').toLowerCase()) {
@@ -993,8 +1035,12 @@ async verifyContract(assetRow) {
   }
 },
     canOpenMpcSellerDialog(row) {
-      if (!row?.mpcRecord?.remote_task_id) {
+      if (!row?.transaction_id) {
         return false
+      }
+
+      if (!row?.mpcRecord?.remote_task_id) {
+        return !row?.syncingMpc
       }
 
       const status = String(row?.mpcRecord?.task_status || '').toLowerCase()

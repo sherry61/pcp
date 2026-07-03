@@ -5,15 +5,16 @@ function getMpcTaskBaseUrl() {
   return (
     process.env.MPC_TASK_BASE_URL ||
     process.env.MPC_BASE_URL ||
-    'http://127.0.0.1:8080/api/v1'
+    'http://127.0.0.1:28090/api/v1'
   ).replace(/\/+$/, '');
 }
 
 function createMpcClient(options = {}) {
   const baseURL = (options.baseUrl || getMpcTaskBaseUrl()).replace(/\/+$/, '');
+  const defaultTimeout = Number(process.env.MPC_TASK_TIMEOUT_MS || 120000);
   return axios.create({
     baseURL,
-    timeout: options.timeout || 30000
+    timeout: options.timeout || defaultTimeout
   });
 }
 

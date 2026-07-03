@@ -264,7 +264,7 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
       return mapped;
     }
 
-    if (isTerminalMpcStatus(mapped.task_status)) {
+    if (isTerminalMpcStatus(mapped.task_status) && mapped.task_status !== 'failed') {
       if (mapped.task_status === 'done' && !mapped.result) {
         const client = createMpcClient();
         const resultBody = await getRemoteTaskResult(client, mapped.remote_task_id);
@@ -387,13 +387,15 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
     '/api/privacy/mpc/upload-seller-data',
     upload.single('file'),
     async (req, res) => {
+      let transactionId = null;
+      let record = null;
       try {
-        const transactionId = req.body.transaction_id;
+        transactionId = req.body.transaction_id;
         if (!transactionId) {
           return res.status(400).json({ success: false, message: 'transaction_id 不能为空' });
         }
 
-        const record = mapMpcRecordRow(await getMpcRecordByTransactionId(transactionId));
+        record = mapMpcRecordRow(await getMpcRecordByTransactionId(transactionId));
         if (!record?.remote_task_id) {
           return res.status(404).json({ success: false, message: '请先创建 MPC 任务' });
         }
@@ -441,6 +443,28 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
         });
       } catch (error) {
         const formatted = formatMpcRouteError(error);
+
+        if (transactionId && record) {
+          try {
+            await upsertMpcRecord(transactionId, {
+              businessContractId: record.business_contract_id,
+              remoteTaskId: record.remote_task_id,
+              taskType: record.mpc_task_type,
+              buyerId: record.buyer_id,
+              sellerId: record.seller_id,
+              computeParams: record.compute_params,
+              sellerInput: record.seller_input,
+              sellerFilename: record.seller_filename,
+              taskStatus: 'failed',
+              remoteStatus: 'failed',
+              result: record.result,
+              lastError: formatted.body?.message || error.message
+            });
+          } catch (persistError) {
+            // Ignore persistence failures here; the upstream error is the primary signal.
+          }
+        }
+
         return res.status(formatted.status).json({
           success: false,
           ...formatted.body
