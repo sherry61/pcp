@@ -44,8 +44,16 @@
             <el-table-column label="操作" min-width="432" align="center" header-align="center">
               <template #default="{ row }">
                 <div class="action-cell">
-                  <el-button v-if="isHeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.checkingHe" @click="openHeDelivery(row)">
-                    执行交付
+                  <el-button
+                    v-if="isHeRow(row)"
+                    size="small"
+                    type="primary"
+                    :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerHeDeliveryDisabled(row) }]"
+                    :loading="row.checkingHe"
+                    :disabled="isSellerHeDeliveryDisabled(row)"
+                    @click="openHeDelivery(row)"
+                  >
+                    {{ getSellerHeActionLabel(row) }}
                   </el-button>
                   <el-button
                     v-if="isFlRow(row)"
@@ -194,7 +202,7 @@
             </div>
 
             <div class="dialog-row file-row">
-              <span class="dialog-label">卖方输入压缩包</span>
+              <span class="dialog-label">训练结果压缩包</span>
               <div class="file-action-group">
                 <input
                   ref="flBatchZipInput"
@@ -648,14 +656,15 @@ export default {
     getStatusText(rowOrStatus) {
       if (typeof rowOrStatus === 'object' && rowOrStatus !== null) {
         const businessStatus = this.getSellerDeliveryStatus(rowOrStatus)
+        const currentStatus = String(this.getCurrentStatus(rowOrStatus) || '').toUpperCase()
         const labelMap = {
           WAIT_BUYER: '待买方操作',
           WAIT_SELLER: '待卖方交付',
-          PROCESSING: '处理中',
+          PROCESSING: currentStatus === 'PAMING' ? '审计中' : '计算中',
           COMPLETED: '已完成',
           FAILED: '失败'
         }
-        return labelMap[businessStatus] || '处理中'
+        return labelMap[businessStatus] || '计算中'
       }
 
       return heConfig.getPcpStatusText(rowOrStatus)
@@ -716,6 +725,7 @@ export default {
 
       if (
         currentStatus === 'NOT_EXIST' ||
+        currentStatus === 'ACTIVE' ||
         currentStatus === 'CREATED' ||
         currentStatus === 'WAITING_INPUT' ||
         currentStatus === 'WAITING_EPOCH_INPUT' ||
@@ -876,6 +886,39 @@ export default {
           return '处理中'
       }
     },
+
+    getSellerHeActionLabel(row) {
+      const status = String(row?.heRecord?.pcp_status || '').toUpperCase()
+      if (
+        status === 'QUEUED' ||
+        status === 'RUNNING' ||
+        status === 'COMPUTED' ||
+        status === 'PAMING' ||
+        status === 'PAM_PASSED' ||
+        status === 'COMPLETED'
+      ) {
+        return '已执行'
+      }
+
+      return '执行交付'
+    },
+
+    isSellerHeDeliveryDisabled(row) {
+      const status = String(row?.heRecord?.pcp_status || '').toUpperCase()
+      if (!row?.heRecord?.public_keys_ready) {
+        return true
+      }
+
+      return (
+        status === 'QUEUED' ||
+        status === 'RUNNING' ||
+        status === 'COMPUTED' ||
+        status === 'PAMING' ||
+        status === 'PAM_PASSED' ||
+        status === 'COMPLETED'
+      )
+    },
+
 async verifyContract(assetRow) {
 
   this.contractVerifyLoading = true;
@@ -1059,10 +1102,6 @@ async verifyContract(assetRow) {
 
     getSellerFlDeliveryActionLabel(row) {
       const status = String(row?.flRecord?.pcp_status || '').toUpperCase()
-      if (!row?.flRecord?.pcp_contract_id) {
-        return '等待买方请求'
-      }
-
       if (
         status === 'QUEUED' ||
         status === 'RUNNING' ||

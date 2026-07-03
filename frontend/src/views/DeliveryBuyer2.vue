@@ -780,6 +780,7 @@ export default {
 
       if (
         currentStatus === 'NOT_EXIST' ||
+        currentStatus === 'ACTIVE' ||
         currentStatus === 'CREATED' ||
         currentStatus === 'JOINED' ||
         currentStatus === 'WAITING_INPUT' ||
@@ -813,14 +814,15 @@ export default {
     },
 
     getCurrentStatusText(row) {
+      const currentStatus = String(this.getCurrentStatus(row) || '').toUpperCase()
       const labelMap = {
         WAIT_BUYER: '待买方操作',
         WAIT_SELLER: '待卖方交付',
-        PROCESSING: '处理中',
+        PROCESSING: currentStatus === 'PAMING' ? '审计中' : '计算中',
         COMPLETED: '已完成',
         FAILED: '失败'
       }
-      return labelMap[this.getBuyerDeliveryStatus(row)] || '处理中'
+      return labelMap[this.getBuyerDeliveryStatus(row)] || '计算中'
     },
 
     canDownloadHeResult(row) {

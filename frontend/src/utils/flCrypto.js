@@ -498,6 +498,14 @@ function resolveFlResultExtension(contentType) {
     return 'zip';
   }
 
+  if (normalized === 'application/gzip' || normalized === 'gzip') {
+    return 'gz';
+  }
+
+  if (normalized === 'application/json' || normalized === 'json') {
+    return 'json';
+  }
+
   if (normalized === 'torchscript' || normalized === 'model-bytes') {
     return 'pt';
   }
@@ -512,6 +520,18 @@ function resolveFlResultExtension(contentType) {
 function resolveFlResultMimeType(contentType) {
   const normalized = String(contentType || '').trim().toLowerCase();
 
+  if (normalized === 'application/zip' || normalized === 'zip') {
+    return 'application/zip';
+  }
+
+  if (normalized === 'application/gzip' || normalized === 'gzip') {
+    return 'application/gzip';
+  }
+
+  if (normalized === 'application/json' || normalized === 'json') {
+    return 'application/json';
+  }
+
   if (normalized === 'safetensors') {
     return 'application/octet-stream';
   }
@@ -521,6 +541,42 @@ function resolveFlResultMimeType(contentType) {
   }
 
   return 'application/octet-stream';
+}
+
+function inferFlPlaintextContentType(plainBytes, fallbackContentType) {
+  const fallback = String(fallbackContentType || '').trim().toLowerCase();
+  if (fallback && fallback !== 'application/octet-stream') {
+    return fallback;
+  }
+
+  if (!(plainBytes instanceof Uint8Array) || !plainBytes.length) {
+    return fallback || 'application/octet-stream';
+  }
+
+  if (
+    plainBytes.length >= 4 &&
+    plainBytes[0] === 0x50 &&
+    plainBytes[1] === 0x4b &&
+    plainBytes[2] === 0x03 &&
+    plainBytes[3] === 0x04
+  ) {
+    return 'application/zip';
+  }
+
+  if (
+    plainBytes.length >= 2 &&
+    plainBytes[0] === 0x1f &&
+    plainBytes[1] === 0x8b
+  ) {
+    return 'application/gzip';
+  }
+
+  const prefix = new TextDecoder().decode(plainBytes.slice(0, 64)).trimStart();
+  if (prefix.startsWith('{') || prefix.startsWith('[')) {
+    return 'application/json';
+  }
+
+  return fallback || 'application/octet-stream';
 }
 
 function buildDefaultFlResultFilename({
@@ -573,16 +629,20 @@ async function decryptFlResultArchive({
       resultDek,
       base64ToBytes(String(envelope.nonce || ''))
     ));
+    const inferredContentType = inferFlPlaintextContentType(
+      plainBytes,
+      envelope.content_type || 'application/octet-stream'
+    );
 
     return {
       meta: {
-        content_type: envelope.content_type || 'application/octet-stream',
+        content_type: inferredContentType,
         schema_version: envelope.schema_version,
         encrypted_for: envelope.encrypted_for || '',
         plaintext_sha256: envelope.plaintext_sha256 || ''
       },
       blob: new Blob([plainBytes], {
-        type: resolveFlResultMimeType(envelope.content_type)
+        type: resolveFlResultMimeType(inferredContentType)
       })
     };
   }
@@ -598,11 +658,18 @@ async function decryptFlResultArchive({
     resultDek,
     base64ToBytes(String(resultMeta.iv || ''))
   ));
+  const inferredContentType = inferFlPlaintextContentType(
+    plainBytes,
+    resultMeta.content_type || 'application/octet-stream'
+  );
 
   return {
-    meta: resultMeta,
+    meta: {
+      ...resultMeta,
+      content_type: inferredContentType
+    },
     blob: new Blob([plainBytes], {
-      type: resolveFlResultMimeType(resultMeta.content_type)
+      type: resolveFlResultMimeType(inferredContentType)
     })
   };
 }
