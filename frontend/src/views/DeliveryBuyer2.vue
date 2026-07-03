@@ -60,7 +60,7 @@
                     :disabled="row.heRecord?.public_keys_ready"
                     @click="uploadHePublicKeys(row)"
                   >
-                    {{ row.heRecord?.public_keys_ready ? '已申请' : '请求交付' }}
+                    {{ row.heRecord?.public_keys_ready ? '已请求' : '请求交付' }}
                   </el-button>
                   <el-button
                     v-if="isHeRow(row)"
@@ -78,9 +78,9 @@
                     size="small"
                     type="primary"
                     class="action-btn-primary"
-                    :loading="row.creatingFlContract"
+                    :loading="row.requestingFlDelivery"
                     :disabled="Boolean(row.flRecord?.pcp_contract_id)"
-                    @click="openFlContractDialog(row)"
+                    @click="openFlRequestDialog(row)"
                   >
                     {{ getBuyerFlActionLabel(row) }}
                   </el-button>
@@ -93,7 +93,7 @@
                     :disabled="!canDownloadFlBuyerResult(row)"
                     @click="downloadFlResult(row)"
                   >
-                    下载 Top 模型
+                    下载结果
                   </el-button>
                   <el-button
                     v-if="isPreRow(row)"
@@ -156,7 +156,7 @@
           </div>
         </div>
 
-        <el-dialog v-model="flDialog.visible" title="创建 FL 合同" width="680px">
+        <el-dialog v-model="flDialog.visible" title="请求交付" width="680px">
           <div v-if="flDialog.row" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
@@ -164,7 +164,7 @@
             </div>
             <div class="dialog-grid">
               <div class="dialog-field">
-                <span class="dialog-label">Top 模型初始包</span>
+                <span class="dialog-label">顶层模型初始包</span>
                 <div class="file-action-group">
                   <input ref="buyerFlTopModelInput" class="hidden-file-input" type="file" accept=".zip,application/zip" @change="onFlBuyerFileChange('topModelFile', $event)" />
                   <el-button size="small" plain @click="openFileSelector('buyerFlTopModelInput')">
@@ -175,7 +175,7 @@
               </div>
 
               <div class="dialog-field">
-                <span class="dialog-label">Bottom 模型初始包</span>
+                <span class="dialog-label">底层模型初始包</span>
                 <div class="file-action-group">
                   <input ref="buyerFlBottomModelInput" class="hidden-file-input" type="file" accept=".zip,application/zip" @change="onFlBuyerFileChange('bottomModelFile', $event)" />
                   <el-button size="small" plain @click="openFileSelector('buyerFlBottomModelInput')">
@@ -185,15 +185,12 @@
                 <div v-if="flDialog.bottomModelFile" class="file-name inline-file-name">{{ flDialog.bottomModelFile.name }}</div>
               </div>
             </div>
-            <div class="dialog-hint compact-hint">
-              <span>请上传符合 PCC 要求的 Top / Bottom 初始模型 ZIP 包。浏览器会本地生成买方 RSA 密钥，并据此创建 FL 合同。</span>
-            </div>
           </div>
 
           <template #footer>
-            <el-button @click="closeFlContractDialog">取消</el-button>
-            <el-button type="primary" :loading="flDialog.submitting" @click="submitFlContract">
-              创建 FL 合同
+            <el-button @click="closeFlRequestDialog">取消</el-button>
+            <el-button type="primary" :loading="flDialog.submitting" @click="submitFlRequest">
+              请求交付
             </el-button>
           </template>
         </el-dialog>
@@ -260,18 +257,14 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="flDecryptDialog.visible" title="本地解密 FL 结果" width="620px">
+        <el-dialog v-model="flDecryptDialog.visible" title="下载结果" width="620px">
           <div v-if="flDecryptDialog.row" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
               <span>{{ flDecryptDialog.row.transaction_id }}</span>
             </div>
-            <div class="dialog-row">
-              <span class="dialog-label">结果类型</span>
-              <span>{{ flDecryptDialog.resultRole }}</span>
-            </div>
             <div class="dialog-row file-row">
-              <span class="dialog-label">FL 私钥文件</span>
+              <span class="dialog-label">私钥文件</span>
               <div class="file-action-group">
                 <input ref="flPrivateKeyInput" class="hidden-file-input" type="file" accept=".json" @change="onFlPrivateKeyFileChange" />
                 <el-button size="small" plain @click="openFileSelector('flPrivateKeyInput')">
@@ -283,7 +276,7 @@
               {{ flDecryptDialog.privateKeyFile.name }}
             </div>
             <div class="dialog-hint">
-              <span>请选择 `.json` 私钥文件，浏览器会在本地解密 FL 结果，并直接导出原始文件。</span>
+              <span>请选择私钥文件，浏览器会在本地解密结果并直接导出原始文件。</span>
             </div>
           </div>
 
@@ -574,7 +567,7 @@ export default {
                   preRecord: null,
                   mpcRecord: null,
                   uploadingKeys: false,
-                  creatingFlContract: false,
+                  requestingFlDelivery: false,
                   downloading: false,
                   downloadingFl: false,
                   downloadingPre: false,
@@ -827,37 +820,7 @@ export default {
         COMPLETED: '已完成',
         FAILED: '失败'
       }
-      let baseLabel = labelMap[this.getBuyerDeliveryStatus(row)] || '处理中'
-      if (!this.isFlRow(row)) {
-        return baseLabel
-      }
-
-      const flStatus = String(row?.flRecord?.pcp_status || '').toUpperCase()
-      if (baseLabel === '待卖方交付' && flStatus === 'ACTIVE') {
-        baseLabel = '等待卖方加入'
-      } else if (baseLabel === '待卖方交付' && flStatus === 'WAITING_EPOCH_INPUT') {
-        baseLabel = '等待卖方提交 Epoch'
-      } else if (baseLabel === '处理中' && flStatus === 'PAMING') {
-        baseLabel = '审计中'
-      }
-
-      const extras = []
-      const hasActiveAttempt = Boolean(row?.flRecord?.current_attempt_id)
-      if (hasActiveAttempt) {
-        extras.push(`Attempt ${row.flRecord.current_attempt_id}`)
-      }
-      if (
-        hasActiveAttempt &&
-        Number.isFinite(Number(row?.flRecord?.current_epoch)) &&
-        Number(row.flRecord.current_epoch) > 0
-      ) {
-        extras.push(`Epoch ${Number(row.flRecord.current_epoch)}`)
-      }
-      if (row?.flRecord?.summary?.seller_join_count) {
-        extras.push(`Joined ${row.flRecord.summary.seller_join_count}`)
-      }
-
-      return extras.length ? `${baseLabel} · ${extras.join(' · ')}` : baseLabel
+      return labelMap[this.getBuyerDeliveryStatus(row)] || '处理中'
     },
 
     canDownloadHeResult(row) {
@@ -877,27 +840,10 @@ export default {
 
     getBuyerFlActionLabel(row) {
       if (!row?.flRecord?.pcp_contract_id) {
-        return '创建合同'
+        return '请求交付'
       }
 
-      const status = String(row?.flRecord?.pcp_status || '').toUpperCase()
-      if (status === 'ACTIVE') {
-        return '等待卖方加入'
-      }
-      if (status === 'WAITING_EPOCH_INPUT') {
-        return '等待 Epoch 输入'
-      }
-      if (status === 'PAMING') {
-        return '审计中'
-      }
-      if (status === 'PAM_PASSED' || status === 'COMPLETED') {
-        return '训练完成'
-      }
-      if (status === 'FAILED' || status === 'PAM_FAILED') {
-        return '流程失败'
-      }
-
-      return '合同已创建'
+      return '已请求'
     },
 
     getStatusPillClass(row) {
@@ -1124,7 +1070,7 @@ export default {
       }
     },
 
-    openFlContractDialog(row) {
+    openFlRequestDialog(row) {
       if (!row?.transaction_id) return
       this.flDialog.visible = true
       this.flDialog.row = row
@@ -1141,7 +1087,7 @@ export default {
       this.$refs[refName]?.click?.()
     },
 
-    async submitFlContract() {
+    async submitFlRequest() {
       if (!this.flDialog.row) return
       if (!this.flDialog.topModelFile || !this.flDialog.bottomModelFile) {
         this.$message?.warning('请先选择 Top 模型和 Bottom 模型文件')
@@ -1157,7 +1103,7 @@ export default {
       }
 
       const row = this.flDialog.row
-      row.creatingFlContract = true
+      row.requestingFlDelivery = true
       this.flDialog.submitting = true
       try {
         const keyMaterial = await flCrypto.generateFlKeyPair()
@@ -1181,13 +1127,13 @@ export default {
 
         row.flRecord = response.data?.item || row.flRecord
         await this.refreshFlStatus(row, false)
-        this.$message?.success(response.data?.message || 'FL 合同已创建，私钥已下载到本地')
-        this.closeFlContractDialog()
+        this.$message?.success(response.data?.message || 'FL 交付请求已提交，私钥已下载到本地')
+        this.closeFlRequestDialog()
       } catch (error) {
-        const message = error?.response?.data?.message || error?.message || '创建 FL 合同失败'
+        const message = error?.response?.data?.message || error?.message || 'FL 交付请求提交失败'
         this.$message?.error(message)
       } finally {
-        row.creatingFlContract = false
+        row.requestingFlDelivery = false
         this.flDialog.submitting = false
       }
     },
@@ -1467,7 +1413,7 @@ export default {
       this.preDecryptDialog.processing = false
     },
 
-    closeFlContractDialog() {
+    closeFlRequestDialog() {
       this.flDialog.visible = false
       this.flDialog.row = null
       this.flDialog.topModelFile = null

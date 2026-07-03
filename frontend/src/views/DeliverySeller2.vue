@@ -38,35 +38,6 @@
                 <el-button size="small" text class="contract-link" @click="viewContract(row)">
                   <span>查看合约</span>
                 </el-button>
-                <!--
-                临时隐藏校验合约入口。
-                DeliverySeller2 当前未按行维护 contractVerified / verifyingContract，
-                先去掉按钮和状态展示，避免误导用户。
-                <el-button
-                  size="small"
-                  type="primary"
-                  :loading="row.verifyingContract"
-                  @click="verifyContract(row)"
-                >
-                  校验合约
-                </el-button>
-
-                <el-tag
-                  v-if="row.contractVerified"
-                  type="success"
-                  size="small"
-                >
-                  已校验
-                </el-tag>
-
-                <el-tag
-                  v-else
-                  type="info"
-                  size="small"
-                >
-                  未校验
-                </el-tag>
-                -->
               </template>
             </el-table-column>
 
@@ -77,35 +48,15 @@
                     执行交付
                   </el-button>
                   <el-button
-                    v-if="isFlRow(row) && !hasSellerJoinedFl(row)"
-                    size="small"
-                    type="primary"
-                    class="action-btn-primary"
-                    :loading="row.processingFl || row.checkingFl"
-                    @click="openFlJoinDialog(row)"
-
-                  >
-                    {{ getSellerFlJoinActionLabel(row) }}
-                  </el-button>
-                  <el-button
-                    v-else-if="isFlRow(row)"
-                    size="small"
-                    type="primary"
-                    class="action-btn-primary action-btn-disabled-primary"
-                    disabled
-                  >
-                    {{ getSellerFlJoinedLabel(row) }}
-                  </el-button>
-                  <el-button
                     v-if="isFlRow(row)"
                     size="small"
-                    type="success"
-                    class="action-btn-primary"
-                    :loading="row.uploadingFlBatch || row.checkingFlBatch"
-                    :disabled="!canOpenFlBatchDialog(row)"
-                    @click="openFlBatchDialog(row)"
+                    type="primary"
+                    :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerFlDeliveryDisabled(row) }]"
+                    :loading="row.processingFl || row.uploadingFlBatch || row.checkingFl"
+                    :disabled="isSellerFlDeliveryDisabled(row)"
+                    @click="openFlDeliveryDialog(row)"
                   >
-                    {{ getSellerFlBatchActionLabel(row) }}
+                    {{ getSellerFlDeliveryActionLabel(row) }}
                   </el-button>
                   <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)">
                     执行交付
@@ -124,24 +75,13 @@
                   <el-button
                     v-if="isFlRow(row)"
                     size="small"
-                    type="primary"
-                    class="action-btn-secondary"
-                    :loading="row.downloadingFlBottom"
-                    :disabled="!getSellerBottomModelPackage(row)"
-                    @click="downloadFlSellerBottomModel(row)"
-                  >
-                    {{ getSellerFlBottomModelLabel(row) }}
-                  </el-button>
-                  <el-button
-                    v-if="isFlRow(row)"
-                    size="small"
                     type="warning"
                     class="action-btn-secondary"
                     :loading="row.downloadingFlGradient"
                     :disabled="!getLatestSellerGradientPackage(row)"
                     @click="downloadFlSellerGradient(row)"
                   >
-                    {{ getSellerFlGradientLabel(row) }}
+                    下载结果
                   </el-button>
                 </div>
               </template>
@@ -246,39 +186,15 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="flJoinDialog.visible" title="提交 FL 材料" width="620px">
-          <div v-if="flJoinDialog.asset" class="dialog-body">
+        <el-dialog v-model="flDeliveryDialog.visible" title="执行交付" width="620px">
+          <div v-if="flDeliveryDialog.asset" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
-              <span>{{ flJoinDialog.asset.transaction_id }}</span>
-            </div>
-
-            <div class="dialog-hint compact-hint">
-              <span>提交后将为当前卖方在浏览器本地生成 FL RSA 密钥，并把公钥上传到 PCC 完成 seller join。</span>
-            </div>
-
-            <div class="dialog-hint compact-hint">
-              <span>提交成功后，请立即下载并妥善保存卖方私钥文件，后续解密底模和梯度结果都要使用。</span>
-            </div>
-          </div>
-
-          <template #footer>
-            <el-button @click="closeFlJoinDialog">取消</el-button>
-            <el-button type="primary" :loading="flJoinDialog.submitting" @click="submitFlJoin">
-              提交材料
-            </el-button>
-          </template>
-        </el-dialog>
-
-        <el-dialog v-model="flBatchDialog.visible" title="发起 FL 训练" width="620px">
-          <div v-if="flBatchDialog.asset" class="dialog-body">
-            <div class="dialog-row">
-              <span class="dialog-label">交易ID</span>
-              <span>{{ flBatchDialog.asset.transaction_id }}</span>
+              <span>{{ flDeliveryDialog.asset.transaction_id }}</span>
             </div>
 
             <div class="dialog-row file-row">
-              <span class="dialog-label">Seller Batch ZIP</span>
+              <span class="dialog-label">卖方输入压缩包</span>
               <div class="file-action-group">
                 <input
                   ref="flBatchZipInput"
@@ -292,33 +208,29 @@
                 </el-button>
               </div>
             </div>
-            <div v-if="flBatchDialog.file" class="file-name">{{ flBatchDialog.file.name }}</div>
+            <div v-if="flDeliveryDialog.file" class="file-name">{{ flDeliveryDialog.file.name }}</div>
 
             <div class="dialog-hint compact-hint">
-              <span>请上传卖方本地封装好的 batch ZIP。系统会将其转换为 PCC 所需的 epoch input bundle 并提交训练。</span>
+              <span>卖方私钥文件和底层模型会在执行交付前自动下载。</span>
             </div>
           </div>
 
           <template #footer>
-            <el-button @click="closeFlBatchDialog">取消</el-button>
-            <el-button type="primary" :loading="flBatchDialog.submitting" @click="submitFlBatch">
-              发起训练
+            <el-button @click="closeFlDeliveryDialog">取消</el-button>
+            <el-button type="primary" :loading="flDeliveryDialog.submitting" @click="submitFlDelivery">
+              提交
             </el-button>
           </template>
         </el-dialog>
 
-        <el-dialog v-model="flDecryptDialog.visible" title="本地解密 FL 结果" width="620px">
+        <el-dialog v-model="flDecryptDialog.visible" title="下载结果" width="620px">
           <div v-if="flDecryptDialog.row" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
               <span>{{ flDecryptDialog.row.transaction_id }}</span>
             </div>
-            <div class="dialog-row">
-              <span class="dialog-label">结果类型</span>
-              <span>{{ flDecryptDialog.resultRole }}</span>
-            </div>
             <div class="dialog-row file-row">
-              <span class="dialog-label">FL 私钥文件</span>
+              <span class="dialog-label">私钥文件</span>
               <div class="file-action-group">
                 <input ref="sellerFlPrivateKeyInput" class="hidden-file-input" type="file" accept=".json" @change="onFlPrivateKeyFileChange" />
                 <el-button size="small" plain @click="openFileSelector('sellerFlPrivateKeyInput')">
@@ -330,7 +242,7 @@
               {{ flDecryptDialog.privateKeyFile.name }}
             </div>
             <div class="dialog-hint">
-              <span>请选择 `.json` 私钥文件，浏览器会在本地解密 FL 结果，并直接导出原始文件。</span>
+              <span>请选择私钥文件，浏览器会在本地解密结果并直接导出原始文件。</span>
             </div>
           </div>
 
@@ -464,12 +376,7 @@ export default {
         file: null,
         submitting: false
       },
-      flJoinDialog: {
-        visible: false,
-        asset: null,
-        submitting: false
-      },
-      flBatchDialog: {
+      flDeliveryDialog: {
         visible: false,
         asset: null,
         file: null,
@@ -599,12 +506,14 @@ export default {
                   preRecord: null,
                   mpcRecord: null,
                   checkingHe: false,
+                  checkingFl: false,
                   syncingHe: false,
                   syncingFl: false,
                   syncingPre: false,
                   syncingMpc: false,
                   processingPre: false,
                   processingFl: false,
+                  uploadingFlBatch: false,
                   uploadingMpc: false,
                   flBottomModelDownloaded: false,
                   downloadingFlBottom: false,
@@ -740,46 +649,13 @@ export default {
       if (typeof rowOrStatus === 'object' && rowOrStatus !== null) {
         const businessStatus = this.getSellerDeliveryStatus(rowOrStatus)
         const labelMap = {
-          WAIT_BUYER: '待买方创建',
+          WAIT_BUYER: '待买方操作',
           WAIT_SELLER: '待卖方交付',
           PROCESSING: '处理中',
           COMPLETED: '已完成',
           FAILED: '失败'
         }
-        let baseLabel = labelMap[businessStatus] || '处理中'
-        if (!this.isFlRow(rowOrStatus)) {
-          return baseLabel
-        }
-
-        const flStatus = String(rowOrStatus?.flRecord?.pcp_status || '').toUpperCase()
-        if (baseLabel === '待卖方交付' && flStatus === 'ACTIVE') {
-          baseLabel = '等待 seller join'
-        } else if (baseLabel === '待卖方交付' && flStatus === 'WAITING_EPOCH_INPUT') {
-          baseLabel = '等待提交 Epoch'
-        } else if (baseLabel === '处理中' && flStatus === 'PAMING') {
-          baseLabel = '审计中'
-        }
-
-        const extras = []
-        const hasActiveAttempt = Boolean(rowOrStatus?.flRecord?.current_attempt_id)
-        if (hasActiveAttempt) {
-          extras.push(`Attempt ${rowOrStatus.flRecord.current_attempt_id}`)
-        }
-        if (
-          hasActiveAttempt &&
-          Number.isFinite(Number(rowOrStatus?.flRecord?.current_epoch)) &&
-          Number(rowOrStatus.flRecord.current_epoch) > 0
-        ) {
-          extras.push(`Epoch ${Number(rowOrStatus.flRecord.current_epoch)}`)
-        }
-        if (rowOrStatus?.flRecord?.summary?.seller_bottom_model_ready_count) {
-          extras.push(`Bottom Ready ${rowOrStatus.flRecord.summary.seller_bottom_model_ready_count}`)
-        }
-        if (rowOrStatus?.flRecord?.summary?.seller_gradient_ready_count) {
-          extras.push(`Gradient Ready ${rowOrStatus.flRecord.summary.seller_gradient_ready_count}`)
-        }
-
-        return extras.length ? `${baseLabel} · ${extras.join(' · ')}` : baseLabel
+        return labelMap[businessStatus] || '处理中'
       }
 
       return heConfig.getPcpStatusText(rowOrStatus)
@@ -1181,69 +1057,40 @@ async verifyContract(assetRow) {
       row.flBottomModelDownloaded = localStorage.getItem(this.getFlBottomModelDownloadKey(row)) === '1'
     },
 
-    canOpenFlBatchDialog(row) {
-      return Boolean(this.hasSellerJoinedFl(row) && this.hasDownloadedFlBottomModel(row))
-    },
-
-    getSellerFlJoinActionLabel(row) {
+    getSellerFlDeliveryActionLabel(row) {
       const status = String(row?.flRecord?.pcp_status || '').toUpperCase()
       if (!row?.flRecord?.pcp_contract_id) {
-        return '等待合同'
+        return '等待买方请求'
       }
-      if (status === 'ACTIVE' || status === 'CREATED') {
-        return '加入训练'
+
+      if (
+        status === 'QUEUED' ||
+        status === 'RUNNING' ||
+        status === 'COMPUTED' ||
+        status === 'PAMING' ||
+        status === 'PAM_PASSED' ||
+        status === 'COMPLETED'
+      ) {
+        return '已执行'
       }
-      return '加入训练'
+
+      return '执行交付'
     },
 
-    getSellerFlJoinedLabel(row) {
-      const joinPackage = this.getSellerJoinPackage(row)
-      if (joinPackage?.download_token) {
-        return '已加入'
-      }
-      if (joinPackage?.token_status) {
-        return '已加入待回写'
-      }
-      return '已加入'
-    },
-
-    getSellerFlBatchActionLabel(row) {
+    isSellerFlDeliveryDisabled(row) {
       const status = String(row?.flRecord?.pcp_status || '').toUpperCase()
-      if (!this.hasSellerJoinedFl(row)) {
-        return '先完成 Join'
+      if (!row?.flRecord?.pcp_contract_id) {
+        return true
       }
-      if (!this.hasDownloadedFlBottomModel(row)) {
-        return '先下载底模'
-      }
-      if (status === 'WAITING_EPOCH_INPUT') {
-        return '提交 Epoch 输入'
-      }
-      if (status === 'PAMING') {
-        return '审计中'
-      }
-      if (status === 'PAM_PASSED' || status === 'COMPLETED') {
-        return '训练完成'
-      }
-      return '提交 Epoch 输入'
-    },
 
-    getSellerFlBottomModelLabel(row) {
-      const joinPackage = this.getSellerJoinPackage(row)
-      if (!joinPackage) {
-        return '等待 Join'
-      }
-      if (!joinPackage.download_token) {
-        return '等待底模回写'
-      }
-      return this.hasDownloadedFlBottomModel(row) ? '重新下载底模' : '下载底模'
-    },
-
-    getSellerFlGradientLabel(row) {
-      const gradientPackage = this.getLatestSellerGradientPackage(row)
-      if (!gradientPackage?.download_token) {
-        return '等待梯度回写'
-      }
-      return '下载梯度包'
+      return (
+        status === 'QUEUED' ||
+        status === 'RUNNING' ||
+        status === 'COMPUTED' ||
+        status === 'PAMING' ||
+        status === 'PAM_PASSED' ||
+        status === 'COMPLETED'
+      )
     },
 
     getLatestSellerGradientPackage(row) {
@@ -1395,7 +1242,7 @@ async verifyContract(assetRow) {
       event.target.value = ''
     },
 
-    async openFlJoinDialog(row) {
+    async openFlDeliveryDialog(row) {
       if (!row?.transaction_id) return
 
       row.checkingFl = true
@@ -1407,68 +1254,53 @@ async verifyContract(assetRow) {
           }
         })
         row.flRecord = response.data?.item || null
+        this.syncFlBottomModelDownloadedState(row)
 
         if (!row.flRecord?.pcp_contract_id) {
-          this.$message?.warning('买方尚未提交 FL 材料，请等待买方先创建合同')
-          return
-        }
-
-        if (this.hasSellerJoinedFl(row)) {
-          this.$message?.warning('当前卖方已完成 join，可直接下载底模')
-          return
-        }
-
-        this.flJoinDialog.visible = true
-        this.flJoinDialog.asset = row
-      } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'FL 状态查询失败'
-        this.$message?.error(message)
-      } finally {
-        row.checkingFl = false
-      }
-    },
-
-    async openFlBatchDialog(row) {
-      if (!row?.transaction_id) return
-
-      row.checkingFlBatch = true
-      try {
-        const response = await axios.get(`${API_BASE}/api/privacy/fl/status`, {
-          params: {
-            transactionId: row.transaction_id,
-            entityId: row.seller_address
-          }
-        })
-        row.flRecord = response.data?.item || null
-
-        if (!row.flRecord?.pcp_contract_id) {
-          this.$message?.warning('买方尚未提交 FL 材料，请等待买方先创建合同')
+          this.$message?.warning('请等待买方先请求交付')
           return
         }
 
         if (!this.hasSellerJoinedFl(row)) {
-          this.$message?.warning('请先完成 seller join')
-          return
+          row.processingFl = true
+          const keyMaterial = await flCrypto.generateFlKeyPair()
+
+          await axios.post(`${API_BASE}/api/privacy/fl/join`, {
+            transactionId: row.transaction_id,
+            sellerId: row.seller_address,
+            sellerPublicKey: keyMaterial.publicKeyHex
+          })
+
+          const privateKeyText = flCrypto.serializeFlPrivateKeyMaterial({
+            role: 'seller',
+            transactionId: row.transaction_id,
+            privateKeyPem: keyMaterial.privateKeyPem
+          })
+
+          flCrypto.downloadFlPrivateKeyFile({
+            role: 'seller',
+            transactionId: row.transaction_id,
+            privateKeyPem: keyMaterial.privateKeyPem
+          })
+
+          await this.refreshFlStatus(row, false)
+          await this.autoDownloadFlSellerBottomModel(row, privateKeyText)
         }
 
-        if (!this.hasDownloadedFlBottomModel(row)) {
-          this.$message?.warning('请先下载底模，再发起训练')
-          return
-        }
-
-        this.flBatchDialog.visible = true
-        this.flBatchDialog.asset = row
-        this.flBatchDialog.file = null
+        this.flDeliveryDialog.visible = true
+        this.flDeliveryDialog.asset = row
+        this.flDeliveryDialog.file = null
       } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'FL 状态查询失败'
+        const message = error?.response?.data?.message || error?.message || 'FL 交付准备失败'
         this.$message?.error(message)
       } finally {
-        row.checkingFlBatch = false
+        row.processingFl = false
+        row.checkingFl = false
       }
     },
 
     onFlZipFileChange(event) {
-      this.flBatchDialog.file = event.target.files?.[0] || null
+      this.flDeliveryDialog.file = event.target.files?.[0] || null
       event.target.value = ''
     },
 
@@ -1476,76 +1308,36 @@ async verifyContract(assetRow) {
       this.$refs[refName]?.click?.()
     },
 
-    async submitFlJoin() {
-      if (!this.flJoinDialog.asset) return
-
-      const assetRow = this.flJoinDialog.asset
-      if (!assetRow.flRecord?.pcp_contract_id) {
-        this.$message?.warning('买方尚未创建 FL 合同')
+    async submitFlDelivery() {
+      if (!this.flDeliveryDialog.asset) return
+      if (!this.flDeliveryDialog.file) {
+        this.$message?.warning('请先选择压缩包')
         return
       }
 
-      this.flJoinDialog.submitting = true
-      assetRow.processingFl = true
-      try {
-        const keyMaterial = await flCrypto.generateFlKeyPair()
-        await axios.post(`${API_BASE}/api/privacy/fl/join`, {
-          transactionId: assetRow.transaction_id,
-          sellerId: assetRow.seller_address,
-          sellerPublicKey: keyMaterial.publicKeyHex
-        })
-        flCrypto.downloadFlPrivateKeyFile({
-          role: 'seller',
-          transactionId: assetRow.transaction_id,
-          privateKeyPem: keyMaterial.privateKeyPem
-        })
-        await this.refreshFlStatus(assetRow, false)
-        this.$message?.success('FL seller join 已提交，请先下载底模')
-        this.closeFlJoinDialog()
-      } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'FL 提交失败'
-        this.$message?.error(message)
-      } finally {
-        this.flJoinDialog.submitting = false
-        assetRow.processingFl = false
-      }
-    },
-
-    async submitFlBatch() {
-      if (!this.flBatchDialog.asset) return
-      if (!this.flBatchDialog.file) {
-        this.$message?.warning('请先选择 seller batch ZIP')
-        return
-      }
-
-      const assetRow = this.flBatchDialog.asset
+      const assetRow = this.flDeliveryDialog.asset
       if (!assetRow.flRecord?.pcp_contract_id) {
-        this.$message?.warning('买方尚未创建 FL 合同')
+        this.$message?.warning('买方尚未请求交付')
         return
       }
 
       if (!this.hasSellerJoinedFl(assetRow)) {
-        this.$message?.warning('请先完成 seller join')
+        this.$message?.warning('请重新点击执行交付')
         return
       }
 
-      if (!this.hasDownloadedFlBottomModel(assetRow)) {
-        this.$message?.warning('请先下载底模，再发起训练')
-        return
-      }
-
-      this.flBatchDialog.submitting = true
+      this.flDeliveryDialog.submitting = true
       assetRow.uploadingFlBatch = true
 
       try {
-        if (!String(this.flBatchDialog.file.name || '').toLowerCase().endsWith('.zip')) {
+        if (!String(this.flDeliveryDialog.file.name || '').toLowerCase().endsWith('.zip')) {
           throw new Error('仅支持上传 zip 压缩包')
         }
 
         const formData = new FormData()
         formData.append('transactionId', assetRow.transaction_id)
         formData.append('sellerId', assetRow.seller_address)
-        formData.append('batch_zip', this.flBatchDialog.file, this.flBatchDialog.file.name)
+        formData.append('batch_zip', this.flDeliveryDialog.file, this.flDeliveryDialog.file.name)
 
         const response = await axios.post(`${API_BASE}/api/privacy/fl/upload-batch`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
@@ -1553,13 +1345,13 @@ async verifyContract(assetRow) {
 
         assetRow.flRecord = response.data?.item || assetRow.flRecord
         await this.refreshFlStatus(assetRow, false)
-        this.$message?.success(response.data?.message || 'FL Epoch 输入已提交')
-        this.closeFlBatchDialog()
+        this.$message?.success(response.data?.message || '交付已提交')
+        this.closeFlDeliveryDialog()
       } catch (error) {
         const message = error?.response?.data?.message || error?.message || 'FL 提交失败'
         this.$message?.error(message)
       } finally {
-        this.flBatchDialog.submitting = false
+        this.flDeliveryDialog.submitting = false
         assetRow.uploadingFlBatch = false
       }
     },
@@ -1620,17 +1412,11 @@ async verifyContract(assetRow) {
       this.preDialog.submitting = false
     },
 
-    closeFlJoinDialog() {
-      this.flJoinDialog.visible = false
-      this.flJoinDialog.asset = null
-      this.flJoinDialog.submitting = false
-    },
-
-    closeFlBatchDialog() {
-      this.flBatchDialog.visible = false
-      this.flBatchDialog.asset = null
-      this.flBatchDialog.file = null
-      this.flBatchDialog.submitting = false
+    closeFlDeliveryDialog() {
+      this.flDeliveryDialog.visible = false
+      this.flDeliveryDialog.asset = null
+      this.flDeliveryDialog.file = null
+      this.flDeliveryDialog.submitting = false
     },
 
     closeMpcSellerDialog() {
@@ -1640,14 +1426,6 @@ async verifyContract(assetRow) {
       this.mpcDialog.submitting = false
     },
 
-    async downloadFlSellerBottomModel(row) {
-      await this.downloadFlSellerResult(row, {
-        resultRole: 'fl_bottom_model',
-        rowLoadingKey: 'downloadingFlBottom',
-        filename: ''
-      })
-    },
-
     async downloadFlSellerGradient(row) {
       await this.downloadFlSellerResult(row, {
         resultRole: 'fl_gradient_epoch_bundle',
@@ -1655,6 +1433,38 @@ async verifyContract(assetRow) {
         rowLoadingKey: 'downloadingFlGradient',
         filename: ''
       })
+    },
+
+    async autoDownloadFlSellerBottomModel(row, privateKeyText) {
+      const joinPackage = this.getSellerBottomModelPackage(row)
+      if (!joinPackage?.download_token) {
+        throw new Error('底层模型暂未就绪，请稍后刷新后重试')
+      }
+
+      row.downloadingFlBottom = true
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/fl/result`, {
+          params: {
+            transactionId: row.transaction_id,
+            receiverRole: 'seller',
+            sellerId: row.seller_address,
+            resultRole: 'fl_bottom_model'
+          },
+          responseType: 'blob'
+        })
+
+        await flCrypto.downloadDecryptedFlResult({
+          encryptedTarBuffer: await response.data.arrayBuffer(),
+          privateKeyText,
+          filename: '',
+          resultRole: 'fl_bottom_model',
+          transactionId: row.transaction_id,
+          batchIndex: null
+        })
+        this.markFlBottomModelDownloaded(row)
+      } finally {
+        row.downloadingFlBottom = false
+      }
     },
 
     async downloadFlSellerResult(row, {
@@ -1698,7 +1508,7 @@ async verifyContract(assetRow) {
 
     async confirmDecryptFlResult() {
       if (!this.flDecryptDialog.privateKeyFile || !this.flDecryptDialog.encryptedBlob) {
-        this.$message?.warning('请先选择 FL 私钥文件')
+        this.$message?.warning('请先选择私钥文件')
         return
       }
 

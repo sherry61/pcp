@@ -88,6 +88,18 @@ const CT_MAP = {
   jpeg: 'image/jpeg'
 };
 
+function buildDataCatalogKey(identifier) {
+  const source = String(identifier || '').trim();
+  const digest = crypto
+    .createHash('sha256')
+    .update(source)
+    .digest('hex');
+
+  // ChainMaker 目录合约用 id 作为 state key。
+  // 原始数字指纹包含 "=" 等字符且长度过长，直接写入会触发合约调用失败。
+  return `DC_${digest.slice(0, 32)}`;
+}
+
 // 把 db.query 封装成 Promise，方便用 async/await
 function dbQuery(sql, params = []) {
   return new Promise((resolve, reject) => {
@@ -1518,7 +1530,7 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
         algorithm, customAlgorithm, fileHash, user_id,
         industry, industry_raw, industry_raw_name,
         asset_category, predicted_domain,
-        is_proxied, number,
+        is_proxied, number, price,
         can_sell_asset, can_sell_view, can_sell_process, allow_resale,
         trade_location, trade_start_ts, trade_end_ts,
         allow_authorize, allow_supervision, model_selection
@@ -1569,7 +1581,7 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
                 description, algorithm, custom_algorithm, file_hash, user_id,
                 industry, industry_raw, industry_raw_name,
                 asset_category, predicted_domain,
-                picture, is_proxied, number,
+                picture, is_proxied, number, price,
                 can_sell_asset, can_sell_view, can_sell_process, allow_resale,
                 trade_location, trade_start_ts, trade_end_ts,
                 allow_authorize, allow_supervision, model_type
@@ -1595,6 +1607,7 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
             picture.buffer,
             is_proxied || 0,
             number || 0,
+            price || null,
             can_sell_asset || 0,
             can_sell_view || 0,
             can_sell_process || 0,
@@ -3878,6 +3891,7 @@ app.post('/api/datacatalog/publish-asset', async (req, res) => {
 
   try {
     let resolvedOrgId = certOrg || null;
+    const catalogKey = buildDataCatalogKey(identifier);
 
     if (!resolvedOrgId && userId) {
       const certInfo = await getDefaultRegisterCertInfoByUserId(userId);
@@ -3889,8 +3903,8 @@ app.post('/api/datacatalog/publish-asset', async (req, res) => {
     }
 
     const payload = {
-      id: identifier,
-      code: identifier,
+      id: catalogKey,
+      code: catalogKey,
       name: assetName,
       remark: description || assetName,
       orgId: resolvedOrgId,
@@ -3928,6 +3942,8 @@ app.post('/api/datacatalog/publish-asset', async (req, res) => {
     return res.json({
       success: true,
       message: '目录发布成功',
+      sourceIdentifier: identifier,
+      catalogIdentifier: catalogKey,
       payload,
       result: response.data
     });
