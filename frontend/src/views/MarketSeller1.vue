@@ -36,17 +36,8 @@
             </div>
             <div class="row"><span class="k">申请数量:</span><span class="v">{{ a.quantity }}</span></div>
             <div class="row pc-row">
-              <span class="k">隐私计算类型:</span>
-              <span class="v">
-                <select v-model="a.pc_type" class="pc-select">
-                  <option disabled value="">请选择类型</option>
-                  <option value="HE">同态加密</option>
-                  <option value="PRE">代理重加密</option>
-                  <option value="FL">联邦学习</option>
-                  <option value="MPC">安全多方计算</option>
-                  <option value="TEE">可信执行环境</option>
-                </select>
-              </span>
+              <span class="k">资产交付方法:</span>
+              <span class="v">{{ a.pc_type_label || "未选择" }}</span>
             </div>
 
             <div class="actions">
@@ -177,7 +168,14 @@ export default {
               seller_address: tx.seller_address,
               buyer_address: tx.buyer_address,
               quantity: tx.quantity,
-              pc_type: "",
+              pc_type: tx.pc_type || "",
+              pc_type_label: ({
+                HE: "同态加密",
+                PRE: "代理重加密",
+                FL: "联邦学习",
+                MPC: "安全多方计算",
+                TEE: "可信执行环境"
+              })[this.normalizePcType(tx.pc_type)] || "未选择",
             }));
 
             allPendingTx.push(...formatted);
@@ -204,7 +202,7 @@ export default {
     const pcType = this.normalizePcType(asset.pc_type);
 
     if (!pcType) {
-      this.$message.error('请先填写隐私计算类型');
+      this.$message.error('买家尚未选择资产交付方法');
       return;
     }
 

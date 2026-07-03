@@ -245,6 +245,18 @@
               <small v-if="errorMessage" class="text-danger">{{ errorMessage }}</small>
             </div>
 
+            <div class="form-row">
+              <label for="pc-type-select"><strong>资产交付方法：</strong></label>
+              <select id="pc-type-select" v-model="selectedPcType" class="form-control">
+                <option value="">请选择资产交付方法</option>
+                <option value="HE">同态加密</option>
+                <option value="PRE">代理重加密</option>
+                <option value="FL">联邦学习</option>
+                <option value="MPC">安全多方计算</option>
+                <option value="TEE">可信执行环境</option>
+              </select>
+            </div>
+
 
 
 
@@ -364,6 +376,7 @@ export default {
        modelOptions: [],          // 下拉模型列表
   selectedModelHash: '',     // 选中的模型 file_hash
   loadingModels: false,
+      selectedPcType: '',
     };
   },
   computed: {
@@ -596,6 +609,7 @@ async openPurchaseModal() {
   this.insufficientBalance = (this.asset.price || 1200) > this.userBalance;
   this.selectedPermissions = [];
   this.processingChoice = null;
+  this.selectedPcType = '';
   this.expirationTime = '';
   this.purchaseQuantity = 1;
   this.errorMessage = '';
@@ -705,6 +719,11 @@ if (!certAddr) {
     return;
   }
 
+  if (!this.selectedPcType) {
+    alert("请选择资产交付方法！");
+    return;
+  }
+
   // 👇 打印请求体内容，调试用
   const requestBody = {
     asset_id: this.asset.file_hash,
@@ -717,6 +736,7 @@ if (!certAddr) {
     expiration_time: this.expirationTime,
      // ✅ 新增：选择的模型（用 file_hash 最稳）
     model_file_hash: this.selectedModelHash || null,
+    pc_type: this.selectedPcType,
   };
   console.log('用户选择的 expirationTime 是：', this.expirationTime);
 

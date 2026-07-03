@@ -2409,7 +2409,8 @@ app.post('/api/save-transaction', (req, res) => {
         quality,
         processing_type,
         expiration_time,
-        model_file_hash
+        model_file_hash,
+        pc_type
     } = req.body;
 
     console.log("后端接收到的 quality 值是：", quality);
@@ -2441,8 +2442,9 @@ app.post('/api/save-transaction', (req, res) => {
             quality,
             processing_type,
             expiration_time,
-            model_file_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            model_file_hash,
+            pc_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     const values = [
         asset_id,
@@ -2455,7 +2457,8 @@ app.post('/api/save-transaction', (req, res) => {
         safeQuality,
         processing_type,
         formattedExpirationTime,
-        model_file_hash
+        model_file_hash,
+        pc_type || null
     ];
 
     db.query(query, values, (err, results) => {
