@@ -63,7 +63,6 @@
                  <!--<th>备注</th>-->
 <th v-if="isSeller">编辑</th>
 <th v-if="isSeller">授权</th>
-<th v-if="isSeller">估值定价</th>
                 </tr>
               </thead>
              <tbody>
@@ -82,18 +81,16 @@
     <td v-if="isSeller" class="nowrap">{{ item.number }}</td>
     <!--<td class="nowrap">{{ isIndivisible(item.industry) ? '不可分割' : '可分割' }}</td>-->
     <td class="nowrap" :class="{
-      'gray-text': item.txperm === 0,
-      'yellow-text': item.txperm === 1 || item.txperm === 2,
+      'gray-text': item.txperm === 0 || item.txperm === 1 || item.txperm === 2 || item.txperm === 9,
       'green-text': item.txperm === 3,
-      'red-text': item.txperm === 9
     }">
       {{
-        item.txperm === 0 ? '无状态' :
-          item.txperm === 1 ? '已登记' :
-            item.txperm === 2 ? '已定价' :
+        item.txperm === 0 ? '已登记' :
+         // item.txperm === 1 ? '已登记' :
+           // item.txperm === 2 ? '已定价' :
               item.txperm === 3 ? '开放交易' :
-                item.txperm === 9 ? '锁定中' :
-                  '未知状态'
+               // item.txperm === 9 ? '锁定中' :
+                 '已登记'
       }}
     </td>
 
@@ -114,9 +111,7 @@
 <td v-if="isSeller">
   <button :disabled="item.isProxied === 0" @click="handleAuthorization(item)" class="edit-button">授权</button>
 </td>
-<td v-if="isSeller">
-  <button @click="openValuationModal(item)" class="edit-button">估值</button>
-</td>
+
   </tr>
 </tbody>
 
@@ -239,11 +234,8 @@
             <div class="form-group">
               <label for="user-id-modal">状态</label>
               <select id="user-id-modal" v-model="editAsset.txperm">
-                <option value="0">无状态</option>
                 <option value="1">已登记</option>
-                <option value="2">已定价</option>
                 <option value="3">开放交易</option>
-                <option value="9">锁定中</option>
               </select>
             </div>
           </div>
@@ -281,7 +273,7 @@
   </div>
 
  <!-- 估值定价弹窗 -->
-<div v-if="showValuationModal" class="modal">
+<!--<div v-if="showValuationModal" class="modal">
   <div class="modal-content wide-modal valuation-modal">
     <h3>价值评估</h3>
 
@@ -345,7 +337,6 @@
   </div>
 </div>
 
-<!-- 计算结果弹窗 -->
 <div v-if="showValuationResultModal" class="modal">
   <div class="modal-content wide-modal valuation-result-modal">
     <h3>计算结果</h3>
@@ -400,7 +391,7 @@
       <button @click="closeValuationResultModal" class="confirm-button">确认</button>
     </div>
   </div>
-</div>
+</div>-->
 
 
 </template>

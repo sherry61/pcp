@@ -121,35 +121,52 @@
                 <input type="file" id="file" @change="handleFileChange" required />
               </div>
             </div>
-    <div class="form-group">
-  <label>
-    <span class="required-asterisk">*</span>
-    上传摘要
-  </label>
-
-  <input
-    type="file"
-    accept=".json"
-    @change="handleRecordsJsonChange"
-  />
-
-</div>
-
+<!-- 资产领域：放到分类分级上面 -->
 <div class="form-row">
   <div class="form-group">
-    <label for="asset-category">
+    <label for="industry">
       <span class="required-asterisk">*</span>
-      资产等级和类别
+      资产领域
     </label>
-    <input
-      type="text"
-      id="asset-category"
-      v-model="form.analysisResultText"
-      readonly
-      placeholder="点击分类分级按钮后自动生成"
-    />
+    <select
+      id="industry"
+      v-model="form.industryRaw"
+      @change="handleIndustryChange"
+      required
+    >
+      <option value="">请选择行业</option>
+      <option value="TZ">碳证交易</option>
+      <option value="ZX">征信</option>
+      <option value="SZ">数字版权</option>
+      <option value="ZD">自动驾驶</option>
+      <option value="CL">车联网</option>
+      <option value="FL">法律</option>
+      <option value="A01">农、林、牧、渔业</option>
+      <option value="B02">采矿业</option>
+      <option value="C03">制造业</option>
+      <option value="D04">电力、热力、燃气及水生产和供应业（能源电力）</option>
+      <option value="E05">建筑业</option>
+      <option value="F06">批发和零售业</option>
+      <option value="G07">交通运输、仓储和邮政业（交通出行）</option>
+      <option value="H08">住宿和餐饮业</option>
+      <option value="I09">信息传输、软件和信息技术服务业</option>
+      <option value="J10">金融业（金融）</option>
+      <option value="K11">房地产业</option>
+      <option value="L12">租赁和商务服务业</option>
+      <option value="M13">科学研究和技术服务业</option>
+      <option value="N14">水利、环境和公共设施管理业</option>
+      <option value="O15">居民服务、修理和其他服务业</option>
+      <option value="P16">教育</option>
+      <option value="Q17">卫生和社会工作（医疗健康）</option>
+      <option value="R18">文化、体育和娱乐业（文化）</option>
+      <option value="S19">公共管理、社会保障和社会组织</option>
+      <option value="T20">国际组织</option>
+    </select>
   </div>
+</div>
 
+<!-- 分类分级：先方法，再结果 -->
+<div class="form-row">
   <div class="form-group">
     <label for="classification-method">
       <span class="required-asterisk">*</span>
@@ -167,76 +184,59 @@
     </select>
   </div>
 
+  <div class="form-group">
+    <label for="asset-category">
+      <span class="required-asterisk">*</span>
+      资产等级和类别
+    </label>
+    <input
+      type="text"
+      id="asset-category"
+      v-model="form.analysisResultText"
+      readonly
+      placeholder="点击分类分级按钮后自动生成"
+    />
+  </div>
+
   <div class="form-group classify-inline-group">
     <button
       type="button"
       class="classify-btn"
       @click="analyzeAssetCombined"
-:disabled="classifyLoading || !form.analysisMethod || summaryRecords.length === 0"
+      :disabled="classifyLoading || !form.analysisMethod"
     >
       {{ classifyLoading ? '分类中...' : '分类分级' }}
     </button>
   </div>
 </div>
 
-            <div class="form-row">
-              <div class="form-group">
-                <label for="industry">
-                  <span class="required-asterisk" title="必填：用于生成资产元数据名称。">*</span>
-                  资产领域
-                </label>
-                <select
-  id="industry"
-  v-model="form.industryRaw"
-  @change="handleIndustryChange"
-  required
->
+          
+<!-- 资产估值 -->
+<div class="form-row">
+  <div class="form-group">
+    <label for="asset-price">
+      资产估值
+    </label>
+    <input
+      type="number"
+      id="asset-price"
+      v-model.number="form.price"
+      min="0"
+      step="0.01"
+      placeholder="可手动填写，也可点击估值计算"
+    />
+  </div>
 
-                  <option value="">请选择行业</option>
-                  <!--<option value="NY">能源</option>
-                  <option value="DL">电力</option>
-                  <option value="TZ">碳证交易</option>
-                  <option value="JT">交通出行</option>
-                  <option value="YL">医疗健康</option>
-                  <option value="ZX">征信</option>
-                  <option value="JR">金融</option>
-                  <option value="SZ">数字版权</option>
-                  <option value="ZD">自动驾驶</option>
-                  <option value="CL">车联网</option>
-                  <option value="WH">文化</option>
-                  <option value="FL">法律</option>
--->
-                  <!-- ✅ 新增20个大类 -->
-                  <option value="TZ">碳证交易</option>
-                  <option value="ZX">征信</option>
-                  <option value="SZ">数字版权</option>
-                  <option value="ZD">自动驾驶</option>
-                  <option value="CL">车联网</option>
-                  <option value="FL">法律</option>
-<option value="A01">农、林、牧、渔业</option>
-<option value="B02">采矿业</option>
-<option value="C03">制造业</option>
-<option value="D04">电力、热力、燃气及水生产和供应业（能源电力）</option>
-<option value="E05">建筑业</option>
-<option value="F06">批发和零售业</option>
-<option value="G07">交通运输、仓储和邮政业（交通出行）</option>
-<option value="H08">住宿和餐饮业</option>
-<option value="I09">信息传输、软件和信息技术服务业</option>
-<option value="J10">金融业（金融）</option>
-<option value="K11">房地产业</option>
-<option value="L12">租赁和商务服务业</option>
-<option value="M13">科学研究和技术服务业</option>
-<option value="N14">水利、环境和公共设施管理业</option>
-<option value="O15">居民服务、修理和其他服务业</option>
-<option value="P16">教育</option>
-<option value="Q17">卫生和社会工作（医疗健康）</option>
-<option value="R18">文化、体育和娱乐业（文化）</option>
-<option value="S19">公共管理、社会保障和社会组织</option>
-<option value="T20">国际组织</option>
-                </select>
-              </div>
-            </div>
-
+  <div class="form-group classify-inline-group">
+    <button
+      type="button"
+      class="classify-btn"
+      @click="openValuationModal"
+    >
+      估值计算
+    </button>
+  </div>
+</div>
             <div class="form-row">
               <div class="form-group">
                 <label for="quantity">
@@ -330,8 +330,9 @@
             <p><strong>资产类别:</strong> {{ form.assetCategory }}</p>
 
             <p><strong>资产等级:</strong> {{ form.assetType }}</p>
-<p><strong>分类方法:</strong> {{ getMethodLabel(classificationMethods, form.classificationMethod) }}</p>
-<p><strong>分级方法:</strong> {{ getMethodLabel(gradingMethods, form.gradingMethod) }}</p>
+            <p><strong>资产估值:</strong> {{ form.price || '未填写' }}</p>
+<p><strong>分类方法:</strong> {{ getMethodLabelByOptions(classificationMethods, form.classificationMethod) }}</p>
+<p><strong>分级方法:</strong> {{ getMethodLabelByOptions(gradingMethods, form.gradingMethod) }}</p>
             <p><strong>地址:</strong> {{ form.address }}</p>
             <p><strong>数据资产上链登记内容:</strong> {{ form.description }}</p>
             <p><strong>数字标识:</strong> {{ getIdentifierMethodLabel(form.algorithm) }}</p>
@@ -523,6 +524,127 @@
 
     </div>
   </div>
+   <!-- 估值定价弹窗 -->
+<div v-if="showValuationModal" class="modal">
+  <div class="modal-content wide-modal valuation-modal">
+    <h3>价值评估</h3>
+
+    <div class="valuation-control-row">
+      <div class="valuation-method-select">
+        <label for="valuation-method">估值方法</label>
+        <select id="valuation-method" v-model="selectedValuationMethod">
+          <option
+            v-for="option in valuationMethodOptions"
+            :key="option.value"
+            :value="option.value"
+          >
+            {{ option.label }}
+          </option>
+        </select>
+      </div>
+      <button type="button" class="btn-secondary" @click="resetValuationToDefaults">重置为默认参数</button>
+      <button type="button" class="btn-primary" @click="useValuationExample">使用示例参数</button>
+    </div>
+
+    <div class="valuation-form">
+      <details v-if="selectedValuationSection" class="valuation-method-box" open>
+        <summary>{{ selectedValuationSection.title }}</summary>
+        <div class="valuation-method-body">
+          <div
+            v-for="field in selectedValuationSection.fields"
+            :key="field.key"
+            class="valuation-field"
+            :class="{ 'span-2': field.span === 2 }"
+          >
+            <label :for="field.key">{{ field.label }}</label>
+            <input
+              v-if="field.type !== 'textarea'"
+              :id="field.key"
+              type="number"
+              :step="field.step || '0.01'"
+              :min="field.min"
+              :max="field.max"
+              v-model.number="params[field.key]"
+            />
+            <textarea
+              v-else
+              :id="field.key"
+              v-model.trim="params[field.key]"
+              :placeholder="field.placeholder || ''"
+            ></textarea>
+            <div v-if="field.hint" class="valuation-hint">{{ field.hint }}</div>
+          </div>
+          <div v-if="selectedValuationSection.note" class="valuation-field span-2">
+            <label>{{ selectedValuationSection.noteLabel || '说明' }}</label>
+            <div class="valuation-hint">{{ selectedValuationSection.note }}</div>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <div class="button-container">
+      <button @click="submitValuation" class="confirm-button">提交计算</button>
+      <button @click="closeValuationModal" class="cancel-button">关闭</button>
+    </div>
+  </div>
+</div>
+
+<!-- 计算结果弹窗 -->
+<div v-if="showValuationResultModal" class="modal">
+  <div class="modal-content wide-modal valuation-result-modal">
+    <h3>计算结果</h3>
+    <div class="valuation-result-status" :class="{ 'has-errors': valuationHasErrors }">
+      {{ valuationResultStatus }}
+    </div>
+    <div class="valuation-result-wrap">
+      <table class="valuation-result-table">
+        <thead>
+          <tr>
+            <th>方法</th>
+            <th>公式</th>
+            <th>关键中间项</th>
+            <th>估值结果（万元）</th>
+            <th>备注</th>
+          </tr>
+        </thead>
+        <tbody>
+          <template v-for="item in valuationMethodResults" :key="item.methodName">
+            <tr>
+              <td>{{ item.methodName }}</td>
+              <td class="mono-cell">{{ item.formulaText }}</td>
+              <td>
+                <ul class="valuation-intermediate-list">
+                  <li v-for="(line, idx) in item.intermediates" :key="idx" class="mono-cell">{{ line }}</li>
+                </ul>
+              </td>
+              <td>
+                <span v-if="item.valuation === null" class="warn-text">不可计算</span>
+                <span v-else class="mono-cell">{{ formatNum(item.valuation) }}</span>
+              </td>
+              <td>{{ item.valuation === null ? '请修正输入' : '计算成功' }}</td>
+            </tr>
+            <tr class="valuation-note-row">
+              <td colspan="5"><strong>公式备注：</strong>{{ item.notes }}</td>
+            </tr>
+          </template>
+          <tr v-if="valuationMethodResults.length === 0">
+            <td colspan="5">暂无结果</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="button-container">
+      <button
+        @click="saveCurrentValuationRecord"
+        class="confirm-button"
+        :disabled="valuationSaving || !valuationMethodResults.length || valuationMethodResults[0].valuation === null"
+      >
+        {{ valuationSaving ? '保存中...' : '保存估值记录' }}
+      </button>
+      <button @click="closeValuationResultModal" class="confirm-button">确认</button>
+    </div>
+  </div>
+</div>
 
 </template>
 
@@ -596,11 +718,10 @@ analysisResultText: '',
 fingerprint: '',
 fingerprintBits: '',
 fingerprintLoading: false,
+price: null,
       },
 
-      summarySourceFile: '',
-summaryRecords: [],
-summaryRecordsFileName: '',
+      
 classificationRationale: '',
 gradeRationale: '',
 
@@ -657,9 +778,308 @@ gradeRationale: '',
       transactionStartTime: null, // 新增资产交易时间字段
       transactionEndTime: null,
       startTimePickerOptions: {}, // 动态生成
-      endTimePickerOptions: {}   // 动态生成
+      endTimePickerOptions: {},   // 动态生成
+
+      selectedValuationMethod: 'cost',
+ valuationMethodOptions: [
+        { value: 'cost', label: '成本法' },
+        { value: 'income', label: '收益法' },
+        { value: 'market', label: '市场法' },
+        { value: 'hybrid', label: '综合法' },
+        { value: 'comparison', label: '比较法' },
+        { value: 'technical', label: '技术分析法' },
+        { value: 'dcf', label: 'DCF估值法' },
+        { value: 'ahp', label: '层次分析法(AHP)' }
+      ],
+      valuationSections: [
+        {
+          method: 'cost',
+          title: '成本法参数',
+          fields: [
+            { key: 'cOneoff', label: '一次性投入成本（万元）', min: 0, step: '0.01' },
+            { key: 'cOngoing', label: '持续性投入成本（万元）', min: 0, step: '0.01' },
+            { key: 'cQualityEval', label: '质量评估成本（万元）', min: 0, step: '0.01' },
+            { key: 'cQualityImprove', label: '质量提升成本（万元）', min: 0, step: '0.01' },
+            { key: 'cProduct', label: '数据产品化成本（万元）', min: 0, step: '0.01' },
+            { key: 'completenessPct', label: '完整性（%）', min: 0, max: 100, step: '0.01' },
+            { key: 'accuracyPct', label: '准确性（%）', min: 0, max: 100, step: '0.01' },
+            { key: 'consistencyPct', label: '一致性（%）', min: 0, max: 100, step: '0.01' },
+            { key: 'coveragePct', label: '覆盖度（%）', min: 0, max: 100, step: '0.01' }
+          ]
+        },
+        {
+          method: 'income',
+          title: '收益法参数（多期折现 NPV）',
+          fields: [
+            { key: 'rfPct', label: '无风险收益率 rf（%）', min: 0, step: '0.01' },
+            { key: 'rmPct', label: '市场平均收益率 rm（%）', min: 0, step: '0.01' },
+            { key: 'beta', label: '市场风险暴露系数 beta', min: 0, max: 3, step: '0.01' },
+            { key: 'growthPct', label: '经济增长率 g（%）', min: 0, step: '0.01' },
+            { key: 'scope', label: '应用范围 scope（1~5）', min: 1, max: 5, step: '1' },
+            { key: 'horizonN', label: '预测年限 N（1~10）', min: 1, max: 10, step: '1' },
+            {
+              key: 'cashFlows',
+              label: '未来现金流 CF（按年逗号分隔，单位万元）',
+              type: 'textarea',
+              span: 2,
+              placeholder: '例如：120, 135, 150',
+              hint: '条目数量建议与 N 相同'
+            }
+          ]
+        },
+        {
+          method: 'market',
+          title: '市场法参数（可比均价乘调整系数）',
+          fields: [
+            { key: 'comparableTotalPrice', label: '可比样本总成交价（万元）', min: 0, step: '0.01' },
+            { key: 'comparableCount', label: '可比样本数量（个）', min: 1, step: '1' },
+            { key: 'targetSize', label: '评估对象规模（GB）', min: 0.01, step: '0.01' },
+            { key: 'comparableSize', label: '可比对象规模（GB）', min: 0.01, step: '0.01' },
+            { key: 'kQuality', label: '质量系数 K_quality（>0）', min: 0.01, step: '0.01' },
+            { key: 'kCoverage', label: '覆盖系数 K_coverage（>0）', min: 0.01, step: '0.01' },
+            { key: 'kTimeliness', label: '时效系数 K_timeliness（>0）', min: 0.01, step: '0.01' }
+          ]
+        },
+        {
+          method: 'hybrid',
+          title: '综合法参数（成本基准乘双因子）',
+          fields: [
+            { key: 'hybridGrowthPct', label: '经济增长率 g（%）', min: 0, step: '0.01' },
+            { key: 'hybridScope', label: '应用范围 scope（1~5）', min: 1, max: 5, step: '1' },
+            { key: 'hybridN', label: '预测年限 N（1~10）', min: 1, max: 10, step: '1' },
+            { key: 'alpha', label: '社会价值调节系数 alpha（>0）', min: 0.01, step: '0.01' },
+            { key: 'downloads', label: '下载量（次，>=0）', min: 0, step: '1' }
+          ]
+        },
+        {
+          method: 'comparison',
+          title: '比较法参数（可比样本加权均价修正）',
+          fields: [
+            {
+              key: 'compPrices',
+              label: '可比样本成交价 P_i（万元，逗号分隔）',
+              type: 'textarea',
+              span: 2,
+              placeholder: '例如：820, 860, 910'
+            },
+            {
+              key: 'compWeights',
+              label: '相似度权重 w_i（逗号分隔，需与价格一一对应）',
+              type: 'textarea',
+              span: 2,
+              placeholder: '例如：0.9, 0.8, 0.95',
+              hint: '样本数量需与 P_i 一致，且每个权重 > 0'
+            },
+            { key: 'targetFeatureIndex', label: '目标对象特征指数 I_target（>0）', min: 0.01, step: '0.01' },
+            { key: 'comparableFeatureIndex', label: '可比对象特征指数 I_comp（>0）', min: 0.01, step: '0.01' }
+          ]
+        },
+        {
+          method: 'technical',
+          title: '技术分析法参数（趋势/动量/波动/流动性）',
+          fields: [
+            { key: 'taCurrentPrice', label: '当前市场价格（万元）', min: 0.01, step: '0.01' },
+            { key: 'taMa20', label: '20期均价 MA20（万元）', min: 0.01, step: '0.01' },
+            { key: 'taMa60', label: '60期均价 MA60（万元）', min: 0.01, step: '0.01' },
+            { key: 'taMomentumPct', label: '动量因子（%，-100~200）', min: -100, max: 200, step: '0.01' },
+            { key: 'taVolatilityPct', label: '波动率（%，0~200）', min: 0, max: 200, step: '0.01' },
+            { key: 'taLiquidityScore', label: '流动性评分（1~10）', min: 1, max: 10, step: '1' }
+          ]
+        },
+        {
+          method: 'dcf',
+          title: 'DCF估值法参数（分期现金流+终值）',
+          fields: [
+            { key: 'dcfDiscountRatePct', label: '折现率 r（%，>0）', min: 0.01, step: '0.01' },
+            { key: 'dcfTerminalGrowthPct', label: '永续增长率 g（%，>=0）', min: 0, step: '0.01' },
+            { key: 'dcfHorizonN', label: '预测年限 N（1~10）', min: 1, max: 10, step: '1' },
+            {
+              key: 'dcfCashFlows',
+              label: '未来自由现金流 FCF（逗号分隔，单位万元）',
+              type: 'textarea',
+              span: 2,
+              placeholder: '例如：180, 210, 245, 275, 310',
+              hint: '条目数量需与 N 一致，且 r 必须大于 g'
+            }
+          ]
+        },
+        {
+          method: 'ahp',
+          title: '层次分析法（AHP）参数',
+          fields: [
+            { key: 'ahpRelCost', label: '方法可靠度 r1（成本法，1~9）', min: 1, max: 9, step: '0.01' },
+            { key: 'ahpRelIncome', label: '方法可靠度 r2（收益法，1~9）', min: 1, max: 9, step: '0.01' },
+            { key: 'ahpRelMarket', label: '方法可靠度 r3（市场法，1~9）', min: 1, max: 9, step: '0.01' },
+            { key: 'ahpRelHybrid', label: '方法可靠度 r4（综合法，1~9）', min: 1, max: 9, step: '0.01' },
+            { key: 'ahpRelComparison', label: '方法可靠度 r5（比较法，1~9）', min: 1, max: 9, step: '0.01' }
+          ],
+          noteLabel: 'AHP 综合说明',
+          note: 'AHP 方法按 a_ij=r_i/r_j 构造方法层判断矩阵，并基于前5法（成本/收益/市场/综合/比较）做加权融合。'
+        }
+      ],
+      valuationDefaults: {
+        cOneoff: 180,
+        cOngoing: 85,
+        cQualityEval: 22,
+        cQualityImprove: 28,
+        cProduct: 62,
+        completenessPct: 92,
+        accuracyPct: 88,
+        consistencyPct: 90,
+        coveragePct: 84,
+        rfPct: 2.1,
+        rmPct: 8.3,
+        beta: 1.2,
+        growthPct: 5.5,
+        scope: 4,
+        horizonN: 3,
+        cashFlows: '120, 138, 156',
+        comparableTotalPrice: 940,
+        comparableCount: 8,
+        targetSize: 2.4,
+        comparableSize: 2.1,
+        kQuality: 1.08,
+        kCoverage: 1.04,
+        kTimeliness: 0.97,
+        hybridGrowthPct: 6.2,
+        hybridScope: 4,
+        hybridN: 3,
+        alpha: 0.36,
+        downloads: 22000,
+        compPrices: '820, 860, 910',
+        compWeights: '0.9, 0.8, 0.95',
+        targetFeatureIndex: 1.06,
+        comparableFeatureIndex: 1,
+        taCurrentPrice: 980,
+        taMa20: 960,
+        taMa60: 920,
+        taMomentumPct: 6,
+        taVolatilityPct: 18,
+        taLiquidityScore: 7,
+        dcfDiscountRatePct: 12,
+        dcfTerminalGrowthPct: 3,
+        dcfHorizonN: 5,
+        dcfCashFlows: '180, 210, 245, 275, 310',
+        ahpRelCost: 7.5,
+        ahpRelIncome: 8,
+        ahpRelMarket: 6.5,
+        ahpRelHybrid: 7,
+        ahpRelComparison: 6
+      },
+      valuationExample: {
+        cOneoff: 220,
+        cOngoing: 98,
+        cQualityEval: 27,
+        cQualityImprove: 33,
+        cProduct: 75,
+        completenessPct: 95,
+        accuracyPct: 91,
+        consistencyPct: 89,
+        coveragePct: 87,
+        rfPct: 1.9,
+        rmPct: 9.1,
+        beta: 1.35,
+        growthPct: 6.1,
+        scope: 5,
+        horizonN: 4,
+        cashFlows: '136, 152, 170, 194',
+        comparableTotalPrice: 1260,
+        comparableCount: 9,
+        targetSize: 2.9,
+        comparableSize: 2.3,
+        kQuality: 1.1,
+        kCoverage: 1.12,
+        kTimeliness: 1.03,
+        hybridGrowthPct: 6.6,
+        hybridScope: 5,
+        hybridN: 4,
+        alpha: 0.42,
+        downloads: 46000,
+        compPrices: '980, 1050, 1120, 1080',
+        compWeights: '0.82, 0.9, 0.88, 0.93',
+        targetFeatureIndex: 1.1,
+        comparableFeatureIndex: 1.02,
+        taCurrentPrice: 1120,
+        taMa20: 1080,
+        taMa60: 1005,
+        taMomentumPct: 9,
+        taVolatilityPct: 22,
+        taLiquidityScore: 8,
+        dcfDiscountRatePct: 11.5,
+        dcfTerminalGrowthPct: 3.2,
+        dcfHorizonN: 5,
+        dcfCashFlows: '220, 255, 295, 338, 380',
+        ahpRelCost: 8,
+        ahpRelIncome: 8.6,
+        ahpRelMarket: 7.2,
+        ahpRelHybrid: 7.8,
+        ahpRelComparison: 6.8
+      },
+      params: {
+        cOneoff: 180,
+        cOngoing: 85,
+        cQualityEval: 22,
+        cQualityImprove: 28,
+        cProduct: 62,
+        completenessPct: 92,
+        accuracyPct: 88,
+        consistencyPct: 90,
+        coveragePct: 84,
+        rfPct: 2.1,
+        rmPct: 8.3,
+        beta: 1.2,
+        growthPct: 5.5,
+        scope: 4,
+        horizonN: 3,
+        cashFlows: '120, 138, 156',
+        comparableTotalPrice: 940,
+        comparableCount: 8,
+        targetSize: 2.4,
+        comparableSize: 2.1,
+        kQuality: 1.08,
+        kCoverage: 1.04,
+        kTimeliness: 0.97,
+        hybridGrowthPct: 6.2,
+        hybridScope: 4,
+        hybridN: 3,
+        alpha: 0.36,
+        downloads: 22000,
+        compPrices: '820, 860, 910',
+        compWeights: '0.9, 0.8, 0.95',
+        targetFeatureIndex: 1.06,
+        comparableFeatureIndex: 1,
+        taCurrentPrice: 980,
+        taMa20: 960,
+        taMa60: 920,
+        taMomentumPct: 6,
+        taVolatilityPct: 18,
+        taLiquidityScore: 7,
+        dcfDiscountRatePct: 12,
+        dcfTerminalGrowthPct: 3,
+        dcfHorizonN: 5,
+        dcfCashFlows: '180, 210, 245, 275, 310',
+        ahpRelCost: 7.5,
+        ahpRelIncome: 8,
+        ahpRelMarket: 6.5,
+        ahpRelHybrid: 7,
+        ahpRelComparison: 6
+      },
+      valuationMethodResults: [],
+      valuationResultStatus: '输入有效，结果已更新',
+      valuationHasErrors: false,
+      valuationSaving: false,
+      showValuationModal: false,
+      showValuationResultModal: false,
+
     }
   },
+  computed:{
+    selectedValuationSection(){
+        return this.valuationSections.find(
+            x=>x.method===this.selectedValuationMethod
+        )
+    }
+},
   watch: {
     'form.industryRaw': function () {
     this.handleIndustryChange();  // ✅ 统一在这里做映射 + 证书 + 数量锁定
@@ -691,7 +1111,245 @@ gradeRationale: '',
   },
 
   methods: {
+    getMethodLabel(methodKey) {
+      const mapping = {
+        cost: '成本法',
+        income: '收益法',
+        market: '市场法',
+        hybrid: '综合法',
+        comparison: '比较法',
+        technical: '技术分析法',
+        dcf: 'DCF估值法',
+        ahp: '层次分析法(AHP)'
+      };
+      return mapping[methodKey] || methodKey;
+    },
+    calculateCost(input) {
+      const sourceCost = input.cOneoff + input.cOngoing;
+      const devCost = sourceCost + input.cQualityEval + input.cQualityImprove + input.cProduct;
+      const qualityFactor = (input.completeness + input.accuracy + input.consistency + input.coverage) / 400;
+      const valuation = devCost * qualityFactor;
+      return {
+        methodName: '成本法',
+        formulaText: 'V_cost=(C_source+C_quality_eval+C_quality_improve+C_product)*Q_factor',
+        intermediates: [
+          `C_source=${this.formatNum(sourceCost)}`,
+          `开发成本合计=${this.formatNum(devCost)}`,
+          `Q_factor=${this.formatNum(qualityFactor, 4)}`,
+          `V_cost=${this.formatNum(valuation)}`
+        ],
+        valuation,
+        notes: 'Q_factor=(完整性+准确性+一致性+覆盖度)/400。'
+      };
+    },
+    calculateIncome(input) {
+      const discountRate = input.rf + input.beta * (input.rm - input.rf);
+      const npv = input.cashFlows.reduce((sum, cashFlow, index) => {
+        const t = index + 1;
+        return sum + cashFlow / Math.pow(1 + discountRate, t);
+      }, 0);
+      const economicFactor = Math.pow(1 + input.g, input.n) * (input.scope / 5);
+      const valuation = npv * economicFactor;
+      return {
+        methodName: '收益法',
+        formulaText: 'r=rf+beta(rm-rf), NPV=Σ(CF_t/(1+r)^t), V_income=NPV*E_factor',
+        intermediates: [
+          `折现率r=${this.formatPercent(discountRate)}`,
+          `NPV=${this.formatNum(npv)}`,
+          `E_factor=${this.formatNum(economicFactor, 4)}`,
+          `V_income=${this.formatNum(valuation)}`
+        ],
+        valuation,
+        notes: 'E_factor=(1+g)^N*(scope/5)，scope 依据应用场景覆盖广度。'
+      };
+    },
+    calculateMarket(input) {
+      const averagePrice = input.comparableTotalPrice / input.comparableCount;
+      const scaleFactor = input.targetSize / input.comparableSize;
+      const adjustFactor = input.kQuality * input.kCoverage * input.kTimeliness;
+      const valuation = averagePrice * scaleFactor * adjustFactor;
+      return {
+        methodName: '市场法',
+        formulaText: 'V_market=P_avg*Scale*K_quality*K_coverage*K_timeliness',
+        intermediates: [
+          `P_avg=${this.formatNum(averagePrice)}`,
+          `Scale=${this.formatNum(scaleFactor, 4)}`,
+          `调整系数乘积=${this.formatNum(adjustFactor, 4)}`,
+          `V_market=${this.formatNum(valuation)}`
+        ],
+        valuation,
+        notes: '可比均价基于交易样本，质量/覆盖/时效系数用于差异修正。'
+      };
+    },
+    calculateHybrid(input, shared) {
+      const devBase = shared.cOneoff + shared.cOngoing + shared.cQualityEval + shared.cQualityImprove + shared.cProduct;
+      const economicFactor = Math.pow(1 + input.g, input.n) * (input.scope / 5);
+      const socialFactor = 1 + input.alpha * Math.log(1 + input.downloads / 1000);
+      const valuation = devBase * economicFactor * socialFactor;
+      return {
+        methodName: '综合法',
+        formulaText: 'V_hybrid=V_dev_base*E_factor*S_factor',
+        intermediates: [
+          `V_dev_base=${this.formatNum(devBase)}`,
+          `E_factor=${this.formatNum(economicFactor, 4)}`,
+          `S_factor=${this.formatNum(socialFactor, 4)}`,
+          `V_hybrid=${this.formatNum(valuation)}`
+        ],
+        valuation,
+        notes: 'S_factor=1+alpha*ln(1+downloads/1000)，体现下载量边际递减。'
+      };
+    },
+    calculateComparison(input) {
+      const weightedPriceSum = input.prices.reduce((sum, price, index) => sum + price * input.weights[index], 0);
+      const weightSum = input.weights.reduce((sum, weight) => sum + weight, 0);
+      const weightedAveragePrice = weightedPriceSum / weightSum;
+      const featureFactor = input.targetFeatureIndex / input.comparableFeatureIndex;
+      const valuation = weightedAveragePrice * featureFactor;
+      return {
+        methodName: '比较法',
+        formulaText: 'V_compare=(Σ(P_i*w_i)/Σw_i)*(I_target/I_comp)',
+        intermediates: [
+          `样本数量n=${input.prices.length}`,
+          `加权均价=${this.formatNum(weightedAveragePrice)}`,
+          `特征修正系数=${this.formatNum(featureFactor, 4)}`,
+          `V_compare=${this.formatNum(valuation)}`
+        ],
+        valuation,
+        notes: '比较法采用可比样本加权均价，并按目标/可比特征指数进行修正。'
+      };
+    },
+    calculateTechnical(input) {
+      const trendFactor = input.ma20 / input.ma60;
+      const momentumFactor = 1 + input.momentum;
+      const volatilityPenalty = 1 / (1 + input.volatility);
+      const liquidityFactor = 0.8 + (input.liquidityScore / 10) * 0.4;
+      const valuation = input.currentPrice * trendFactor * momentumFactor * volatilityPenalty * liquidityFactor;
+      return {
+        methodName: '技术分析法',
+        formulaText: 'V_tech=P_now*(MA20/MA60)*(1+M)*1/(1+σ)*L_factor',
+        intermediates: [
+          `趋势因子(MA20/MA60)=${this.formatNum(trendFactor, 4)}`,
+          `动量因子(1+M)=${this.formatNum(momentumFactor, 4)}`,
+          `波动惩罚因子=${this.formatNum(volatilityPenalty, 4)}`,
+          `流动性因子=${this.formatNum(liquidityFactor, 4)}`,
+          `V_tech=${this.formatNum(valuation)}`
+        ],
+        valuation,
+        notes: '技术分析法结合趋势、动量、波动率和流动性进行价格修正，适用于有市场行为数据的资产。'
+      };
+    },
+    calculateDcf(input) {
+      const pvStage = input.cashFlows.reduce((sum, cashFlow, index) => {
+        const t = index + 1;
+        return sum + cashFlow / Math.pow(1 + input.discountRate, t);
+      }, 0);
+      const lastCashFlow = input.cashFlows[input.cashFlows.length - 1];
+      const terminalValue = (lastCashFlow * (1 + input.terminalGrowth)) / (input.discountRate - input.terminalGrowth);
+      const pvTerminal = terminalValue / Math.pow(1 + input.discountRate, input.n);
+      const valuation = pvStage + pvTerminal;
+      return {
+        methodName: 'DCF估值法',
+        formulaText: 'V_dcf=Σ(FCF_t/(1+r)^t)+[FCF_N*(1+g)/(r-g)]/(1+r)^N',
+        intermediates: [
+          `阶段现值PV_stage=${this.formatNum(pvStage)}`,
+          `终值TV=${this.formatNum(terminalValue)}`,
+          `终值现值PV_terminal=${this.formatNum(pvTerminal)}`,
+          `V_dcf=${this.formatNum(valuation)}`
+        ],
+        valuation,
+        notes: 'DCF法基于现金流折现与永续增长终值；为保证模型稳定性，要求 r > g。'
+      };
+    },
+    calculateAHP(input, baseResults) {
+      const methodValues = baseResults.map((item) => item.valuation);
+      const reliability = [input.relCost, input.relIncome, input.relMarket, input.relHybrid, input.relComparison];
+      const n = reliability.length;
 
+      const matrix = reliability.map((ri) => reliability.map((rj) => ri / rj));
+      const geoMeans = matrix.map((row) => Math.pow(row.reduce((product, value) => product * value, 1), 1 / n));
+      const totalGeoMean = geoMeans.reduce((sum, value) => sum + value, 0);
+      const weights = geoMeans.map((value) => value / totalGeoMean);
+      const valuation = methodValues.reduce((sum, value, index) => sum + weights[index] * value, 0);
+
+      const aw = matrix.map((row) => row.reduce((sum, value, colIndex) => sum + value * weights[colIndex], 0));
+      const lambdaMax = aw.reduce((sum, value, index) => sum + value / weights[index], 0) / n;
+      const ci = (lambdaMax - n) / (n - 1);
+      const ri = 1.12;
+      const cr = ci / ri;
+      const consistencyNote = cr <= 0.1 ? 'CR<=0.10，一致性可接受' : 'CR>0.10，建议调整方法可靠度参数';
+
+      return {
+        methodName: '层次分析法(AHP)',
+        formulaText: 'a_ij=r_i/r_j, w_i=(Πa_ij)^(1/n)/Σ((Πa_ij)^(1/n)), V_ahp=Σ(w_i*V_i)',
+        intermediates: [
+          `前5法估值=(${baseResults.map((item) => `${item.methodName}:${this.formatNum(item.valuation)}`).join('、')})`,
+          `方法权重w=(${weights.map((item) => this.formatNum(item, 4)).join(', ')})`,
+          `λ_max=${this.formatNum(lambdaMax, 4)}, CI=${this.formatNum(ci, 4)}, CR=${this.formatNum(cr, 4)}`,
+          `V_ahp=${this.formatNum(valuation)}`
+        ],
+        valuation,
+        notes: `AHP基于前5种方法估值结果赋权融合。${consistencyNote}`
+      };
+    },
+buildErrorResult(methodName, errors) {
+      return {
+        methodName,
+        formulaText: '-',
+        intermediates: errors,
+        valuation: null,
+        notes: '该方法输入存在错误，请根据提示修正后重算。'
+      };
+    },
+    async saveCurrentValuationRecord() {
+      const currentResult = this.valuationMethodResults[0];
+      if (!currentResult || currentResult.valuation === null) {
+        this.$message.warning('当前结果不可保存，请先修正参数并重新计算');
+        return;
+      }
+
+      const selectedAsset = this.selectedAssetForValuation || {};
+      const fileHash = selectedAsset.fileHash || selectedAsset.id || '';
+      if (!fileHash) {
+        this.$message.error('缺少资产哈希，无法保存估值记录');
+        return;
+      }
+
+      const payload = {
+        fileHash,
+        assetName: selectedAsset.assetName || '',
+        methodKey: this.selectedValuationMethod,
+        methodName: currentResult.methodName,
+        finalValuation: currentResult.valuation,
+        valuationUnit: '万元',
+        calcStatus: 1,
+        statusMessage: '计算成功',
+        inputSnapshot: this.getSelectedMethodInputSnapshot(),
+        resultSnapshot: {
+          formulaText: currentResult.formulaText,
+          intermediates: currentResult.intermediates,
+          notes: currentResult.notes,
+          valuation: currentResult.valuation
+        },
+        createdByUserId: this.userId || '',
+        createdByUsername: this.username || ''
+      };
+
+      this.valuationSaving = true;
+      try {
+        const response = await axios.post('http://10.112.47.214:3001/api/asset-valuations', payload);
+        if (response.data && response.data.code === 0) {
+          const recordNo = response.data?.data?.recordNo;
+          this.$message.success(recordNo ? `保存成功，记录号：${recordNo}` : '保存成功');
+        } else {
+          this.$message.error(response.data?.message || '保存失败');
+        }
+      } catch (error) {
+        console.error('保存估值记录失败:', error);
+        this.$message.error('保存失败，后端接口不可用或服务异常');
+      } finally {
+        this.valuationSaving = false;
+      }
+    },
     getIndustryRawName(raw) {
   const map = {
     //NY: '能源',
@@ -775,6 +1433,425 @@ if (indivisibleRawSet.has(raw)) return 'WH';
   }
 },
 
+openValuationModal(asset) {
+      this.selectedAssetForValuation = asset;
+      this.showValuationModal = true;
+    },
+    resetValuationToDefaults() {
+      this.params = { ...this.valuationDefaults };
+    },
+    useValuationExample() {
+      this.params = { ...this.valuationExample };
+    },
+    submitValuation() {
+  const validation = this.validateValuationInputs(this.params);
+
+  this.valuationMethodResults = this.buildMethodResults(
+    validation,
+    this.selectedValuationMethod
+  );
+
+  const hasError =
+    this.valuationMethodResults.length === 0 ||
+    this.valuationMethodResults.some(item => item.valuation === null);
+
+  this.valuationHasErrors = hasError;
+
+  const selectedMethodLabel = this.getMethodLabel(this.selectedValuationMethod);
+
+  this.valuationResultStatus = hasError
+    ? `${selectedMethodLabel}输入存在错误，请按提示修正`
+    : `${selectedMethodLabel}计算完成，结果已更新`;
+
+  // 核心新增：把估值结果自动写入上链登记表单里的资产估值
+  const firstValid = this.valuationMethodResults.find(
+    item => item.valuation !== null && item.valuation !== undefined
+  );
+
+  if (firstValid) {
+    this.form.price = Number(firstValid.valuation).toFixed(2);
+  }
+
+  this.showValuationResultModal = true;
+  this.showValuationModal = false;
+
+  if (hasError) {
+    this.$message.warning(`${selectedMethodLabel}参数存在问题，请查看结果明细`);
+  } else {
+    this.$message.success(`${selectedMethodLabel}估值计算完成，已写入资产估值`);
+  }
+},
+
+       closeValuationModal() {
+      this.showValuationModal = false;
+    },
+    closeValuationResultModal() {
+      this.showValuationResultModal = false;
+    },
+    buildMethodResults(validation, selectedMethod) {
+      const parsed = validation.values;
+      const buildOne = (methodKey) => {
+        if (methodKey === 'cost') {
+          return validation.methodErrors.cost.length > 0
+            ? this.buildErrorResult('成本法', validation.methodErrors.cost)
+            : this.calculateCost(parsed.cost);
+        }
+        if (methodKey === 'income') {
+          return validation.methodErrors.income.length > 0
+            ? this.buildErrorResult('收益法', validation.methodErrors.income)
+            : this.calculateIncome(parsed.income);
+        }
+        if (methodKey === 'market') {
+          return validation.methodErrors.market.length > 0
+            ? this.buildErrorResult('市场法', validation.methodErrors.market)
+            : this.calculateMarket(parsed.market);
+        }
+        if (methodKey === 'hybrid') {
+          return validation.methodErrors.hybrid.length > 0
+            ? this.buildErrorResult('综合法', validation.methodErrors.hybrid)
+            : this.calculateHybrid(parsed.hybrid, parsed.sharedCost);
+        }
+        if (methodKey === 'comparison') {
+          return validation.methodErrors.comparison.length > 0
+            ? this.buildErrorResult('比较法', validation.methodErrors.comparison)
+            : this.calculateComparison(parsed.comparison);
+        }
+        if (methodKey === 'technical') {
+          return validation.methodErrors.technical.length > 0
+            ? this.buildErrorResult('技术分析法', validation.methodErrors.technical)
+            : this.calculateTechnical(parsed.technical);
+        }
+        if (methodKey === 'dcf') {
+          return validation.methodErrors.dcf.length > 0
+            ? this.buildErrorResult('DCF估值法', validation.methodErrors.dcf)
+            : this.calculateDcf(parsed.dcf);
+        }
+        return this.buildErrorResult('未知方法', ['未识别的估值方法']);
+      };
+
+      if (selectedMethod !== 'ahp') {
+        return [buildOne(selectedMethod)];
+      }
+
+      const baseResults = [
+        buildOne('cost'),
+        buildOne('income'),
+        buildOne('market'),
+        buildOne('hybrid'),
+        buildOne('comparison')
+      ];
+      if (validation.methodErrors.ahp.length > 0 || baseResults.some((item) => item.valuation === null)) {
+        return [this.buildErrorResult('层次分析法(AHP)', [
+          ...validation.methodErrors.ahp,
+          'AHP依赖前5法的有效结果，请先修正当前参数'
+        ])];
+      }
+      return [this.calculateAHP(parsed.ahp, baseResults)];
+    },
+    validateValuationInputs(raw) {
+      const state = {
+        fieldErrors: {},
+        methodErrors: {
+          cost: [],
+          income: [],
+          market: [],
+          hybrid: [],
+          comparison: [],
+          technical: [],
+          dcf: [],
+          ahp: []
+        },
+        values: {},
+        errorCount: 0
+      };
+
+      const addError = (field, message, methods) => {
+        if (!state.fieldErrors[field]) {
+          state.fieldErrors[field] = message;
+        }
+        methods.forEach((name) => {
+          state.methodErrors[name].push(message);
+        });
+        state.errorCount += 1;
+      };
+
+      const asNumber = (value) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? num : NaN;
+      };
+
+      const asNumberList = (value) => String(value || '')
+        .split(/[,\s]+/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item) => Number(item));
+
+      const nonNegativeFields = [
+        ['cOneoff', '一次性投入成本', ['cost', 'hybrid']],
+        ['cOngoing', '持续性投入成本', ['cost', 'hybrid']],
+        ['cQualityEval', '质量评估成本', ['cost', 'hybrid']],
+        ['cQualityImprove', '质量提升成本', ['cost', 'hybrid']],
+        ['cProduct', '数据产品化成本', ['cost', 'hybrid']],
+        ['comparableTotalPrice', '可比样本总成交价', ['market']],
+        ['downloads', '下载量', ['hybrid']]
+      ];
+      nonNegativeFields.forEach(([field, label, methods]) => {
+        const value = asNumber(raw[field]);
+        if (Number.isNaN(value)) {
+          addError(field, `${label}必须为数字`, methods);
+          return;
+        }
+        if (value < 0) {
+          addError(field, `${label}不能小于0`, methods);
+        }
+      });
+
+      const percentFields = [
+        ['completenessPct', '完整性', ['cost']],
+        ['accuracyPct', '准确性', ['cost']],
+        ['consistencyPct', '一致性', ['cost']],
+        ['coveragePct', '覆盖度', ['cost']],
+        ['rfPct', '无风险收益率', ['income']],
+        ['rmPct', '市场平均收益率', ['income']],
+        ['growthPct', '经济增长率', ['income']],
+        ['hybridGrowthPct', '综合法经济增长率', ['hybrid']]
+      ];
+      percentFields.forEach(([field, label, methods]) => {
+        const value = asNumber(raw[field]);
+        if (Number.isNaN(value)) {
+          addError(field, `${label}必须为数字`, methods);
+          return;
+        }
+        if (value < 0 || value > 100) {
+          addError(field, `${label}应在0~100之间`, methods);
+        }
+      });
+
+      const taMomentum = asNumber(raw.taMomentumPct);
+      if (Number.isNaN(taMomentum)) {
+        addError('taMomentumPct', '动量因子必须为数字', ['technical']);
+      } else if (taMomentum < -100 || taMomentum > 200) {
+        addError('taMomentumPct', '动量因子应在-100~200之间', ['technical']);
+      }
+
+      const taVolatility = asNumber(raw.taVolatilityPct);
+      if (Number.isNaN(taVolatility)) {
+        addError('taVolatilityPct', '波动率必须为数字', ['technical']);
+      } else if (taVolatility < 0 || taVolatility > 200) {
+        addError('taVolatilityPct', '波动率应在0~200之间', ['technical']);
+      }
+
+      const dcfDiscountRate = asNumber(raw.dcfDiscountRatePct);
+      if (Number.isNaN(dcfDiscountRate)) {
+        addError('dcfDiscountRatePct', 'DCF折现率必须为数字', ['dcf']);
+      } else if (dcfDiscountRate <= 0 || dcfDiscountRate > 100) {
+        addError('dcfDiscountRatePct', 'DCF折现率应在0~100之间且大于0', ['dcf']);
+      }
+
+      const dcfTerminalGrowth = asNumber(raw.dcfTerminalGrowthPct);
+      if (Number.isNaN(dcfTerminalGrowth)) {
+        addError('dcfTerminalGrowthPct', 'DCF永续增长率必须为数字', ['dcf']);
+      } else if (dcfTerminalGrowth < 0 || dcfTerminalGrowth >= 100) {
+        addError('dcfTerminalGrowthPct', 'DCF永续增长率应在0~100之间', ['dcf']);
+      }
+
+      const integerRanges = [
+        ['scope', '应用范围 scope', 1, 5, ['income']],
+        ['hybridScope', '综合法应用范围 scope', 1, 5, ['hybrid']],
+        ['horizonN', '预测年限 N', 1, 10, ['income']],
+        ['hybridN', '综合法预测年限 N', 1, 10, ['hybrid']],
+        ['taLiquidityScore', '流动性评分', 1, 10, ['technical']],
+        ['dcfHorizonN', 'DCF预测年限 N', 1, 10, ['dcf']]
+      ];
+      integerRanges.forEach(([field, label, min, max, methods]) => {
+        const value = asNumber(raw[field]);
+        if (!Number.isInteger(value)) {
+          addError(field, `${label}必须为整数`, methods);
+          return;
+        }
+        if (value < min || value > max) {
+          addError(field, `${label}必须在${min}~${max}之间`, methods);
+        }
+      });
+
+      const beta = asNumber(raw.beta);
+      if (Number.isNaN(beta)) {
+        addError('beta', 'beta必须为数字', ['income']);
+      } else if (beta < 0 || beta > 3) {
+        addError('beta', 'beta必须在0~3之间', ['income']);
+      }
+
+      const positiveFields = [
+        ['comparableCount', '可比样本数量', ['market']],
+        ['targetSize', '评估对象规模', ['market']],
+        ['comparableSize', '可比对象规模', ['market']],
+        ['kQuality', '质量系数', ['market']],
+        ['kCoverage', '覆盖系数', ['market']],
+        ['kTimeliness', '时效系数', ['market']],
+        ['alpha', '社会价值调节系数 alpha', ['hybrid']],
+        ['targetFeatureIndex', '目标对象特征指数', ['comparison']],
+        ['comparableFeatureIndex', '可比对象特征指数', ['comparison']],
+        ['taCurrentPrice', '当前市场价格', ['technical']],
+        ['taMa20', 'MA20', ['technical']],
+        ['taMa60', 'MA60', ['technical']]
+      ];
+      positiveFields.forEach(([field, label, methods]) => {
+        const value = asNumber(raw[field]);
+        if (Number.isNaN(value)) {
+          addError(field, `${label}必须为数字`, methods);
+          return;
+        }
+        if (value <= 0) {
+          addError(field, `${label}必须大于0`, methods);
+        }
+      });
+
+      const ahpFields = [
+        ['ahpRelCost', 'AHP 方法可靠度 r1', ['ahp']],
+        ['ahpRelIncome', 'AHP 方法可靠度 r2', ['ahp']],
+        ['ahpRelMarket', 'AHP 方法可靠度 r3', ['ahp']],
+        ['ahpRelHybrid', 'AHP 方法可靠度 r4', ['ahp']],
+        ['ahpRelComparison', 'AHP 方法可靠度 r5', ['ahp']]
+      ];
+      ahpFields.forEach(([field, label, methods]) => {
+        const value = asNumber(raw[field]);
+        if (Number.isNaN(value)) {
+          addError(field, `${label}必须为数字`, methods);
+          return;
+        }
+        if (value < 1 || value > 9) {
+          addError(field, `${label}应在1~9区间`, methods);
+        }
+      });
+
+      const cashFlows = asNumberList(raw.cashFlows);
+      if (cashFlows.length === 0) {
+        addError('cashFlows', '现金流不能为空', ['income']);
+      }
+      if (cashFlows.some((item) => !Number.isFinite(item))) {
+        addError('cashFlows', '现金流列表中存在非数字', ['income']);
+      }
+      const horizon = asNumber(raw.horizonN);
+      if (Number.isInteger(horizon) && cashFlows.length > 0 && cashFlows.length !== horizon) {
+        addError('cashFlows', '现金流条目数量应与N一致', ['income']);
+      }
+
+      const compPrices = asNumberList(raw.compPrices);
+      const compWeights = asNumberList(raw.compWeights);
+      if (compPrices.length === 0) {
+        addError('compPrices', '比较法可比成交价列表不能为空', ['comparison']);
+      }
+      if (compWeights.length === 0) {
+        addError('compWeights', '比较法权重列表不能为空', ['comparison']);
+      }
+      if (compPrices.some((item) => !Number.isFinite(item) || item <= 0)) {
+        addError('compPrices', '比较法成交价列表需为大于0的数字', ['comparison']);
+      }
+      if (compWeights.some((item) => !Number.isFinite(item) || item <= 0)) {
+        addError('compWeights', '比较法权重列表需为大于0的数字', ['comparison']);
+      }
+      if (compPrices.length > 0 && compWeights.length > 0 && compPrices.length !== compWeights.length) {
+        addError('compWeights', '比较法中价格与权重数量必须一致', ['comparison']);
+      }
+
+      const dcfCashFlows = asNumberList(raw.dcfCashFlows);
+      if (dcfCashFlows.length === 0) {
+        addError('dcfCashFlows', 'DCF现金流不能为空', ['dcf']);
+      }
+      if (dcfCashFlows.some((item) => !Number.isFinite(item))) {
+        addError('dcfCashFlows', 'DCF现金流列表中存在非数字', ['dcf']);
+      }
+      const dcfHorizon = asNumber(raw.dcfHorizonN);
+      if (Number.isInteger(dcfHorizon) && dcfCashFlows.length > 0 && dcfCashFlows.length !== dcfHorizon) {
+        addError('dcfCashFlows', 'DCF现金流条目数量应与N一致', ['dcf']);
+      }
+      if (Number.isFinite(dcfDiscountRate) && Number.isFinite(dcfTerminalGrowth) && dcfDiscountRate <= dcfTerminalGrowth) {
+        addError('dcfTerminalGrowthPct', 'DCF要求折现率 r 必须大于永续增长率 g', ['dcf']);
+      }
+
+      state.values.cost = {
+        cOneoff: asNumber(raw.cOneoff),
+        cOngoing: asNumber(raw.cOngoing),
+        cQualityEval: asNumber(raw.cQualityEval),
+        cQualityImprove: asNumber(raw.cQualityImprove),
+        cProduct: asNumber(raw.cProduct),
+        completeness: asNumber(raw.completenessPct),
+        accuracy: asNumber(raw.accuracyPct),
+        consistency: asNumber(raw.consistencyPct),
+        coverage: asNumber(raw.coveragePct)
+      };
+      state.values.income = {
+        rf: asNumber(raw.rfPct) / 100,
+        rm: asNumber(raw.rmPct) / 100,
+        beta: asNumber(raw.beta),
+        g: asNumber(raw.growthPct) / 100,
+        scope: asNumber(raw.scope),
+        n: asNumber(raw.horizonN),
+        cashFlows
+      };
+      state.values.market = {
+        comparableTotalPrice: asNumber(raw.comparableTotalPrice),
+        comparableCount: asNumber(raw.comparableCount),
+        targetSize: asNumber(raw.targetSize),
+        comparableSize: asNumber(raw.comparableSize),
+        kQuality: asNumber(raw.kQuality),
+        kCoverage: asNumber(raw.kCoverage),
+        kTimeliness: asNumber(raw.kTimeliness)
+      };
+      state.values.hybrid = {
+        g: asNumber(raw.hybridGrowthPct) / 100,
+        scope: asNumber(raw.hybridScope),
+        n: asNumber(raw.hybridN),
+        alpha: asNumber(raw.alpha),
+        downloads: asNumber(raw.downloads)
+      };
+      state.values.comparison = {
+        prices: compPrices,
+        weights: compWeights,
+        targetFeatureIndex: asNumber(raw.targetFeatureIndex),
+        comparableFeatureIndex: asNumber(raw.comparableFeatureIndex)
+      };
+      state.values.technical = {
+        currentPrice: asNumber(raw.taCurrentPrice),
+        ma20: asNumber(raw.taMa20),
+        ma60: asNumber(raw.taMa60),
+        momentum: asNumber(raw.taMomentumPct) / 100,
+        volatility: asNumber(raw.taVolatilityPct) / 100,
+        liquidityScore: asNumber(raw.taLiquidityScore)
+      };
+      state.values.dcf = {
+        discountRate: asNumber(raw.dcfDiscountRatePct) / 100,
+        terminalGrowth: asNumber(raw.dcfTerminalGrowthPct) / 100,
+        n: asNumber(raw.dcfHorizonN),
+        cashFlows: dcfCashFlows
+      };
+      state.values.ahp = {
+        relCost: asNumber(raw.ahpRelCost),
+        relIncome: asNumber(raw.ahpRelIncome),
+        relMarket: asNumber(raw.ahpRelMarket),
+        relHybrid: asNumber(raw.ahpRelHybrid),
+        relComparison: asNumber(raw.ahpRelComparison)
+      };
+      state.values.sharedCost = {
+        cOneoff: asNumber(raw.cOneoff),
+        cOngoing: asNumber(raw.cOngoing),
+        cQualityEval: asNumber(raw.cQualityEval),
+        cQualityImprove: asNumber(raw.cQualityImprove),
+        cProduct: asNumber(raw.cProduct)
+      };
+      return state;
+    },
+    
+    formatNum(value, digits = 2) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) {
+        return String(value);
+      }
+      return number.toLocaleString('zh-CN', {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits
+      });
+    },
 
 async generateOmniPrint() {
   if (!this.form.file) {
@@ -970,36 +2047,6 @@ async generateSelectedIdentifier() {
   throw new Error(`标识生成失败，状态码：${response.status}`);
 },
 
-async handleRecordsJsonChange(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-
-  try {
-    const text = await file.text();
-    const json = JSON.parse(text);
-
-    if (!Array.isArray(json.records) || json.records.length === 0) {
-      throw new Error('records.json 中 records 不能为空');
-    }
-
-    const invalid = json.records.some(item => !item.extracted_text);
-    if (invalid) {
-      throw new Error('records 中每条记录都必须包含 extracted_text');
-    }
-
-    this.summarySourceFile = json.source_file || file.name;
-    this.summaryRecords = json.records;
-    this.summaryRecordsFileName = file.name;
-
-    this.$message?.success('records.json 读取成功');
-  } catch (err) {
-    console.error('读取 records.json 失败:', err);
-    this.summarySourceFile = '';
-    this.summaryRecords = [];
-    this.summaryRecordsFileName = '';
-    this.$message?.error(err.message || 'records.json 格式错误');
-  }
-},
 
 async fetchDefaultRegisterCertInfo() {
   if (!this.userId) {
@@ -1460,71 +2507,6 @@ async confirmForm() {
   this.classifyError = '';
   this.gradingError = '';
 
-  if (!this.form.file) {
-    this.classifyError = '请先选择文件。';
-    return;
-  }
-
-  if (!this.form.analysisMethod) {
-    this.classifyError = '请先选择分类分级方法。';
-    return;
-  }
-
-  this.classifyLoading = true;
-
-  try {
-    const formData = new FormData();
-    formData.append('method', this.form.analysisMethod);
-    formData.append('input_file', this.form.file);
-
-    const response = await axios.post(
-      'http://10.112.47.214:3000/api/asset-analysis/combined',
-      formData,
-      { timeout: 300000 }
-    );
-
-    if (!response.data || response.data.success !== true) {
-      throw new Error(response.data?.message || '分类分级失败');
-    }
-
-    const entries = response.data.entries || [];
-    const first = entries[0] || {};
-
-    const classification = first.classification || response.data.classification || '';
-    const grade = first.grade || response.data.grade || '';
-
-    if (!classification || !grade) {
-      throw new Error('分类分级结果为空');
-    }
-
-    this.form.assetCategory = classification;
-    this.form.assetType = grade;
-    this.form.analysisResultText = `资产类别：${classification}；资产等级：${grade}`;
-
-    // 可选：同步实际使用的方法
-    this.form.classificationMethod = response.data.classification_method_code || '';
-    this.form.gradingMethod = response.data.grading_method_code || '';
-
-    this.$message?.success(`分类分级完成：${classification} / ${grade}`);
-  } catch (error) {
-    console.error('分类分级失败:', error);
-    this.classifyError =
-      error.response?.data?.message ||
-      error.response?.data?.detail ||
-      error.message ||
-      '分类分级失败，请检查服务是否正常。';
-
-    this.form.assetCategory = '';
-    this.form.assetType = '';
-    this.form.analysisResultText = '';
-  } finally {
-    this.classifyLoading = false;
-  }
-},*/
-async analyzeAssetCombined() {
-  this.classifyError = '';
-  this.gradingError = '';
-
   if (!this.form.analysisMethod) {
     this.classifyError = '请先选择分类分级方法。';
     return;
@@ -1618,8 +2600,112 @@ async analyzeAssetCombined() {
   } finally {
     this.classifyLoading = false;
   }
-},
+},*/
 
+async analyzeAssetCombined() {
+  this.classifyError = '';
+  this.gradingError = '';
+
+  if (!this.form.analysisMethod) {
+    this.classifyError = '请先选择分类分级方法。';
+    return;
+  }
+
+  this.classifyLoading = true;
+
+  try {
+    const classificationMethods = [
+      'type',
+      'income',
+      'liquidity',
+      'value-stability'
+    ];
+
+    const gradingMethods = [
+      'harm',
+      'security',
+      'sensitivity',
+      'vulnerability'
+    ];
+
+    let endpoint = '';
+
+    if (classificationMethods.includes(this.form.analysisMethod)) {
+      endpoint = `/api/summary-records/combined/latest/classification/${this.form.analysisMethod}`;
+    } else if (gradingMethods.includes(this.form.analysisMethod)) {
+      endpoint = `/api/summary-records/combined/latest/grading/${this.form.analysisMethod}`;
+    } else {
+      throw new Error('分类分级方法无效');
+    }
+
+    const response = await axios.post(
+      `http://10.112.47.214:3000${endpoint}`,
+      {
+        model: 'qwen3:8b',
+        embedding_model: 'bge-m3',
+        rag_top_k: 3,
+        rag_recall_k: 20,
+        record_limit: 100,
+        base_url: 'http://127.0.0.1:11434'
+      },
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 300000
+      }
+    );
+
+    if (!response.data || response.data.success === false) {
+      throw new Error(response.data?.message || '分类分级失败');
+    }
+
+    const entries = response.data.entries || [];
+    const first = entries[0] || {};
+
+    const classification = first.classification || '';
+    const grade = first.grade || '';
+
+    if (!classification || !grade) {
+      throw new Error('分类分级结果为空');
+    }
+
+    this.form.assetCategory = classification;
+    this.form.assetType = grade;
+    this.form.analysisResultText = `资产类别：${classification}；资产等级：${grade}`;
+
+    this.classificationRationale = first.classification_rationale || '';
+    this.gradeRationale = first.grade_rationale || '';
+
+    this.form.classificationMethod =
+      response.data.classification_method_code ||
+      response.data.classification_method ||
+      '';
+
+    this.form.gradingMethod =
+      response.data.grading_method_code ||
+      response.data.grading_method ||
+      '';
+
+    this.$message?.success(`分类分级完成：${classification} / ${grade}`);
+  } catch (error) {
+    console.error('分类分级失败:', error);
+
+    this.classifyError =
+      error.response?.data?.message ||
+      error.response?.data?.detail ||
+      error.message ||
+      '分类分级失败';
+
+    this.form.assetCategory = '';
+    this.form.assetType = '';
+    this.form.analysisResultText = '';
+    this.classificationRationale = '';
+    this.gradeRationale = '';
+
+    this.$message?.error(this.classifyError);
+  } finally {
+    this.classifyLoading = false;
+  }
+},
 
 async gradeAssetLevel() {
   this.gradingError = '';
@@ -1767,6 +2853,7 @@ async saveTradingTime() {
       formData.append('user_id', this.userId);
       formData.append('is_proxied', this.form.isProxied ? '1' : '0');
       formData.append('number', this.form.quantity);
+      formData.append('price', this.form.price || 0);
       formData.append('can_sell_asset', this.form.isSellBody ? '1':'0');
       formData.append('can_sell_process', this.form.isSellProcessRight ? '1':'0');
       formData.append('can_sell_view', this.form.isSellReadRight ? '1':'0');
@@ -2053,7 +3140,7 @@ formData.append('trade_end_ts', tradeEndTs);
       }
       return false;
     },
-    getMethodLabel(methods, value) {
+    getMethodLabelByOptions(methods, value) {
   const item = methods.find(m => m.value === value);
   return item ? item.label : value;
 }
@@ -2692,6 +3779,233 @@ input[readonly] {
 
   .classify-inline-group {
     padding-left: 0;
+  }
+}
+  .valuation-modal {
+  width: min(1100px, 95vw);
+  max-height: 86vh;
+  overflow-y: auto;
+  text-align: left;
+}
+
+.valuation-result-modal {
+  width: min(760px, 92vw);
+}
+
+.valuation-result-status {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  border-radius: 999px;
+  color: #166534;
+  background: rgba(22, 101, 52, 0.1);
+  border: 1px solid rgba(22, 101, 52, 0.2);
+}
+
+.valuation-result-status.has-errors {
+  color: #b91c1c;
+  border-color: rgba(185, 28, 28, 0.24);
+  background: rgba(185, 28, 28, 0.08);
+}
+
+.valuation-control-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: 12px;
+  align-items: flex-end;
+}
+
+.valuation-method-select {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 220px;
+}
+
+.valuation-method-select label {
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.valuation-method-select select {
+  border: 1px solid #d4dde6;
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 14px;
+  background: #fff;
+  color: #1f2a37;
+}
+
+.valuation-control-row .btn-primary,
+.valuation-control-row .btn-secondary {
+  border: none;
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.2s ease;
+}
+
+.valuation-control-row .btn-primary {
+  background: linear-gradient(130deg, #0f766e, #115e59);
+  color: #fff;
+  box-shadow: 0 8px 16px rgba(15, 118, 110, 0.2);
+}
+
+.valuation-control-row .btn-secondary {
+  background: #fff;
+  color: #1f2a37;
+  border: 1px solid #d4dde6;
+}
+
+.valuation-control-row .btn-primary:hover,
+.valuation-control-row .btn-secondary:hover {
+  transform: translateY(-1px);
+}
+
+.valuation-form {
+  margin-bottom: 10px;
+}
+
+.valuation-method-box {
+  border: 1px solid rgba(17, 94, 89, 0.14);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.9);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.valuation-method-box[open] {
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.12);
+}
+
+.valuation-method-box summary {
+  list-style: none;
+  cursor: pointer;
+  padding: 10px 12px;
+  font-size: 16px;
+  font-weight: 700;
+  background: linear-gradient(90deg, rgba(15, 118, 110, 0.09), rgba(240, 140, 52, 0.08));
+  border-bottom: 1px solid rgba(17, 94, 89, 0.15);
+}
+
+.valuation-method-box summary::-webkit-details-marker {
+  display: none;
+}
+
+.valuation-method-body {
+  padding: 10px 10px 8px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(200px, 1fr));
+  gap: 8px;
+}
+
+.valuation-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.valuation-field label {
+  font-size: 13px;
+  color: #4b5563;
+}
+
+.valuation-field input,
+.valuation-field textarea {
+  width: 100%;
+  border: 1px solid #d4dde6;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 14px;
+  background: #fff;
+  color: #1f2a37;
+  box-sizing: border-box;
+}
+
+.valuation-field textarea {
+  min-height: 68px;
+  resize: vertical;
+}
+
+.valuation-hint {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.valuation-field.span-2 {
+  grid-column: span 2;
+}
+
+.valuation-result-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid #dbe5ee;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 14px;
+  table-layout: fixed;
+}
+
+.valuation-result-wrap {
+  overflow-x: auto;
+}
+
+.valuation-result-table th,
+.valuation-result-table td {
+  border-bottom: 1px solid #edf2f7;
+  padding: 10px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.valuation-result-table thead th {
+  background: #f3f7fb;
+  color: #1b4d47;
+}
+
+.valuation-result-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.valuation-intermediate-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.valuation-intermediate-list li {
+  margin-bottom: 4px;
+}
+
+.mono-cell {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 13px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.warn-text {
+  color: #92400e;
+  font-weight: 700;
+}
+
+.valuation-note-row td {
+  background: #fcf7ef;
+  color: #6c4f2d;
+  font-size: 13px;
+}
+ @media (max-width: 900px) {
+  .valuation-method-body {
+    grid-template-columns: 1fr;
+  }
+
+  .valuation-field.span-2 {
+    grid-column: span 1;
   }
 }
 </style>

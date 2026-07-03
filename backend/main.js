@@ -67,6 +67,9 @@ const VM_TOKEN = process.env.VM_TOKEN ||
 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
 const VM_SERVICE_BASE_URL = 'http://虚机服务IP:18080/api';
 
+const SUMMARY_RECORDS_DIR =
+  process.env.SUMMARY_RECORDS_DIR || '/home/super/zym';
+
 
  
 // 缓存 TTL
@@ -668,6 +671,51 @@ function insertCertificateRegistry({
     });
 }
 
+async function getLatestSummaryJsonFile() {
+  const entries = await fs.readdir(SUMMARY_RECORDS_DIR, {
+    withFileTypes: true
+  });
+
+  const jsonFiles = [];
+
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    if (!entry.name.toLowerCase().endsWith('.json')) continue;
+
+    const fullPath = path.join(SUMMARY_RECORDS_DIR, entry.name);
+    const stat = await fs.stat(fullPath);
+
+    jsonFiles.push({
+      name: entry.name,
+      fullPath,
+      mtimeMs: stat.mtimeMs
+    });
+  }
+
+  if (jsonFiles.length === 0) {
+    throw new Error(`目录下没有 json 摘要文件：${SUMMARY_RECORDS_DIR}`);
+  }
+
+  jsonFiles.sort((a, b) => b.mtimeMs - a.mtimeMs);
+
+  return jsonFiles[0];
+}
+
+async function readLatestSummaryRecords() {
+  const latestFile = await getLatestSummaryJsonFile();
+  const text = await fs.readFile(latestFile.fullPath, 'utf8');
+  const json = JSON.parse(text);
+
+  if (!Array.isArray(json.records) || json.records.length === 0) {
+    throw new Error(`最新摘要文件 records 为空：${latestFile.name}`);
+  }
+
+  return {
+    latestFile,
+    records: json.records
+  };
+}
+
 app.post('/api/certificate-registry/upsert', async (req, res) => {
     const {
         userId = null,
@@ -780,6 +828,91 @@ const COMBINED_GRADING_METHODS = new Set([
   'sensitivity',
   'vulnerability'
 ]);
+
+app.post('/api/summary-records/combined/latest/:kind/:method', async (req, res) => {
+  try {
+    const { kind, method } = req.params;
+
+    if (!['classification', 'grading'].includes(kind)) {
+      return res.status(400).json({
+        success: false,
+        message: 'kind 参数无效'
+      });
+    }
+
+    if (
+      kind === 'classification' &&
+      !COMBINED_CLASSIFICATION_METHODS.has(method)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: '分类方法无效'
+      });
+    }
+
+    if (
+      kind === 'grading' &&
+      !COMBINED_GRADING_METHODS.has(method)
+    ) {
+      return res.status(400).json({
+        success: false,
+        message: '分级方法无效'
+      });
+    }
+
+    const { latestFile, records } = await readLatestSummaryRecords();
+
+    const targetUrl =
+      `${SUMMARY_API_BASE}/api/summary-records/combined/${kind}/${method}`;
+
+    const payload = {
+      source_file: latestFile.name,
+      records,
+      model: req.body.model || 'qwen3:8b',
+      embedding_model: req.body.embedding_model || 'bge-m3',
+      rag_top_k: req.body.rag_top_k || 3,
+      rag_recall_k: req.body.rag_recall_k || 20,
+      record_limit: req.body.record_limit || 100,
+      base_url: req.body.base_url || 'http://127.0.0.1:11434'
+    };
+
+    console.log(
+      `[summary latest] kind=${kind}, method=${method}, file=${latestFile.fullPath}, records=${records.length}`
+    );
+
+    const remoteResp = await axios.post(
+      targetUrl,
+      payload,
+      {
+        headers: { 'Content-Type': 'application/json' },
+        timeout: 300000,
+        validateStatus: () => true
+      }
+    );
+
+    if (remoteResp.status < 200 || remoteResp.status >= 300) {
+      return res.status(remoteResp.status).json({
+        success: false,
+        message: 'summary-records 服务调用失败',
+        latest_file: latestFile.name,
+        remote: remoteResp.data
+      });
+    }
+
+    return res.json({
+      success: true,
+      latest_file: latestFile.name,
+      latest_file_path: latestFile.fullPath,
+      ...remoteResp.data
+    });
+  } catch (err) {
+    console.error('[summary-records latest] error:', err);
+    return res.status(500).json({
+      success: false,
+      message: err.message || '读取最新摘要文件失败'
+    });
+  }
+});
 
 app.post('/api/asset-analysis/combined', upload.single('input_file'), async (req, res) => {
   try {
@@ -4030,6 +4163,32 @@ app.get('/api/default-trade-cert-info', (req, res) => {
         success: true,
         cert: certRows[0]
       });
+    });
+  });
+});
+
+app.get('/api/industry-transaction-stats', (req, res) => {
+  const sql = `
+    SELECT
+      COALESCE(NULLIF(industry_raw_name, '')) AS industryName,
+      COUNT(*) AS count
+    FROM asset_registrations
+    GROUP BY COALESCE(NULLIF(industry_raw_name, ''))
+    ORDER BY count DESC
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error('获取领域交易数量失败:', err);
+      return res.status(500).json({
+        success: false,
+        message: '获取领域交易数量失败'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: results
     });
   });
 });
