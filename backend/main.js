@@ -3851,7 +3851,7 @@ app.get('/api/default-register-cert-info', (req, res) => {
 
 app.post('/api/datacatalog/publish-asset', async (req, res) => {
   const {
-    fingerprint,
+    identifier,
     assetName,
     description,
     assetType,
@@ -3859,10 +3859,10 @@ app.post('/api/datacatalog/publish-asset', async (req, res) => {
     certOrg
   } = req.body || {};
 
-  if (!fingerprint) {
+  if (!identifier) {
     return res.status(400).json({
       success: false,
-      message: '缺少 fingerprint'
+      message: '缺少 identifier'
     });
   }
 
@@ -3886,8 +3886,8 @@ app.post('/api/datacatalog/publish-asset', async (req, res) => {
     }
 
     const payload = {
-      id: fingerprint,
-      code: fingerprint,
+      id: identifier,
+      code: identifier,
       name: assetName,
       remark: description || assetName,
       orgId: resolvedOrgId,

@@ -77,11 +77,11 @@
   </div>
 </div>
             <div class="form-row">
-  <!-- 哈希算法选择 -->
+  <!-- 数字标识选择 -->
   <div class="form-group">
     <label class="full-width-label left-align">
       <span class="required-asterisk" title="必填：用于生成资产元数据名称。">*</span>
-      哈希算法选择
+      数字标识选择
     </label>
     <div class="radio-group">
       <div class="radio-item">
@@ -93,8 +93,8 @@
         <label for="SHA3_256" class="radio-label">SHA3_256</label>
       </div>
       <div class="radio-item">
-        <input type="radio" id="other" value="OTHER" v-model="form.algorithm" />
-        <label for="other" class="radio-label">其他</label>
+        <input type="radio" id="fingerprint" value="FINGERPRINT" v-model="form.algorithm" />
+        <label for="fingerprint" class="radio-label">数字指纹</label>
       </div>
     </div>
   </div>
@@ -112,16 +112,6 @@
 
 </div>
 
-            <!-- 自定义算法输入框 -->
-            <div class="form-row" v-if="form.algorithm === 'OTHER'">
-              <div class="form-group full-width">
-                <label for="custom-algorithm" class="full-width-label left-align">
-                  <span class="required-asterisk" title="必填：用于生成资产元数据名称。">*</span>
-                  自定义哈希算法
-                </label>
-                <input type="text" id="custom-algorithm" v-model="form.customAlgorithm" required />
-              </div>
-            </div>
             <div class="form-row">
               <div class="form-group">
                 <label for="file">
@@ -131,31 +121,6 @@
                 <input type="file" id="file" @change="handleFileChange" required />
               </div>
             </div>
-            <div class="form-row">
-  <div class="form-group">
-    <button
-      type="button"
-      class="classify-btn"
-      @click="generateOmniPrint"
-      :disabled="form.fingerprintLoading || !form.file"
-    >
-      {{ form.fingerprintLoading ? '生成中...' : '生成数字指纹' }}
-    </button>
-  </div>
-
-  <div class="form-group">
-    <label>数字指纹</label>
-    <input
-      type="text"
-      v-model="form.fingerprint"
-      readonly
-      placeholder="点击生成数字指纹后自动填入"
-    />
-  </div>
-</div>
-            
-    
-
     <div class="form-group">
   <label>
     <span class="required-asterisk">*</span>
@@ -364,12 +329,12 @@
             <p><strong>邮箱:</strong> {{ form.email }}</p>
             <p><strong>资产类别:</strong> {{ form.assetCategory }}</p>
 
-<p><strong>资产等级:</strong> {{ form.assetType }}</p>
+            <p><strong>资产等级:</strong> {{ form.assetType }}</p>
 <p><strong>分类方法:</strong> {{ getMethodLabel(classificationMethods, form.classificationMethod) }}</p>
 <p><strong>分级方法:</strong> {{ getMethodLabel(gradingMethods, form.gradingMethod) }}</p>
             <p><strong>地址:</strong> {{ form.address }}</p>
             <p><strong>数据资产上链登记内容:</strong> {{ form.description }}</p>
-            <p><strong>哈希算法:</strong> {{ form.algorithm === 'OTHER' ? form.customAlgorithm : form.algorithm }}</p>
+            <p><strong>数字标识:</strong> {{ getIdentifierMethodLabel(form.algorithm) }}</p>
             <p><strong>模型选择:</strong> 
   {{ form.modelSelection === 'weighted_average' ? '加权平均' : form.modelSelection }}
 </p>
@@ -387,7 +352,13 @@
           <!-- 哈希生成状态 -->
           <div class="modal-section">
             <transition name="fade" mode="out-in">
-              <div v-if="!loadingHash" key="hashResult">
+              <div v-if="loadingHash" key="hashPending">
+                <span class="pending-icon">...</span>
+                <p class="pending-text">
+                  <strong>文件哈希值:</strong> 生成中
+                </p>
+              </div>
+              <div v-else key="hashResult">
                 <el-icon v-if="hashSuccess" class="success-icon">
                   <check />
                 </el-icon>
@@ -405,7 +376,13 @@
           <!-- 数据库保存状态 -->
           <div class="modal-section" v-show="!loadingHash">
             <transition name="fade" mode="out-in" appear>
-              <div v-if="!loadingDatabase" key="databaseResult">
+              <div v-if="loadingDatabase" key="databasePending">
+                <span class="pending-icon">...</span>
+                <p class="pending-text">
+                  <strong>本地数据库状态:</strong> 保存中
+                </p>
+              </div>
+              <div v-else key="databaseResult">
                 <el-icon v-if="databaseSuccess" class="success-icon">
                   <check />
                 </el-icon>
@@ -423,41 +400,34 @@
           <!-- 长安链状态显示 -->
           <div class="modal-section" v-show="!loadingDatabase">
             <transition name="fade" mode="out-in" appear>
-              <div v-if="!loadingBlockchain" key="blockchainResult">
+              <div v-if="loadingBlockchain" key="blockchainPending">
+                <span class="pending-icon">...</span>
+                <p class="pending-text">
+                  <strong>长安链返回信息:</strong> 上链中
+                </p>
+              </div>
+              <div v-else key="blockchainResult">
                 <el-icon v-if="blockchainSuccess" class="success-icon">
                   <check />
                 </el-icon>
-                <el-icon v-else class="error-icon">
+                <el-icon v-else-if="hasDefinitiveBlockchainFailure()" class="error-icon">
                   <close />
                 </el-icon>
-                <p :class="{ 'success-text': blockchainSuccess, 'error-text': !blockchainSuccess }">
-                  <strong>长安链返回信息:</strong> {{ blockchainResponseData.message || 'Mint 接口调用完成，但状态未知' }}
+                <span v-else class="pending-icon">...</span>
+                <p :class="{
+                  'success-text': blockchainSuccess,
+                  'error-text': hasDefinitiveBlockchainFailure(),
+                  'pending-text': !blockchainSuccess && !hasDefinitiveBlockchainFailure()
+                }">
+                  <strong>长安链返回信息:</strong> {{ getBlockchainStatusText() }}
                 </p>
               
-                <p v-if="!blockchainSuccess" class="error-text">
+                <p v-if="hasDefinitiveBlockchainFailure()" class="error-text">
                   Mint 接口调用失败，详细信息请检查返回数据
                 </p>
               </div>
             </transition>
           </div>
-
-          <!-- 目录发布状态 -->
-          <div class="modal-section" v-show="!loadingDatabase && !loadingBlockchain">
-            <transition name="fade" mode="out-in" appear>
-              <div key="catalogResult">
-                <el-icon v-if="getCatalogPublishSuccess()" class="success-icon">
-                  <check />
-                </el-icon>
-                <el-icon v-else class="error-icon">
-                  <close />
-                </el-icon>
-                <p :class="{ 'success-text': getCatalogPublishSuccess(), 'error-text': !getCatalogPublishSuccess() }">
-                  <strong>目录发布状态:</strong> {{ getCatalogPublishMessage() }}
-                </p>
-              </div>
-            </transition>
-          </div>
-
 
           <!-- FISCO 链状态 -->
 
@@ -859,6 +829,147 @@ async generateOmniPrint() {
   }
 },
 
+getIdentifierMethodLabel(method) {
+  const methodMap = {
+    SHA2_256: 'SHA2_256',
+    SHA3_256: 'SHA3_256',
+    FINGERPRINT: '数字指纹'
+  };
+
+  return methodMap[method] || method || '';
+},
+
+normalizeChainmakerResult(raw = {}, httpStatus = 200) {
+  const code = raw?.code;
+  const message = raw?.message;
+  const txId = raw?.data?.tx_id;
+
+  const isSuccess =
+    httpStatus === 200 && (
+      code === 0 ||
+      code === '0' ||
+      message === 'success' ||
+      message === '成功' ||
+      Boolean(txId)
+    );
+
+  return {
+    success: isSuccess,
+    payload: {
+      ...raw,
+      message: message === 'success' ? '成功' : (message || (isSuccess ? '成功' : '状态未知'))
+    }
+  };
+},
+
+hasDefinitiveBlockchainFailure() {
+  if (this.loadingBlockchain || this.blockchainSuccess) {
+    return false;
+  }
+
+  const code = this.blockchainResponseData?.code;
+  const message = this.blockchainResponseData?.message || '';
+
+  if (code === undefined || code === null || code === '') {
+    return false;
+  }
+
+  if (code === 0 || code === '0') {
+    return false;
+  }
+
+  if (message === '状态未知') {
+    return false;
+  }
+
+  return true;
+},
+
+getBlockchainStatusText() {
+  if (this.loadingBlockchain) {
+    return '上链中';
+  }
+
+  if (this.blockchainSuccess) {
+    return this.blockchainResponseData.message || '成功';
+  }
+
+  if (this.hasDefinitiveBlockchainFailure()) {
+    return this.blockchainResponseData.message || '上链失败';
+  }
+
+  return this.blockchainResponseData.message || '链上处理中';
+},
+
+async generateSelectedIdentifier() {
+  if (this.form.algorithm === 'FINGERPRINT') {
+    if (!this.form.file) {
+      throw new Error('请先选择文件');
+    }
+
+    if (this.form.fingerprint) {
+      this.hashValue = this.form.fingerprint;
+      this.hashSuccess = true;
+      return this.hashValue;
+    }
+
+    this.form.fingerprintLoading = true;
+
+    try {
+      const fd = new FormData();
+      fd.append('file', this.form.file);
+      fd.append('assetId', this.form.assetName || `asset-${Date.now()}`);
+
+      const res = await axios.post(
+        'http://10.112.47.214:3000/api/omniprint/fingerprint',
+        fd,
+        {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 300000
+        }
+      );
+
+      if (!res.data?.success || !res.data?.fingerprint) {
+        throw new Error(res.data?.message || '数字指纹生成失败');
+      }
+
+      this.form.fingerprint = res.data.fingerprint;
+      this.form.fingerprintBits = res.data.fingerprint_bits || '';
+      this.hashValue = res.data.fingerprint;
+      this.hashSuccess = true;
+      return this.hashValue;
+    } catch (err) {
+      if (err.response?.status === 409) {
+        throw new Error('发现相似资产，不能重复登记');
+      }
+
+      throw new Error(
+        err.response?.data?.message ||
+        err.message ||
+        '数字指纹生成失败'
+      );
+    } finally {
+      this.form.fingerprintLoading = false;
+    }
+  }
+
+  const formData = new FormData();
+  formData.append('file', this.form.file);
+  formData.append('algorithm', this.form.algorithm);
+
+  const response = await axios.post('/api/generate-hash', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  });
+
+  if (response.status === 200 && response.data && response.data.hash) {
+    this.hashValue = response.data.hash;
+    this.hashSuccess = true;
+    return this.hashValue;
+  }
+
+  throw new Error(`标识生成失败，状态码：${response.status}`);
+},
+
 async handleRecordsJsonChange(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -911,10 +1022,10 @@ async fetchDefaultRegisterCertInfo() {
   return res.data.cert;
 },
 async publishToDataCatalog() {
-  if (!this.form.fingerprint) {
+  if (!this.hashValue) {
     return {
       success: false,
-      message: '缺少数字指纹，无法发布目录'
+      message: '缺少数字标识，无法发布目录'
     };
   }
 
@@ -922,7 +1033,7 @@ async publishToDataCatalog() {
     const response = await axios.post(
       'http://10.112.47.214:3000/api/datacatalog/publish-asset',
       {
-        fingerprint: this.form.fingerprint,
+        identifier: this.hashValue,
         assetName: this.form.assetName,
         description: this.form.description,
         assetType: this.form.assetType,
@@ -960,8 +1071,8 @@ getCatalogPublishMessage() {
     return '主链上链未成功，未执行目录发布';
   }
 
-  if (!this.form.fingerprint) {
-    return '未执行，未生成数字指纹';
+  if (!this.hashValue) {
+    return '未执行，未生成数字标识';
   }
 
   if (!this.blockchainResponseData?.catalogPublish) {
@@ -1087,6 +1198,10 @@ getCatalogPublishMessage() {
     },
     handleFileChange(event) {
       this.form.file = event.target.files[0];
+      this.form.fingerprint = '';
+      this.form.fingerprintBits = '';
+      this.hashValue = '';
+      this.hashSuccess = false;
     },
     handlePictureChange(event) {
       this.form.picture = event.target.files[0];  // 处理图片上传
@@ -1177,7 +1292,6 @@ async openConfirmation() {
     !this.form.assetName ||
     !this.form.description ||
     !this.form.algorithm ||
-    (this.form.algorithm === 'OTHER' && !this.form.customAlgorithm) ||
     !this.form.file ||
     !this.form.picture ||
     !this.form.industry
@@ -1238,11 +1352,6 @@ async confirmForm() {
   this.showUnifiedModal = true; // 显示统一模态框
   this.loadingHash = true; // 开始哈希值生成流程
 
-  // 生成文件哈希值
-  const formData = new FormData();
-  formData.append('file', this.form.file);
-  formData.append('algorithm', this.form.algorithm);
-
   /*console.log('选中的证书名称:', this.form.selectedCertificate); // 输出 selectedCertificate 的值
 
   // 调用获取证书地址的方法
@@ -1280,22 +1389,12 @@ async confirmForm() {
 }
 
   try {
-    const response = await axios.post('/api/generate-hash', formData, {
-      headers: { 'Content-Type': 'multipart/form-data' },
-    });
-
-    // 检查响应是否包含所需的字段
-    if (response.status === 200 && response.data && response.data.hash) {
-      this.hashValue = response.data.hash; // 成功生成哈希值
-      this.hashSuccess = true;
-    } else {
-      throw new Error(`哈希生成失败，状态码：${response.status}`);
-    }
+    await this.generateSelectedIdentifier();
   } catch (error) {
-    console.error('哈希生成错误:', error);
+    console.error('标识生成错误:', error);
     this.hashSuccess = false;
-    this.hashValue = '未生成哈希值'; // 设置默认值，继续后续流程
-    this.errorMessage = error.message || '哈希生成失败，请检查网络连接。';
+    this.hashValue = '未生成标识值';
+    this.errorMessage = error.message || '标识生成失败，请检查网络连接。';
   } finally {
     this.loadingHash = false;
   }
@@ -1340,9 +1439,6 @@ async confirmForm() {
 
         if (catalogResponse.success) {
           this.blockchainResponseData.message = `${this.blockchainResponseData.message}，目录发布成功`;
-        } else {
-          this.errorMessage = `目录发布失败：${catalogResponse.message}`;
-          this.$message?.warning(this.errorMessage);
         }
       }
     } else {
@@ -1656,8 +1752,8 @@ async saveTradingTime() {
       formData.append('owner_address', String(this.certAddr) || ''); // 确保它是字符串
       // 使用获取的证书地址
       formData.append('description', this.form.description);
-      formData.append('algorithm', this.form.algorithm === 'OTHER' ? this.form.customAlgorithm : this.form.algorithm);
-      formData.append('customAlgorithm', this.form.customAlgorithm || null);
+      formData.append('algorithm', this.form.algorithm);
+      formData.append('customAlgorithm', null);
       formData.append('fileHash', this.hashValue);
       formData.append('industry', this.form.industry);
 
@@ -1794,8 +1890,8 @@ formData.append('trade_end_ts', tradeEndTs);
         email: this.form.email,
         address: this.form.address,
         description: this.form.description,
-        algorithm: this.form.algorithm === 'OTHER' ? this.form.customAlgorithm : this.form.algorithm, // 使用自定义算法（如果有）
-        customAlgorithm: this.form.customAlgorithm || '', // 如果没有选择其他算法，填充为空字符串
+        algorithm: this.form.algorithm,
+        customAlgorithm: '',
         picture: this.form.picture ? this.form.picture : '', // 确保有文件时传递路径
         isProxied: this.form.isProxied,
         number: this.form.quantity, // 数量
@@ -1831,29 +1927,20 @@ formData.append('trade_end_ts', tradeEndTs);
 
     console.log("Mint 或 En-Mint 接口响应:", response.data);
 
-    if (response.status === 200 && response.data.code === 0) {
+    const normalized = this.normalizeChainmakerResult(response.data, response.status);
+
+    if (normalized.success) {
       this.chainMakerSuccess = true;
 
-      const translatedMessage = response.data.message === 'success' ? '成功' : response.data.message;
-
       // 更新前端显示的数据，仅显示 Mint 或 En-Mint 的返回结果
-      this.blockchainResponseData = {
-        ...response.data,
-        message: translatedMessage, // 更新返回信息为中文
-      };
+      this.blockchainResponseData = normalized.payload;
 
       return this.blockchainResponseData; // 返回成功响应
     } else {
       this.chainMakerSuccess = false;
+      this.blockchainResponseData = normalized.payload;
 
-      const translatedMessage = response.data.message === 'success' ? '成功' : response.data.message;
-
-      this.blockchainResponseData = {
-        ...response.data,
-        message: translatedMessage, // 更新返回信息为中文
-      };
-
-      this.chainMakerErrorMessage = `接口调用失败，错误码：${response.data.code}, 错误信息：${translatedMessage}`;
+      this.chainMakerErrorMessage = `接口调用失败，错误码：${response.data?.code ?? '未知'}, 错误信息：${this.blockchainResponseData.message}`;
       return this.blockchainResponseData; // 返回失败响应
     }
   } catch (error) {
@@ -1908,7 +1995,9 @@ formData.append('trade_end_ts', tradeEndTs);
         description: '',
         algorithm: '',
         customAlgorithm: '',
-        file: null
+        file: null,
+        fingerprint: '',
+        fingerprintBits: ''
       };
       this.hashValue = '';
     },
@@ -2435,12 +2524,22 @@ input[readonly] {
   margin-right: 5px;
 }
 
+.pending-icon {
+  color: #007bff;
+  margin-right: 5px;
+  font-weight: 700;
+}
+
 .success-text {
   color: #28a745;
 }
 
 .error-text {
   color: #dc3545;
+}
+
+.pending-text {
+  color: #007bff;
 }
 
 /* =========================
