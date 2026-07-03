@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  auth-service:
+    build: .
+    ports:
+      - "8091:8091"
+    volumes:
+      - ./config:/root/config
+      - ./contracts:/root/contracts
+      - ./logs:/root/logs
+      - ../../../chain1-local/config/wx-org1.chainmaker.org/certs:/root/chain1-certs:ro
+    environment:
+      - CONFIG_PATH=/root/config/config.yaml
+      - SDK_CONFIG_PATH=/root/config/sdk_config.docker.yml
+      - ENABLE_GARBLED_CIRCUIT=true
+      - ENABLE_ITMAC_AUDIT=true
+      - flask_app_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3Njk3NDA4NTAsInN5c3RlbS1hbGxvdyI6IjFmb2thczBBLTMxMGlzY25hbWxzYWNoZjlxdTEwbjJpZyIsInVzZXIiOiI1In0.EpZtVZQNaFC-zf1PmJK6AA072qucfPq9C4BntKGahbE
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # 让容器能访问宿主机的链

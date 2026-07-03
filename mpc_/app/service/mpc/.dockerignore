@@ -1,0 +1,12 @@
+.git
+.gomodcache
+.gocache
+coverage
+*.log
+*.txt
+main
+sdk.log*
+gc_itmac_test_*.txt
+vfl_test_*.txt
+JesseQ
+tests

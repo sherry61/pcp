@@ -28,3 +28,21 @@ pnpm-debug.log*
 backend/storage/he-results/
 
 cert-store/
+
+# MPC relay / server generated artifacts
+mpc_/**/__pycache__/
+mpc_/app/service/re_encrypt/keys/
+mpc_/app/service/mpc/.gocache/
+mpc_/app/service/mpc/.gomodcache/
+mpc_/app/service/mpc/coverage/
+mpc_/app/service/mpc/JesseQ/
+mpc_/app/service/mpc/mpc_server
+mpc_/app/service/mpc/config/crypto_config/
+mpc_/app/service/mpc/config/crypto_config_backup/
+mpc_/app/service/mpc/contracts/**/*.7z
+mpc_/app/service/mpc/*.log
+mpc_/app/service/mpc/sdk.log*
+mpc_/app/service/mpc/latest_test.log
+mpc_/app/service/mpc/final_test.log
+mpc_/app/service/mpc/test_output.log
+mpc_/app/service/mpc/gc_itmac_test_*.txt

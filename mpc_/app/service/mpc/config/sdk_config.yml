@@ -1,0 +1,37 @@
+chain_client:
+  # 链ID
+  chain_id: "chain1"
+  # 组织ID
+  org_id: "wx-org1.chainmaker.org"
+  # 客户端用户私钥路径
+  user_key_file_path: "./config/crypto_config/user/client1/client1.tls.key"
+  # 客户端用户证书路径
+  user_crt_file_path: "./config/crypto_config/user/client1/client1.tls.crt"
+  # 客户端用户签名私钥路径
+  user_sign_key_file_path: "./config/crypto_config/user/client1/client1.sign.key"
+  # 客户端用户签名证书路径
+  user_sign_crt_file_path: "./config/crypto_config/user/client1/client1.sign.crt"
+  retry_interval: 500
+  retry_limit: 120
+
+  rpc_client:
+    send_tx_timeout: 60
+    get_tx_timeout: 60
+    max_receive_message_size: 16
+    max_send_message_size: 16
+
+  nodes:
+    - # 节点地址
+      node_addr: "10.112.47.214:12301"
+      # 节点连接数
+      conn_cnt: 10
+      # RPC连接是否启用双向TLS认证
+      enable_tls: true
+      # 信任证书池路径
+      trust_root_paths:
+        - "./config/crypto_config/ca"
+      tls_host_name: "chainmaker.org"
+      # 客户端用户TLS私钥路径
+      tls_key_file_path: "./config/crypto_config/user/client1/client1.tls.key"
+      # 客户端用户TLS证书路径
+      tls_cert_file_path: "./config/crypto_config/user/client1/client1.tls.crt"

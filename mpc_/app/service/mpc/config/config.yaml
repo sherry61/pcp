@@ -1,0 +1,48 @@
+server:
+  addr: ":28091"
+  mode: "debug"
+
+# 审计服务配置
+audit:
+  base_url: "http://10.112.47.214:8080"
+  enabled: true
+
+chainmaker:
+  chain_id: "chain1"
+  # 组织ID  
+  org_id: "wx-org1.chainmaker.org"
+  # 节点地址
+  node_addr: "10.112.47.214:12301"
+  # TLS配置
+  tls:
+    hostname: "chainmaker.org"
+    ca_cert_path: "./config/crypto-config/ca/ca.crt"
+  # 用户证书配置
+  user:
+    key_path: "./config/crypto_config/user/client1/client1.sign.key"
+    cert_path: "./config/crypto_config/user/client1/client1.sign.crt"
+
+  contracts:
+    authorization:
+      name: "authorization"
+      version: "1.0.0"
+      path: "./contracts/authorization/authorization_contract.7z"
+    verification:
+      name: "verification"
+      version: "1.0.0"
+      path: "./contracts/verification/verification_contract.7z"
+    gc_audit:
+      name: "gc_audit"
+      version: "1.0.0"
+      path: "./contracts/gc_audit/gc_audit_contract.7z"
+    vfl_audit:
+      name: "vfl_audit"
+      version: "1.0.0"
+      path: "./contracts/vfl_audit/vfl_audit_contract.7z"
+
+crypto:
+  abe:
+    attribute_universe: ["bank_id", "role", "user_id", "info_tag"]
+  zkp:
+    proving_key_path: ./config/crypto_config/proving.key
+    verifying_key_path: ./config/crypto_config/verifying.key
