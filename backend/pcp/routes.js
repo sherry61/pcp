@@ -1,7 +1,9 @@
-const fs = require('fs').promises;
+const fs = require('fs');
+const fsp = fs.promises;
 const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data');
+const { execFile } = require('child_process');
 
 const {
   HE_ENC_TYPES,
@@ -139,6 +141,202 @@ function getPcpPreBaseUrl() {
   ).replace(/\/+$/, '');
 }
 
+function getPreDecryptPythonPath() {
+  const candidates = [
+    process.env.PRE_DECRYPT_PYTHON,
+    '/tmp/pcc-pre-interop/bin/python',
+    '/usr/bin/python3',
+    '/usr/local/bin/python3'
+  ].filter(Boolean);
+
+  return candidates.find((candidate) => {
+    try {
+      return fs.existsSync(candidate);
+    } catch (error) {
+      return false;
+    }
+  }) || null;
+}
+
+function getPreDecryptHelperScriptPath() {
+  return path.resolve(__dirname, '../../scripts/pre_decrypt_helper.py');
+}
+
+function getPrePublishHelperScriptPath() {
+  return path.resolve(__dirname, '../../scripts/pre_publish_helper.py');
+}
+
+async function runPreDecryptHelper({ encryptedZipBuffer, privateScalarHex }) {
+  const pythonPath = getPreDecryptPythonPath();
+  if (!pythonPath) {
+    const error = new Error('PRE 解密 helper 未配置，请先准备 Python 运行环境');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const helperScriptPath = getPreDecryptHelperScriptPath();
+  try {
+    await fsp.access(helperScriptPath);
+  } catch (accessError) {
+    const error = new Error('PRE 解密 helper 脚本不存在');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const payload = JSON.stringify({
+    privateScalarHex: String(privateScalarHex || ''),
+    encryptedZipBase64: Buffer.from(encryptedZipBuffer || Buffer.alloc(0)).toString('base64')
+  });
+
+  const stdoutText = await new Promise((resolve, reject) => {
+    execFile(
+      pythonPath,
+      [helperScriptPath],
+      {
+        cwd: path.resolve(__dirname, '../..'),
+        env: {
+          ...process.env,
+          PCC_PRE_ROOT: process.env.PCC_PRE_ROOT || '/home/super/tr/pcc'
+        },
+        maxBuffer: 64 * 1024 * 1024
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          error.stdout = stdout;
+          error.stderr = stderr;
+          reject(error);
+          return;
+        }
+        resolve(String(stdout || ''));
+      }
+    ).stdin.end(payload);
+  }).catch((error) => {
+    let helperMessage = '';
+    try {
+      const parsed = JSON.parse(String(error?.stdout || '').trim() || '{}');
+      helperMessage = parsed?.message || '';
+    } catch (parseError) {
+      helperMessage = '';
+    }
+
+    const routeError = new Error(
+      helperMessage ||
+      String(error?.stderr || '').trim() ||
+      error.message ||
+      'PRE 解密 helper 执行失败'
+    );
+    routeError.statusCode = 500;
+    throw routeError;
+  });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stdoutText);
+  } catch (error) {
+    const routeError = new Error('PRE 解密 helper 返回内容非法');
+    routeError.statusCode = 500;
+    throw routeError;
+  }
+
+  if (!parsed?.success || !parsed?.zipBase64) {
+    const routeError = new Error(parsed?.message || 'PRE 解密 helper 未返回结果');
+    routeError.statusCode = 500;
+    throw routeError;
+  }
+
+  return {
+    zipBuffer: Buffer.from(String(parsed.zipBase64), 'base64'),
+    entryCount: Number(parsed.entryCount || 0)
+  };
+}
+
+async function runPrePublishHelper({ transactionId, buyerPublicKey, sourceArchiveBuffer }) {
+  const pythonPath = getPreDecryptPythonPath();
+  if (!pythonPath) {
+    const error = new Error('PRE helper 未配置，请先准备 Python 运行环境');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const helperScriptPath = getPrePublishHelperScriptPath();
+  try {
+    await fsp.access(helperScriptPath);
+  } catch (accessError) {
+    const error = new Error('PRE publish helper 脚本不存在');
+    error.statusCode = 500;
+    throw error;
+  }
+
+  const payload = JSON.stringify({
+    transactionId: String(transactionId || ''),
+    buyerPublicKey,
+    sourceArchiveBase64: Buffer.from(sourceArchiveBuffer || Buffer.alloc(0)).toString('base64')
+  });
+
+  const stdoutText = await new Promise((resolve, reject) => {
+    execFile(
+      pythonPath,
+      [helperScriptPath],
+      {
+        cwd: path.resolve(__dirname, '../..'),
+        env: {
+          ...process.env,
+          PCC_PRE_ROOT: process.env.PCC_PRE_ROOT || '/home/super/tr/pcc'
+        },
+        maxBuffer: 64 * 1024 * 1024
+      },
+      (error, stdout, stderr) => {
+        if (error) {
+          error.stdout = stdout;
+          error.stderr = stderr;
+          reject(error);
+          return;
+        }
+        resolve(String(stdout || ''));
+      }
+    ).stdin.end(payload);
+  }).catch((error) => {
+    let helperMessage = '';
+    try {
+      const parsed = JSON.parse(String(error?.stdout || '').trim() || '{}');
+      helperMessage = parsed?.message || '';
+    } catch (parseError) {
+      helperMessage = '';
+    }
+
+    const routeError = new Error(
+      helperMessage ||
+      String(error?.stderr || '').trim() ||
+      error.message ||
+      'PRE publish helper 执行失败'
+    );
+    routeError.statusCode = 500;
+    throw routeError;
+  });
+
+  let parsed;
+  try {
+    parsed = JSON.parse(stdoutText);
+  } catch (error) {
+    const routeError = new Error('PRE publish helper 返回内容非法');
+    routeError.statusCode = 500;
+    throw routeError;
+  }
+
+  if (!parsed?.success || !parsed?.sourcePublicKey || !parsed?.reencryptionKey || !parsed?.sourceCipherZipBase64) {
+    const routeError = new Error(parsed?.message || 'PRE publish helper 未返回结果');
+    routeError.statusCode = 500;
+    throw routeError;
+  }
+
+  return {
+    sourcePublicKey: parsed.sourcePublicKey,
+    reencryptionKey: parsed.reencryptionKey,
+    sourceCipherZipBuffer: Buffer.from(String(parsed.sourceCipherZipBase64), 'base64'),
+    entryCount: Number(parsed.entryCount || 0)
+  };
+}
+
 function normalizePcType(value) {
   return String(value || '').trim().toUpperCase();
 }
@@ -221,7 +419,7 @@ async function resolveLocalResultPath(candidatePath) {
 
   const resolvedPath = path.resolve(value);
   try {
-    await fs.access(resolvedPath);
+    await fsp.access(resolvedPath);
     return resolvedPath;
   } catch (error) {
     return null;
@@ -956,7 +1154,7 @@ function registerHeRoutes({
       }
 
       const resolvedPath = path.resolve(String(storagePath));
-      const fileBuffer = await fs.readFile(resolvedPath);
+      const fileBuffer = await fsp.readFile(resolvedPath);
       const fileName = firstDefined(
         record.result_filename,
         path.basename(resolvedPath),
@@ -1517,34 +1715,71 @@ function registerPreRoutes({
     '/api/privacy/pre/publish',
     upload.fields([
       { name: 'source_cipher_zip', maxCount: 1 },
+      { name: 'source_archive', maxCount: 1 },
       { name: 'file', maxCount: 1 }
     ]),
     async (req, res) => {
       const transactionId = String(req.body.transactionId || '').trim();
-      const sellerSourcePublicKey = parseJsonField(
+      let sellerSourcePublicKey = parseJsonField(
         firstDefined(req.body.sellerSourcePublicKey, req.body.sourcePublicKey, req.body.source_public_key)
       );
-      const reencryptionKey = parseJsonField(
+      let reencryptionKey = parseJsonField(
         firstDefined(req.body.reencryptionKey, req.body.reencryption_key)
       );
-      const sourceCipherZipFile =
+      let sourceCipherZipFile =
         req.files?.source_cipher_zip?.[0] ||
+        null;
+      const sourceArchiveFile =
+        req.files?.source_archive?.[0] ||
         req.files?.file?.[0] ||
         null;
 
-      if (!transactionId || !sellerSourcePublicKey || !reencryptionKey || !sourceCipherZipFile) {
+      if (!transactionId) {
         return res.status(400).json({
           success: false,
-          message: '缺少 transactionId / sellerSourcePublicKey / reencryptionKey / source_cipher_zip'
+          message: '缺少 transactionId'
         });
       }
 
       try {
-        validatePreJsonPayload(sellerSourcePublicKey, 'sellerSourcePublicKey');
-        validatePreJsonPayload(reencryptionKey, 'reencryptionKey');
         let existing = await getPreRecordByTransactionId(transactionId);
         const ensured = await ensurePreContract({ transactionId, existingRecord: existing });
         existing = ensured.record;
+        const mappedRecord = mapPreRecordRow(existing);
+
+        if (!mappedRecord?.buyer_public_key) {
+          return res.status(400).json({
+            success: false,
+            message: '买方尚未提交 PRE 公钥'
+          });
+        }
+
+        if (!sourceCipherZipFile && sourceArchiveFile) {
+          validatePreSourceArchive(sourceArchiveFile);
+          const helperResult = await runPrePublishHelper({
+            transactionId,
+            buyerPublicKey: mappedRecord.buyer_public_key,
+            sourceArchiveBuffer: sourceArchiveFile.buffer
+          });
+          sellerSourcePublicKey = helperResult.sourcePublicKey;
+          reencryptionKey = helperResult.reencryptionKey;
+          sourceCipherZipFile = {
+            ...sourceArchiveFile,
+            buffer: helperResult.sourceCipherZipBuffer,
+            originalname: `pre_source_${transactionId}.zip`,
+            mimetype: 'application/zip'
+          };
+        }
+
+        if (!sellerSourcePublicKey || !reencryptionKey || !sourceCipherZipFile) {
+          return res.status(400).json({
+            success: false,
+            message: '缺少 PRE 发布所需材料'
+          });
+        }
+
+        validatePreJsonPayload(sellerSourcePublicKey, 'sellerSourcePublicKey');
+        validatePreJsonPayload(reencryptionKey, 'reencryptionKey');
 
         const saved = await upsertPreRecord(
           mergePreRecordInput(existing, {
@@ -1756,6 +1991,106 @@ function registerPreRoutes({
       });
     }
   });
+
+  app.post(
+    '/api/privacy/pre/decrypt-result',
+    upload.fields([
+      { name: 'encrypted_result', maxCount: 1 },
+      { name: 'private_key_file', maxCount: 1 }
+    ]),
+    async (req, res) => {
+      const transactionId = String(req.body.transactionId || '').trim();
+      if (!transactionId) {
+        return res.status(400).json({
+          success: false,
+          message: '缺少 transactionId'
+        });
+      }
+
+      const encryptedResultFile = req.files?.encrypted_result?.[0] || null;
+      const privateKeyFile = req.files?.private_key_file?.[0] || null;
+      if (!encryptedResultFile || !privateKeyFile) {
+        return res.status(400).json({
+          success: false,
+          message: '缺少 encrypted_result / private_key_file'
+        });
+      }
+
+      try {
+        await requirePreContext(transactionId);
+        const record = mapPreRecordRow(await getPreRecordByTransactionId(transactionId));
+        if (!record) {
+          return res.status(404).json({
+            success: false,
+            message: '当前交易暂无 PRE 记录'
+          });
+        }
+
+        let parsedPrivateKey;
+        try {
+          parsedPrivateKey = JSON.parse(String(privateKeyFile.buffer || Buffer.alloc(0)));
+        } catch (parseError) {
+          return res.status(400).json({
+            success: false,
+            message: 'PRE 私钥文件内容无效'
+          });
+        }
+
+        const privateScalarHex = String(parsedPrivateKey.privateScalarHex || '').replace(/^0x/i, '').trim();
+        if (!/^[0-9a-fA-F]+$/.test(privateScalarHex)) {
+          return res.status(400).json({
+            success: false,
+            message: 'PRE 私钥文件内容无效'
+          });
+        }
+
+        if (
+          parsedPrivateKey.transactionId &&
+          String(parsedPrivateKey.transactionId).trim() &&
+          String(parsedPrivateKey.transactionId).trim() !== transactionId
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: `PRE 私钥文件不属于当前交易 ${transactionId}`
+          });
+        }
+
+        if (record.buyer_public_key && parsedPrivateKey.publicKey) {
+          const expected = record.buyer_public_key;
+          const actual = parsedPrivateKey.publicKey;
+          if (
+            String(expected.key_id || '') !== String(actual.key_id || '') ||
+            String(expected.point_g1 || '') !== String(actual.point_g1 || '') ||
+            String(expected.point_g2 || '') !== String(actual.point_g2 || '')
+          ) {
+            return res.status(400).json({
+              success: false,
+              message: 'PRE 私钥文件与当前交易的买方公钥不匹配，请重新选择最新下载的私钥文件。'
+            });
+          }
+        }
+
+        const result = await runPreDecryptHelper({
+          encryptedZipBuffer: encryptedResultFile.buffer,
+          privateScalarHex
+        });
+
+        const outputName = `pre-result-${safeBaseName(transactionId) || 'result'}.zip`;
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', `attachment; filename="${outputName}"`);
+        res.setHeader('x-pre-transaction-id', transactionId);
+        res.setHeader('x-pre-entry-count', String(result.entryCount || 0));
+        return res.status(200).send(result.zipBuffer);
+      } catch (error) {
+        const routeError = formatPreRouteError(error);
+        return res.status(error.statusCode || routeError.status).json({
+          success: false,
+          ...routeError.body,
+          message: error.statusCode ? error.message : routeError.body.message
+        });
+      }
+    }
+  );
 }
 
 module.exports = {
