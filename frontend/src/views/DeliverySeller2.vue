@@ -66,8 +66,16 @@
                   >
                     {{ getSellerFlDeliveryActionLabel(row) }}
                   </el-button>
-                  <el-button v-if="isPreRow(row)" size="small" type="warning" class="action-btn-primary" :loading="row.processingPre || row.checkingPre" @click="openPreDelivery(row)">
-                    执行交付
+                  <el-button
+                    v-if="isPreRow(row)"
+                    size="small"
+                    type="primary"
+                    :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerPreDeliveryDisabled(row) }]"
+                    :loading="row.processingPre || row.checkingPre"
+                    :disabled="isSellerPreDeliveryDisabled(row)"
+                    @click="openPreDelivery(row)"
+                  >
+                    {{ getSellerPreActionLabel(row) }}
                   </el-button>
                   <el-button
                     v-if="isMpcRow(row)"
@@ -156,7 +164,7 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="preDialog.visible" title="发起 PRE 重加密" width="620px">
+        <el-dialog v-model="preDialog.visible" title="执行交付" width="620px">
           <div v-if="preDialog.asset" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
@@ -180,15 +188,12 @@
             </div>
             <div v-if="preDialog.file" class="file-name inline-file-name">{{ preDialog.file.name }}</div>
 
-            <div class="dialog-hint compact-hint">
-              <span>请选择卖方原始压缩包。浏览器会在本地逐文件生成 PRE source ciphertext ZIP，再提交到 PCC attempt 流程。</span>
-            </div>
           </div>
 
           <template #footer>
             <el-button @click="closePreDialog">取消</el-button>
             <el-button type="primary" :loading="preDialog.submitting" @click="submitPreDelivery">
-              发起重加密
+              执行交付
             </el-button>
           </template>
         </el-dialog>
@@ -217,15 +222,12 @@
             </div>
             <div v-if="flDeliveryDialog.file" class="file-name">{{ flDeliveryDialog.file.name }}</div>
 
-            <div class="dialog-hint compact-hint">
-              <span>卖方私钥文件和底层模型会在执行交付前自动下载。</span>
-            </div>
           </div>
 
           <template #footer>
             <el-button @click="closeFlDeliveryDialog">取消</el-button>
             <el-button type="primary" :loading="flDeliveryDialog.submitting" @click="submitFlDelivery">
-              提交
+              执行交付
             </el-button>
           </template>
         </el-dialog>
@@ -948,9 +950,9 @@ export default {
         case 'ready':
         case 'computing':
         case 'done':
-          return '已完成'
+          return '已执行'
         default:
-          return '处理中'
+          return '执行交付'
       }
     },
 
@@ -970,9 +972,41 @@ export default {
       return '执行交付'
     },
 
+    getSellerPreActionLabel(row) {
+      const status = String(row?.preRecord?.pcp_status || '').toUpperCase()
+      if (
+        status === 'QUEUED' ||
+        status === 'RUNNING' ||
+        status === 'COMPUTED' ||
+        status === 'PAMING' ||
+        status === 'PAM_PASSED' ||
+        status === 'COMPLETED'
+      ) {
+        return '已执行'
+      }
+
+      return '执行交付'
+    },
+
     isSellerHeDeliveryDisabled(row) {
       const status = String(row?.heRecord?.pcp_status || '').toUpperCase()
       if (!row?.heRecord?.public_keys_ready) {
+        return true
+      }
+
+      return (
+        status === 'QUEUED' ||
+        status === 'RUNNING' ||
+        status === 'COMPUTED' ||
+        status === 'PAMING' ||
+        status === 'PAM_PASSED' ||
+        status === 'COMPLETED'
+      )
+    },
+
+    isSellerPreDeliveryDisabled(row) {
+      const status = String(row?.preRecord?.pcp_status || '').toUpperCase()
+      if (!row?.preRecord?.buyer_public_key_ready) {
         return true
       }
 
@@ -1721,27 +1755,40 @@ async verifyContract(assetRow) {
       assetRow.processingPre = true
       try {
         preCrypto.ensureAllowedPreSourceFile(this.preDialog.file)
-        const payload = await preCrypto.createPrePublishPayload({
-          file: this.preDialog.file,
-          buyerPublicKey: assetRow.preRecord?.buyer_public_key,
-          transactionId: assetRow.transaction_id,
-          sellerId: assetRow.seller_address
-        })
 
         const formData = new FormData()
         formData.append('transactionId', assetRow.transaction_id)
-        formData.append('sellerSourcePublicKey', JSON.stringify(payload.sourcePublicKey))
-        formData.append('reencryptionKey', JSON.stringify(payload.reencryptionKey))
-        formData.append('source_cipher_zip', payload.sourceCipherZipFile, payload.sourceCipherZipFile.name)
+        formData.append('source_archive', this.preDialog.file, this.preDialog.file.name)
+
+        console.info('[PRE submitPreDelivery] request', {
+          transactionId: assetRow.transaction_id,
+          fileName: this.preDialog.file.name,
+          fileSize: this.preDialog.file.size,
+          buyerKeyId: assetRow.preRecord?.buyer_public_key?.key_id || '',
+          currentAttemptId: assetRow.preRecord?.current_attempt_id || '',
+          pcpContractId: assetRow.preRecord?.pcp_contract_id || '',
+        })
 
         const response = await axios.post(`${API_BASE}/api/privacy/pre/publish`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
+        })
+
+        console.info('[PRE submitPreDelivery] response', {
+          transactionId: assetRow.transaction_id,
+          pcpStatus: response.data?.item?.pcp_status || '',
+          currentAttemptId: response.data?.item?.current_attempt_id || '',
+          sellerSourceKeyId: response.data?.item?.seller_source_public_key?.key_id || '',
         })
 
         assetRow.preRecord = response.data?.item || assetRow.preRecord
         this.$message?.success(response.data?.message || 'PRE attempt 已提交')
         this.closePreDialog()
       } catch (error) {
+        console.error('[PRE submitPreDelivery] error', {
+          transactionId: assetRow.transaction_id,
+          message: error?.response?.data?.message || error?.message || 'PRE 提交失败',
+          response: error?.response?.data || null,
+        })
         const message = error?.response?.data?.message || error?.message || 'PRE 提交失败'
         this.$message?.error(message)
       } finally {

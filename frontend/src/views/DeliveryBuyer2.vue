@@ -104,7 +104,7 @@
                     :disabled="row.preRecord?.buyer_public_key_ready"
                     @click="uploadPrePublicKey(row)"
                   >
-                    {{ row.preRecord?.buyer_public_key_ready ? '已完成' : '请求交付' }}
+                    {{ row.preRecord?.buyer_public_key_ready ? '已请求' : '请求交付' }}
                   </el-button>
                   <el-button
                     v-if="isPreRow(row)"
@@ -226,14 +226,14 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="preDecryptDialog.visible" title="本地解密 PRE 结果" width="620px">
+        <el-dialog v-model="preDecryptDialog.visible" title="下载结果" width="620px">
           <div v-if="preDecryptDialog.row" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
               <span>{{ preDecryptDialog.row.transaction_id }}</span>
             </div>
             <div class="dialog-row file-row">
-              <span class="dialog-label">PRE 私钥文件</span>
+              <span class="dialog-label">私钥文件</span>
               <div class="file-action-group">
                 <input ref="prePrivateKeyInput" class="hidden-file-input" type="file" accept=".json" @change="onPrePrivateKeyFileChange" />
                 <el-button size="small" plain @click="openFileSelector('prePrivateKeyInput')">
@@ -245,14 +245,14 @@
               {{ preDecryptDialog.privateKeyFile.name }}
             </div>
             <div class="dialog-hint">
-              <span>请选择 `.json` 私钥文件，浏览器会在本地解密 PRE 结果，并直接导出原始压缩包。</span>
+              <span>请选择交付时下载的解密文件，系统会在本地解密并下载结果。</span>
             </div>
           </div>
 
           <template #footer>
             <el-button @click="closePreDecryptDialog">取消</el-button>
             <el-button type="primary" :loading="preDecryptDialog.processing" @click="confirmDecryptPreResult">
-              解密并导出压缩包
+              解密并下载
             </el-button>
           </template>
         </el-dialog>
@@ -996,14 +996,14 @@ export default {
           return '请求交付'
         case 'pending':
         case 'waiting_seller_data':
-          return '等待卖方'
+          return '已请求'
         case 'ready':
         case 'computing':
-          return '处理中'
+          return '已请求'
         case 'done':
-          return '已完成'
+          return '已请求'
         default:
-          return '处理中'
+          return '已请求'
       }
     },
 
@@ -1427,16 +1427,56 @@ export default {
           record: this.preDecryptDialog.row.preRecord
         })
 
-        await preCrypto.downloadDecryptedPreResultArchive({
-          encryptedZipBuffer: encryptedTarBuffer,
-          privateKeyText,
-          transactionId: this.preDecryptDialog.row.transaction_id
+        console.info('[PRE confirmDecryptPreResult] request', {
+          transactionId: this.preDecryptDialog.row.transaction_id,
+          privateKeyTransactionId: parsedKey.transactionId || '',
+          privateKeyKeyId: parsedKey.publicKey?.key_id || '',
+          recordBuyerKeyId: this.preDecryptDialog.row.preRecord?.buyer_public_key?.key_id || '',
+          encryptedBlobSize: encryptedTarBuffer.byteLength,
+          currentAttemptId: this.preDecryptDialog.row.preRecord?.current_attempt_id || '',
         })
 
-        this.$message?.success('PRE 结果已在浏览器内解密并导出')
+        const formData = new FormData()
+        formData.append('transactionId', this.preDecryptDialog.row.transaction_id)
+        formData.append(
+          'encrypted_result',
+          new Blob([encryptedTarBuffer], { type: 'application/zip' }),
+          `pre_result_${this.preDecryptDialog.row.transaction_id}.zip`
+        )
+        formData.append(
+          'private_key_file',
+          new Blob([privateKeyText], { type: 'application/json' }),
+          this.preDecryptDialog.privateKeyFile.name || `pre-private-${this.preDecryptDialog.row.transaction_id}.json`
+        )
+
+        const response = await axios.post(`${API_BASE}/api/privacy/pre/decrypt-result`, formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          responseType: 'blob'
+        })
+
+        console.info('[PRE confirmDecryptPreResult] response', {
+          transactionId: this.preDecryptDialog.row.transaction_id,
+          contentType: response.headers?.['content-type'] || '',
+          contentDisposition: response.headers?.['content-disposition'] || '',
+          blobSize: response.data?.size || 0,
+        })
+
+        heCsv.downloadBlobFile({
+          blob: response.data,
+          filename: `pre-result-${this.preDecryptDialog.row.transaction_id}.zip`
+        })
+
+        this.$message?.success('PRE 结果已解密并导出')
         this.closePreDecryptDialog()
       } catch (error) {
-        this.$message?.error(error?.message || 'PRE 本地解密失败')
+        console.error('[PRE confirmDecryptPreResult] error', {
+          transactionId: this.preDecryptDialog.row?.transaction_id || '',
+          message: error?.response?.data?.message || error?.message || 'PRE 结果解密失败',
+          responseType: error?.response?.headers?.['content-type'] || '',
+          response: error?.response?.data || null,
+        })
+        const message = await this.resolveBlobErrorMessage(error, 'PRE 结果解密失败')
+        this.$message?.error(message)
       } finally {
         this.preDecryptDialog.processing = false
       }
