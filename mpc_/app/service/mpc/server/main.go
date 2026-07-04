@@ -256,9 +256,11 @@ func setupRouter(server *Server, auditHandler *handlers.AuditHandler, vflHandler
 
 			// 银行侧混淆电路接口
 			bank.POST("/gc/generate-task", gcHandler.GenerateGCTask)
+			bank.POST("/gc/generate-asset-threshold-task", gcHandler.GenerateAssetThresholdTask)
 
 			// 数据中心侧混淆电路接口
 			datacenter.POST("/gc/evaluate", gcHandler.EvaluateGC)
+			datacenter.POST("/gc/evaluate-asset-threshold", gcHandler.EvaluateAssetThreshold)
 		}
 
 		// 新增：审计相关路由

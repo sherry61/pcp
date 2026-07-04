@@ -202,6 +202,98 @@ func (h *GCHandler) GenerateGCTask(c *gin.Context) {
 	})
 }
 
+// GenerateAssetThresholdTask 银行生成资产阈值比较任务
+// POST /api/v1/bank/gc/generate-asset-threshold-task
+func (h *GCHandler) GenerateAssetThresholdTask(c *gin.Context) {
+	var req struct {
+		TaskID    string `json:"task_id" binding:"required"`
+		BankID    string `json:"bank_id" binding:"required"`
+		Threshold uint32 `json:"threshold" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{
+			Code:    400,
+			Message: fmt.Sprintf("请求参数错误: %v", err),
+		})
+		return
+	}
+
+	circuit := garbledcircuit.NewAssetThresholdCircuit()
+	garbler, err := garbledcircuit.NewGarbler(circuit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.Response{
+			Code:    500,
+			Message: fmt.Sprintf("创建Garbler失败: %v", err),
+		})
+		return
+	}
+
+	bankInputs := garbledcircuit.ParseInputBits([]uint32{req.Threshold}, 32)
+	gc, err := garbler.Garble(bankInputs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.Response{
+			Code:    500,
+			Message: fmt.Sprintf("混淆电路失败: %v", err),
+		})
+		return
+	}
+
+	gcData, err := gc.Serialize()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.Response{
+			Code:    500,
+			Message: fmt.Sprintf("序列化混淆电路失败: %v", err),
+		})
+		return
+	}
+
+	hasher := sha256.New()
+	hasher.Write(gcData)
+	circuitHash := hasher.Sum(nil)
+
+	h.artifacts[req.TaskID] = &GCArtifact{
+		TaskID:       req.TaskID,
+		BankID:       req.BankID,
+		Threshold:    req.Threshold,
+		CircuitHash:  base64.StdEncoding.EncodeToString(circuitHash),
+		SerializedGC: base64.StdEncoding.EncodeToString(gcData),
+		Commitment:   base64.StdEncoding.EncodeToString(circuitHash),
+		BankInputs:   bankInputs,
+	}
+
+	kvs := []*common.KeyValuePair{
+		{Key: "task_id", Value: []byte(req.TaskID)},
+		{Key: "bank_id", Value: []byte(req.BankID)},
+		{Key: "datacenter_id", Value: []byte("DC001")},
+		{Key: "circuit_hash", Value: circuitHash},
+		{Key: "input_commitment_hash", Value: []byte(base64.StdEncoding.EncodeToString(circuitHash))},
+		{Key: "output_commitment_hash", Value: []byte("")},
+	}
+
+	_, err = h.chainClient.InvokeContract("gc_audit", "StoreCircuitCommitment", "", kvs, -1, true)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.Response{
+			Code:    500,
+			Message: fmt.Sprintf("存储电路承诺失败: %v", err),
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, models.Response{
+		Code:    0,
+		Message: "资产阈值比较任务生成成功",
+		Data: map[string]interface{}{
+			"task_id":         req.TaskID,
+			"circuit_info":    circuit.String(),
+			"garbled_circuit": base64.StdEncoding.EncodeToString(gcData),
+			"circuit_hash":    base64.StdEncoding.EncodeToString(circuitHash),
+			"num_gates":       circuit.NumGates,
+			"instruction":     "请将混淆电路发送给数据中心B进行资产阈值评估",
+		},
+	})
+}
+
 // EvaluateGC 数据中心B评估混淆电路
 // POST /api/v1/datacenter/gc/evaluate
 func (h *GCHandler) EvaluateGC(c *gin.Context) {
@@ -341,6 +433,149 @@ func (h *GCHandler) EvaluateGC(c *gin.Context) {
 	c.JSON(http.StatusOK, models.Response{
 		Code:    0,
 		Message: "混淆电路评估成功",
+		Data: map[string]interface{}{
+			"task_id":                 req.TaskID,
+			"datacenter_id":           req.DatacenterID,
+			"input_commitment_hash":   base64.StdEncoding.EncodeToString(inputCommHash),
+			"evaluation_status":       "completed",
+			"note":                    "输出标签已生成，等待银行解密",
+			"itmac_commitments_count": len(inputComms),
+			"output_value":            result.OutputValue,
+		},
+	})
+}
+
+// EvaluateAssetThreshold 数据中心B评估资产阈值比较电路
+// POST /api/v1/datacenter/gc/evaluate-asset-threshold
+func (h *GCHandler) EvaluateAssetThreshold(c *gin.Context) {
+	var req struct {
+		TaskID         string `json:"task_id" binding:"required"`
+		DatacenterID   string `json:"datacenter_id" binding:"required"`
+		UserID         string `json:"user_id" binding:"required"`
+		TotalAssets    uint32 `json:"total_assets" binding:"required"`
+		GarbledCircuit string `json:"garbled_circuit" binding:"required"`
+		AuthCiphertext string `json:"auth_ciphertext" binding:"required"`
+		AuthHash       string `json:"auth_hash" binding:"required"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{
+			Code:    400,
+			Message: fmt.Sprintf("请求参数错误: %v", err),
+		})
+		return
+	}
+
+	kvs := []*common.KeyValuePair{
+		{Key: "user_id", Value: []byte(req.UserID)},
+		{Key: "auth_hash", Value: []byte(req.AuthHash)},
+	}
+
+	_, err := h.chainClient.QueryContract("authorization", "VerifyAuthorization", kvs, -1)
+	if err != nil {
+		c.JSON(http.StatusForbidden, models.Response{
+			Code:    403,
+			Message: fmt.Sprintf("授权验证失败: %v", err),
+		})
+		return
+	}
+
+	gcBytes, err := base64.StdEncoding.DecodeString(req.GarbledCircuit)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{
+			Code:    400,
+			Message: "混淆电路解码失败",
+		})
+		return
+	}
+
+	circuit := garbledcircuit.NewAssetThresholdCircuit()
+	evaluator, err := garbledcircuit.NewEvaluator(circuit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.Response{
+			Code:    500,
+			Message: fmt.Sprintf("创建Evaluator失败: %v", err),
+		})
+		return
+	}
+
+	gc, err := garbledcircuit.Deserialize(gcBytes)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, models.Response{
+			Code:    400,
+			Message: fmt.Sprintf("反序列化混淆电路失败: %v", err),
+		})
+		return
+	}
+
+	artifact, ok := h.artifacts[req.TaskID]
+	if !ok {
+		c.JSON(http.StatusNotFound, models.Response{
+			Code:    404,
+			Message: "未找到任务工件，无法评估混淆电路",
+		})
+		return
+	}
+
+	garblerInputs := make([]garbledcircuit.WireLabel, len(gc.InputLabelsA))
+	for i := 0; i < len(gc.InputLabelsA); i++ {
+		labels := gc.InputLabelsA[i]
+		if i < len(artifact.BankInputs) && artifact.BankInputs[i] {
+			garblerInputs[i] = labels[1]
+		} else {
+			garblerInputs[i] = labels[0]
+		}
+	}
+
+	inputBitsB := garbledcircuit.ParseInputBits([]uint32{req.TotalAssets}, 32)
+	evaluatorInputs := make([]garbledcircuit.WireLabel, len(inputBitsB))
+	for i := 0; i < len(inputBitsB); i++ {
+		labels := gc.InputLabelsB[32+i]
+		if inputBitsB[i] {
+			evaluatorInputs[i] = labels[1]
+		} else {
+			evaluatorInputs[i] = labels[0]
+		}
+	}
+
+	inputComms, err := h.itmacSystem.CommitCircuitInputs([]uint64{
+		uint64(req.TotalAssets),
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.Response{
+			Code:    500,
+			Message: fmt.Sprintf("创建输入承诺失败: %v", err),
+		})
+		return
+	}
+
+	inputCommHash := h.itmacSystem.BatchCommitmentHash(inputComms)
+	result, err := evaluator.EvaluateWithStats(gc, garblerInputs, evaluatorInputs, inputBitsB)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, models.Response{
+			Code:    500,
+			Message: fmt.Sprintf("混淆电路评估失败: %v", err),
+		})
+		return
+	}
+
+	if artifact, ok := h.artifacts[req.TaskID]; ok {
+		artifact.InputRoot = base64.StdEncoding.EncodeToString(inputCommHash)
+		artifact.OutputRoot = base64.StdEncoding.EncodeToString(result.AuditDigest)
+		artifact.OutputValue = result.OutputValue
+		artifact.AuditDigest = base64.StdEncoding.EncodeToString(result.AuditDigest)
+	}
+
+	recordID := uuid.New().String()
+	artifactRoot := base64.StdEncoding.EncodeToString(gcBytes)
+	if artifact.CircuitHash != "" {
+		artifactRoot = artifact.CircuitHash
+	}
+	h.submitComputationAudit(recordID, req.TaskID, "garbled_circuit_asset_threshold", artifactRoot, base64.StdEncoding.EncodeToString(inputCommHash), base64.StdEncoding.EncodeToString(result.AuditDigest), "verified", req.DatacenterID, fmt.Sprintf("user=%s output=%v", req.UserID, result.OutputValue))
+
+	c.JSON(http.StatusOK, models.Response{
+		Code:    0,
+		Message: "资产阈值混淆电路评估成功",
 		Data: map[string]interface{}{
 			"task_id":                 req.TaskID,
 			"datacenter_id":           req.DatacenterID,

@@ -110,6 +110,41 @@ func NewLoanEvaluationCircuit() *Circuit {
 	return circuit
 }
 
+// NewAssetThresholdCircuit 创建资产阈值比较电路
+// 输入:
+//   - 银行(A)输入: threshold (32位)
+//   - 数据中心(B)输入: total_assets (32位)
+//
+// 输出: approved (1位) = (total_assets >= threshold)
+func NewAssetThresholdCircuit() *Circuit {
+	const (
+		bitsPerValue   = 32
+		thresholdStart = 0
+		assetsStart    = 32
+		wireStart      = 64
+	)
+
+	circuit := &Circuit{
+		NumInputsA: bitsPerValue,
+		NumInputsB: bitsPerValue,
+		NumWires:   0,
+		Gates:      make([]Gate, 0),
+	}
+
+	nextWireID := wireStart
+	gateID := 0
+	outputWire := nextWireID
+	nextWireID++
+
+	geGates := buildGE32Circuit(assetsStart, thresholdStart, outputWire, &gateID, &nextWireID)
+	circuit.Gates = append(circuit.Gates, geGates...)
+	circuit.OutputWireID = outputWire
+	circuit.NumWires = nextWireID
+	circuit.NumGates = gateID
+
+	return circuit
+}
+
 // buildGE32Circuit 构建32位大于等于比较电路
 // 返回: 比较结果的导线ID
 func buildGE32Circuit(aStart, bStart, outputWire int, gateID, nextWireID *int) []Gate {

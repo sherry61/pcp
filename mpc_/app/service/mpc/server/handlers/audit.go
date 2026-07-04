@@ -42,12 +42,12 @@ func (h *AuditHandler) SetCryptoSystems(cpabe *abeService.CPABE, zkpSystem *zkp.
 // VerifyAuthorizationMatch 智能合约A：验证银行授权书与用户授权书匹配
 func (h *AuditHandler) VerifyAuthorizationMatch(c *gin.Context) {
 	var req struct {
-		BankRequestID   string `json:"bank_request_id" binding:"required"`
-		UserAuthHash    string `json:"user_auth_hash" binding:"required"`
-		BankAuthHash    string `json:"bank_auth_hash" binding:"required"`
-		BankAuthCipher  string `json:"bank_auth_ciphertext" binding:"required"`
-		UserID          string `json:"user_id" binding:"required"`
-		BankID          string `json:"bank_id" binding:"required"`
+		BankRequestID  string `json:"bank_request_id" binding:"required"`
+		UserAuthHash   string `json:"user_auth_hash" binding:"required"`
+		BankAuthHash   string `json:"bank_auth_hash" binding:"required"`
+		BankAuthCipher string `json:"bank_auth_ciphertext" binding:"required"`
+		UserID         string `json:"user_id" binding:"required"`
+		BankID         string `json:"bank_id" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -84,16 +84,16 @@ func (h *AuditHandler) VerifyAuthorizationMatch(c *gin.Context) {
 
 	// 3. 记录审计验证结果
 	auditRecord := map[string]interface{}{
-		"audit_id":           uuid.New().String(),
-		"audit_type":         "authorization_match",
-		"bank_request_id":    req.BankRequestID,
-		"user_id":            req.UserID,
-		"bank_id":            req.BankID,
-		"user_auth_hash":     req.UserAuthHash,
-		"bank_auth_hash":     req.BankAuthHash,
+		"audit_id":            uuid.New().String(),
+		"audit_type":          "authorization_match",
+		"bank_request_id":     req.BankRequestID,
+		"user_id":             req.UserID,
+		"bank_id":             req.BankID,
+		"user_auth_hash":      req.UserAuthHash,
+		"bank_auth_hash":      req.BankAuthHash,
 		"verification_result": "passed",
-		"audit_node_id":      h.auditNodeID,
-		"timestamp":          time.Now().Unix(),
+		"audit_node_id":       h.auditNodeID,
+		"timestamp":           time.Now().Unix(),
 	}
 
 	auditData, _ := json.Marshal(auditRecord)
@@ -118,13 +118,13 @@ func (h *AuditHandler) VerifyAuthorizationMatch(c *gin.Context) {
 // VerifyDataOwnership 智能合约B：验证数据中心数据确实属于授权人
 func (h *AuditHandler) VerifyDataOwnership(c *gin.Context) {
 	var req struct {
-		DataCenterID   string `json:"datacenter_id" binding:"required"`
-		UserID         string `json:"user_id" binding:"required"`
-		DataHash       string `json:"data_hash" binding:"required"`
-		UserIDHash     string `json:"user_id_hash" binding:"required"`
-		ZKPProof       string `json:"zkp_proof" binding:"required"`
-		RequestedTags  []string `json:"requested_tags" binding:"required"`
-		BankRequestID  string `json:"bank_request_id" binding:"required"`
+		DataCenterID  string   `json:"datacenter_id" binding:"required"`
+		UserID        string   `json:"user_id" binding:"required"`
+		DataHash      string   `json:"data_hash" binding:"required"`
+		UserIDHash    string   `json:"user_id_hash" binding:"required"`
+		ZKPProof      string   `json:"zkp_proof" binding:"required"`
+		RequestedTags []string `json:"requested_tags" binding:"required"`
+		BankRequestID string   `json:"bank_request_id" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -161,7 +161,7 @@ func (h *AuditHandler) VerifyDataOwnership(c *gin.Context) {
 	// 2. 验证请求的数据标签是否超出授权范围
 	// 这里应该结合智能合约A的结果来检查授权范围
 	// 简化实现：检查常见的数据标签
-	allowedTags := []string{"income", "credit_score", "basic_info"}
+	allowedTags := []string{"income", "credit_score", "total_assets", "basic_info"}
 	for _, requestedTag := range req.RequestedTags {
 		found := false
 		for _, allowedTag := range allowedTags {
@@ -181,17 +181,17 @@ func (h *AuditHandler) VerifyDataOwnership(c *gin.Context) {
 
 	// 3. 记录审计验证结果到区块链
 	auditRecord := map[string]interface{}{
-		"audit_id":           uuid.New().String(),
-		"audit_type":         "data_ownership",
-		"datacenter_id":      req.DataCenterID,
-		"user_id":            req.UserID,
-		"bank_request_id":    req.BankRequestID,
-		"data_hash":          req.DataHash,
-		"zkp_verified":       zkpVerified,
-		"requested_tags":     req.RequestedTags,
+		"audit_id":            uuid.New().String(),
+		"audit_type":          "data_ownership",
+		"datacenter_id":       req.DataCenterID,
+		"user_id":             req.UserID,
+		"bank_request_id":     req.BankRequestID,
+		"data_hash":           req.DataHash,
+		"zkp_verified":        zkpVerified,
+		"requested_tags":      req.RequestedTags,
 		"verification_result": "passed",
-		"audit_node_id":      h.auditNodeID,
-		"timestamp":          time.Now().Unix(),
+		"audit_node_id":       h.auditNodeID,
+		"timestamp":           time.Now().Unix(),
 	}
 
 	auditData, _ := json.Marshal(auditRecord)
@@ -266,10 +266,10 @@ func (h *AuditHandler) GetAuditLog(c *gin.Context) {
 		Code:    0,
 		Message: "审计日志查询成功",
 		Data: map[string]interface{}{
-			"audit_type":  auditType,
-			"audit_logs":  auditLogs,
-			"audit_node":  h.auditNodeID,
-			"query_time":  time.Now().Unix(),
+			"audit_type": auditType,
+			"audit_logs": auditLogs,
+			"audit_node": h.auditNodeID,
+			"query_time": time.Now().Unix(),
 		},
 	})
 }
@@ -277,16 +277,16 @@ func (h *AuditHandler) GetAuditLog(c *gin.Context) {
 // ValidateCompleteFlow 验证完整的三方审计流程
 func (h *AuditHandler) ValidateCompleteFlow(c *gin.Context) {
 	var req struct {
-		BankRequestID    string   `json:"bank_request_id" binding:"required"`
-		UserID           string   `json:"user_id" binding:"required"`
-		BankID           string   `json:"bank_id" binding:"required"`
-		DataCenterID     string   `json:"datacenter_id" binding:"required"`
-		UserAuthHash     string   `json:"user_auth_hash" binding:"required"`
-		BankAuthHash     string   `json:"bank_auth_hash" binding:"required"`
-		DataHash         string   `json:"data_hash" binding:"required"`
-		UserIDHash       string   `json:"user_id_hash" binding:"required"`
-		ZKPProof         string   `json:"zkp_proof" binding:"required"`
-		RequestedTags    []string `json:"requested_tags" binding:"required"`
+		BankRequestID string   `json:"bank_request_id" binding:"required"`
+		UserID        string   `json:"user_id" binding:"required"`
+		BankID        string   `json:"bank_id" binding:"required"`
+		DataCenterID  string   `json:"datacenter_id" binding:"required"`
+		UserAuthHash  string   `json:"user_auth_hash" binding:"required"`
+		BankAuthHash  string   `json:"bank_auth_hash" binding:"required"`
+		DataHash      string   `json:"data_hash" binding:"required"`
+		UserIDHash    string   `json:"user_id_hash" binding:"required"`
+		ZKPProof      string   `json:"zkp_proof" binding:"required"`
+		RequestedTags []string `json:"requested_tags" binding:"required"`
 	}
 
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -341,8 +341,8 @@ func (h *AuditHandler) ValidateCompleteFlow(c *gin.Context) {
 
 // 内部验证方法
 type ValidationResult struct {
-	Valid   bool   `json:"valid"`
-	Message string `json:"message"`
+	Valid   bool        `json:"valid"`
+	Message string      `json:"message"`
 	Details interface{} `json:"details,omitempty"`
 }
 
@@ -396,7 +396,7 @@ func (h *AuditHandler) verifyDataOwnershipInternal(datacenterID, userID, dataHas
 		Valid:   true,
 		Message: "数据归属验证通过",
 		Details: map[string]interface{}{
-			"datacenter_id":  datacenterID,
+			"datacenter_id": datacenterID,
 			"verified_tags": requestedTags,
 		},
 	}

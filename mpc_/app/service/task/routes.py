@@ -3,9 +3,18 @@ import yaml
 import requests
 import json
 import threading
+import base64
+import csv
+import io
 from flask import request, jsonify
 from . import task_bp
 from .store import create_task, get_task, update_task, list_tasks
+
+ASSET_VALUE_FIELDS = ("total_assets", "asset_value", "amount", "balance", "value")
+BATCH_GC_GENERATE_TIMEOUT = int(os.getenv("MPC_BATCH_GC_GENERATE_TIMEOUT", "60"))
+BATCH_GC_AUTH_TIMEOUT = int(os.getenv("MPC_BATCH_GC_AUTH_TIMEOUT", "90"))
+BATCH_GC_EVAL_TIMEOUT = int(os.getenv("MPC_BATCH_GC_EVAL_TIMEOUT", "90"))
+BATCH_GC_AUDIT_TIMEOUT = int(os.getenv("MPC_BATCH_GC_AUDIT_TIMEOUT", "90"))
 
 def _mpc_base():
     config_path = os.path.join(os.path.dirname(__file__), '..', '..', '..', 'config.yml')
@@ -40,10 +49,65 @@ def _response_data(body):
     return body if isinstance(body, dict) else {}
 
 
+def _gc_mode(params):
+    return str((params or {}).get("compute_mode") or "asset_threshold_batch").strip().lower()
+
+
+def _parse_batch_seller_manifest(seller_data):
+    try:
+        payload = json.loads(seller_data or b"{}")
+    except Exception:
+        payload = {}
+
+    files = payload.get("files")
+    if payload.get("input_mode") != "asset_threshold_batch" or not isinstance(files, list) or not files:
+        raise ValueError("批量资产阈值模式需要 input_mode=asset_threshold_batch 且 files 非空")
+    return files
+
+
+def _aggregate_asset_csv_files(file_entries):
+    totals = {}
+    for entry in file_entries:
+        filename = entry.get("filename") or "unknown.csv"
+        try:
+            raw_bytes = base64.b64decode(entry.get("content_base64") or "")
+            text = raw_bytes.decode("utf-8-sig")
+        except Exception as exc:
+            raise ValueError(f"解析卖方文件失败: {filename}: {exc}")
+
+        reader = csv.DictReader(io.StringIO(text, newline=""))
+        headers = reader.fieldnames or []
+        if "user_id" not in headers:
+            raise ValueError(f"CSV 缺少 user_id 列: {filename}")
+
+        asset_field = next((field for field in ASSET_VALUE_FIELDS if field in headers), None)
+        if not asset_field:
+            raise ValueError(f"CSV 缺少资产列 {ASSET_VALUE_FIELDS}: {filename}")
+
+        for line_no, row in enumerate(reader, start=2):
+            user_id = str((row.get("user_id") or "")).strip()
+            raw_value = str((row.get(asset_field) or "")).strip()
+            if not user_id:
+                raise ValueError(f"{filename} 第 {line_no} 行缺少 user_id")
+            try:
+                asset_value = int(float(raw_value))
+            except Exception:
+                raise ValueError(f"{filename} 第 {line_no} 行资产值非法: {raw_value}")
+            totals[user_id] = totals.get(user_id, 0) + asset_value
+
+    return [
+        {"user_id": user_id, "total_assets": total_assets}
+        for user_id, total_assets in sorted(totals.items())
+    ]
+
+
 def _run_task_async(task_id, task_type, task_snapshot, base, params):
     try:
         if task_type == 'gc':
-            _run_gc(task_id, task_snapshot, base, params)
+            if _gc_mode(params) == 'asset_threshold_batch':
+                _run_gc_asset_threshold_batch(task_id, task_snapshot, base, params)
+            else:
+                _run_gc(task_id, task_snapshot, base, params)
         else:
             _run_vfl(task_id, task_snapshot, base, params)
     except Exception as e:
@@ -79,6 +143,29 @@ def _build_gc_authorization(base, task_id, buyer_id, seller_fields, params):
     if not auth_ciphertext or not auth_hash:
         raise RuntimeError("GC授权生成成功但未返回 auth_ciphertext/auth_hash")
 
+    return auth_ciphertext, auth_hash, auth_data
+
+
+def _build_asset_authorization(base, task_id, buyer_id, user_id, params):
+    payload = {
+        "request_id": f"auth_{task_id}_{user_id}",
+        "user_id": user_id,
+        "data_tags": params.get("data_tags") or ["total_assets"],
+        "purpose": params.get("purpose", "asset_threshold_batch_evaluation"),
+        "validity_period": int(params.get("validity_period", 86400)),
+        "authorized_party": params.get("authorized_party", buyer_id),
+    }
+    auth_resp = _post_json(
+        f"{base}/users/request-authorization",
+        payload,
+        "GC授权生成",
+        timeout=BATCH_GC_AUTH_TIMEOUT,
+    )
+    auth_data = _response_data(auth_resp)
+    auth_ciphertext = auth_data.get("auth_ciphertext")
+    auth_hash = auth_data.get("auth_hash")
+    if not auth_ciphertext or not auth_hash:
+        raise RuntimeError("GC授权生成成功但未返回 auth_ciphertext/auth_hash")
     return auth_ciphertext, auth_hash, auth_data
 
 
@@ -221,6 +308,75 @@ def _run_gc(task_id, task, base, params):
     })
 
 
+def _run_gc_asset_threshold_batch(task_id, task, base, params):
+    buyer_id = task['buyer_id']
+
+    gc_resp = _post_json(f"{base}/bank/gc/generate-asset-threshold-task", {
+        "task_id": task_id,
+        "bank_id": buyer_id,
+        "threshold": params.get('threshold', 0),
+    }, "GC批量资产任务生成", timeout=BATCH_GC_GENERATE_TIMEOUT)
+
+    gc_data = _response_data(gc_resp)
+    garbled_circuit = gc_data.get('garbled_circuit')
+    num_gates = gc_data.get('num_gates', 0)
+    if not garbled_circuit:
+        raise RuntimeError("GC批量资产任务生成成功但未返回 garbled_circuit")
+    update_task(task_id, gc_context={"garbled_circuit": garbled_circuit, "num_gates": num_gates})
+
+    seller_files = _parse_batch_seller_manifest(task.get('seller_data') or b'')
+    asset_rows = _aggregate_asset_csv_files(seller_files)
+    if not asset_rows:
+        raise ValueError("卖方 CSV 中没有可用用户数据")
+
+    results = []
+    auth_transaction_ids = []
+    for row in asset_rows:
+        user_id = row["user_id"]
+        total_assets = row["total_assets"]
+        auth_ciphertext, auth_hash, auth_data = _build_asset_authorization(
+            base, task_id, buyer_id, user_id, params
+        )
+        eval_resp = _post_json(f"{base}/datacenter/gc/evaluate-asset-threshold", {
+            "task_id": task_id,
+            "datacenter_id": params.get("datacenter_id", "DC001"),
+            "user_id": user_id,
+            "total_assets": total_assets,
+            "garbled_circuit": garbled_circuit,
+            "auth_ciphertext": auth_ciphertext,
+            "auth_hash": auth_hash,
+        }, f"GC资产阈值评估[{user_id}]", timeout=BATCH_GC_EVAL_TIMEOUT)
+        eval_data = _response_data(eval_resp)
+        auth_transaction_ids.append(auth_data.get("transaction_id"))
+        results.append({
+            "user_id": user_id,
+            "total_assets": total_assets,
+            "is_qualified": bool(eval_data.get("output_value")),
+            "input_commitment_hash": eval_data.get("input_commitment_hash"),
+            "auth_hash": auth_hash,
+        })
+
+    audit_resp = _post_json(f"{base}/audit/gc/verify-execution", {
+        "task_id": task_id,
+        "num_gates": num_gates,
+    }, "GC执行验证", timeout=BATCH_GC_AUDIT_TIMEOUT)
+    audit_data = _response_data(audit_resp)
+
+    qualified_count = sum(1 for item in results if item["is_qualified"])
+    update_task(task_id, status='done', result={
+        "task_type": "gc",
+        "compute_mode": "asset_threshold_batch",
+        "threshold": params.get('threshold', 0),
+        "user_results": results,
+        "qualified_count": qualified_count,
+        "user_count": len(results),
+        "auth_transaction_ids": [item for item in auth_transaction_ids if item],
+        "audit_id": audit_data.get('audit_id'),
+        "transaction_id": audit_data.get('transaction_id'),
+        "verified": audit_data.get('verified', False),
+    })
+
+
 def _run_vfl(task_id, task, base, params):
     import json
     buyer_id = task['buyer_id']
@@ -268,6 +424,8 @@ def task_status(task_id):
     task = get_task(task_id)
     if not task:
         return _err(1002, 'task not found')
+    result_payload = task.get('result') if isinstance(task.get('result'), dict) else None
+    error_message = result_payload.get('error') if isinstance(result_payload, dict) else None
     return _ok({
         "task_id": task_id,
         "task_type": task['task_type'],
@@ -275,6 +433,8 @@ def task_status(task_id):
         "buyer_data_ready": task['buyer_data_ready'],
         "seller_data_ready": task['seller_data_ready'],
         "created_at": task['created_at'],
+        "error": error_message,
+        "result": result_payload if task['status'] == 'done' else None,
     })
 
 

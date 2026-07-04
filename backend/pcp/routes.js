@@ -168,6 +168,25 @@ function assertPcTypeMatches(digitalContract, expectedPcType, label) {
   }
 }
 
+function assertPcTypeIn(digitalContract, expectedPcTypes, label) {
+  const actualPcType = normalizePcType(digitalContract?.pc_type);
+  const allowedTypes = Array.isArray(expectedPcTypes)
+    ? expectedPcTypes.map((item) => normalizePcType(item)).filter(Boolean)
+    : [normalizePcType(expectedPcTypes)].filter(Boolean);
+
+  if (!actualPcType) {
+    const error = new Error('数字合约未配置隐私计算方式');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!allowedTypes.includes(actualPcType)) {
+    const error = new Error(`当前交易配置的隐私计算方式不是 ${label}`);
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
 function getHePublicKeyByEncType(record, encType) {
   const mapped = mapHeRecordRow(record);
   if (!mapped) {
@@ -269,7 +288,7 @@ function registerHeRoutes({
       throw error;
     }
 
-    assertPcTypeMatches(digitalContract, 'HE', 'HE');
+    assertPcTypeIn(digitalContract, ['HE', 'MPC'], 'HE 或 MPC');
 
     return { transaction, digitalContract };
   }
@@ -553,15 +572,18 @@ function registerHeRoutes({
 
   app.post(
     '/api/privacy/he/submit',
-    upload.fields([{ name: 'file1', maxCount: 1 }, { name: 'file2', maxCount: 1 }]),
+    upload.any(),
     async (req, res) => {
       const transactionId = String(req.body.transactionId || '').trim();
       const encType = String(
         firstDefined(req.body.encType, req.body.enc_type, '')
       ).trim();
       const operation = String(req.body.operation || '').trim().toUpperCase();
-      const file1 = req.files?.file1?.[0] || null;
-      const file2 = req.files?.file2?.[0] || null;
+      const uploadedFiles = Array.isArray(req.files) ? req.files : [];
+      const orderedFiles = uploadedFiles
+        .filter((file) => file?.buffer)
+        .sort((left, right) => String(left.fieldname || '').localeCompare(String(right.fieldname || '')));
+      const sellerFileFields = orderedFiles.map((file) => String(file.fieldname || '').trim()).filter(Boolean);
 
       if (!transactionId || !encType || !operation) {
         return res.status(400).json({
@@ -584,10 +606,10 @@ function registerHeRoutes({
         });
       }
 
-      if (!file1 || !file2) {
+      if (!orderedFiles.length) {
         return res.status(400).json({
           success: false,
-          message: '必须同时上传 file1 和 file2'
+          message: '至少需要上传一个 HE CSV 文件'
         });
       }
 
@@ -613,8 +635,7 @@ function registerHeRoutes({
 
         const heComputeMode = resolveHeComputeMode(encType, operation);
         ensureCompatibleExistingHeContract(mappedExisting, encType, operation);
-        validateHeCsvFile(encType, file1);
-        validateHeCsvFile(encType, file2);
+        orderedFiles.forEach((file) => validateHeCsvFile(encType, file));
 
         let pcpContractId = existing && existing.pcp_contract_id;
         let currentAttemptId = existing && existing.current_attempt_id;
@@ -629,7 +650,8 @@ function registerHeRoutes({
             transaction,
             businessContractId: digitalContract.contract_id,
             encType,
-            operation
+            operation,
+            sellerFileCount: orderedFiles.length
           });
 
           const contractResp = await heClient.post('/he/contract', contractPayload);
@@ -651,15 +673,14 @@ function registerHeRoutes({
         form.append('metadata', JSON.stringify(buildHeAttemptMetadata({
           contractId: pcpContractId,
           sellerId: transaction.seller_address,
-          publicKey: buildPcpHePublicKey(encType, publicKeys)
+          publicKey: buildPcpHePublicKey(encType, publicKeys),
+          sellerFileFields
         })));
-        form.append('file1', file1.buffer, {
-          filename: file1.originalname || 'file1.csv',
-          contentType: file1.mimetype || 'text/csv'
-        });
-        form.append('file2', file2.buffer, {
-          filename: file2.originalname || 'file2.csv',
-          contentType: file2.mimetype || 'text/csv'
+        orderedFiles.forEach((file, index) => {
+          form.append(sellerFileFields[index], file.buffer, {
+            filename: file.originalname || `${sellerFileFields[index]}.csv`,
+            contentType: file.mimetype || 'text/csv'
+          });
         });
 
         attemptResponse = await heClient.post(`/he/${encodeURIComponent(pcpContractId)}/attempts`, form, {

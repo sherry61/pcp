@@ -33,13 +33,13 @@ async function createRemoteTask(client, payload) {
   return ensureSuccess(response.data, '创建远端任务');
 }
 
-async function uploadRemoteTaskSellerData(client, remoteTaskId, { sellerId, file }) {
+async function uploadRemoteTaskSellerData(client, remoteTaskId, { sellerId, payload, filename, contentType }) {
   const form = new FormData();
   form.append('role', 'seller');
   form.append('party_id', String(sellerId || ''));
-  form.append('file', file.buffer, {
-    filename: file.originalname || 'seller.json',
-    contentType: file.mimetype || 'application/octet-stream'
+  form.append('file', payload, {
+    filename: filename || 'seller-input.json',
+    contentType: contentType || 'application/json'
   });
 
   const response = await client.post(`/task/${encodeURIComponent(remoteTaskId)}/data`, form, {

@@ -74,7 +74,6 @@
                     size="small"
                     type="primary"
                     :class="['action-btn-primary', { 'action-btn-disabled-primary': !canOpenMpcSellerDialog(row) }]"
-                    :loading="row.uploadingMpc"
                     :disabled="!canOpenMpcSellerDialog(row)"
                     @click="openMpcSellerDialog(row)"
                   >
@@ -262,7 +261,7 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="mpcDialog.visible" title="提交材料" width="560px">
+        <el-dialog v-model="mpcDialog.visible" title="执行交付" width="560px">
           <div v-if="mpcDialog.row" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
@@ -270,21 +269,42 @@
             </div>
 
             <div class="dialog-field">
-              <span class="dialog-label">卖方 JSON 文件</span>
+              <span class="dialog-label">资产数据文件</span>
               <div class="file-action-group">
-                <input ref="mpcSellerJsonInput" class="hidden-file-input" type="file" accept=".json,application/json" @change="onMpcFileChange" />
-                <el-button size="small" plain @click="openFileSelector('mpcSellerJsonInput')">
+                <input ref="mpcSellerCsvInput" class="hidden-file-input" type="file" accept=".csv,text/csv" multiple @change="onMpcFileChange" />
+                <el-button size="small" plain @click="openFileSelector('mpcSellerCsvInput')">
                   选择文件
                 </el-button>
               </div>
-              <div v-if="mpcDialog.file" class="file-name inline-file-name">{{ mpcDialog.file.name }}</div>
+              <div v-if="mpcDialog.files.length" class="file-name inline-file-name">
+                {{ mpcDialog.files.map((file) => file.name).join('，') }}
+              </div>
             </div>
           </div>
 
           <template #footer>
             <el-button @click="closeMpcSellerDialog">取消</el-button>
             <el-button type="primary" :loading="mpcDialog.submitting" @click="submitMpcSellerData">
-              提交材料
+              执行交付
+            </el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog
+          v-model="mpcNoticeDialog.visible"
+          title="提示"
+          width="460px"
+          :close-on-click-modal="false"
+        >
+          <div class="dialog-body">
+            <div class="dialog-hint compact-hint">
+              <span>{{ mpcNoticeDialog.message }}</span>
+            </div>
+          </div>
+
+          <template #footer>
+            <el-button type="primary" @click="closeMpcNoticeDialog">
+              我知道了
             </el-button>
           </template>
         </el-dialog>
@@ -402,8 +422,12 @@ export default {
       mpcDialog: {
         visible: false,
         row: null,
-        file: null,
+        files: [],
         submitting: false
+      },
+      mpcNoticeDialog: {
+        visible: false,
+        message: ''
       },
       statusPollTimer: null,
       contractVerified: false,
@@ -427,7 +451,9 @@ export default {
       return this.requestedAssets.slice(start, start + this.pagination.pageSize)
     }
   },
-  mounted() {
+  async mounted() {
+    await this.initUser()
+    await this.fetchRequestedAssets()
     this.startStatusPolling()
   },
   beforeUnmount() {
@@ -529,7 +555,6 @@ export default {
                   processingPre: false,
                   processingFl: false,
                   uploadingFlBatch: false,
-                  uploadingMpc: false,
                   flBottomModelDownloaded: false,
                   downloadingFlBottom: false,
                   downloadingFlGradient: false
@@ -911,7 +936,7 @@ export default {
 
     getSellerMpcActionLabel(row) {
       if (!row?.mpcRecord?.remote_task_id) {
-        return row?.syncingMpc ? '检查中' : '检查状态'
+        return '执行交付'
       }
 
       switch (String(row?.mpcRecord?.task_status || '').toLowerCase()) {
@@ -1040,11 +1065,248 @@ async verifyContract(assetRow) {
       }
 
       if (!row?.mpcRecord?.remote_task_id) {
-        return !row?.syncingMpc
+        return false
       }
 
       const status = String(row?.mpcRecord?.task_status || '').toLowerCase()
       return status === 'pending' || status === 'waiting_seller_data' || status === 'failed'
+    },
+
+    getHiddenHePrivateKeyStorageKey(transactionId) {
+      return `mpcHiddenHePrivateKey:${String(transactionId || '')}`
+    },
+
+    loadHiddenHePrivateKeyText(transactionId) {
+      return localStorage.getItem(this.getHiddenHePrivateKeyStorageKey(transactionId)) || ''
+    },
+
+    saveHiddenHePrivateKeyText(transactionId, privateKeyText) {
+      localStorage.setItem(this.getHiddenHePrivateKeyStorageKey(transactionId), String(privateKeyText || ''))
+    },
+
+    parseAssetCsvText(csvText, filename = '') {
+      const lines = String(csvText || '')
+        .replace(/^\uFEFF/, '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+
+      if (lines.length < 2) {
+        throw new Error(`${filename || 'CSV 文件'} 至少需要表头和一行数据`)
+      }
+
+      const headers = lines[0].split(',').map((item) => item.trim())
+      const userIdIndex = headers.indexOf('user_id')
+      const valueField = ['total_assets', 'asset_value', 'amount', 'balance', 'value']
+        .find((field) => headers.includes(field))
+      const valueIndex = valueField ? headers.indexOf(valueField) : -1
+
+      if (userIdIndex < 0 || valueIndex < 0) {
+        throw new Error(`${filename || 'CSV 文件'} 必须包含 user_id 和 total_assets/asset_value/amount/balance/value 之一`)
+      }
+
+      const totalsByUser = new Map()
+      const userOrder = []
+
+      for (let i = 1; i < lines.length; i += 1) {
+        const columns = lines[i].split(',').map((item) => item.trim())
+        const userId = columns[userIdIndex]
+        const rawValue = columns[valueIndex]
+        const value = Number(rawValue)
+
+        if (!userId) {
+          throw new Error(`${filename || 'CSV 文件'} 第 ${i + 1} 行缺少 user_id`)
+        }
+
+        if (!Number.isFinite(value) || value < 0) {
+          throw new Error(`${filename || 'CSV 文件'} 第 ${i + 1} 行资产值不是合法非负数字`)
+        }
+
+        if (!totalsByUser.has(userId)) {
+          userOrder.push(userId)
+          totalsByUser.set(userId, 0)
+        }
+
+        totalsByUser.set(userId, totalsByUser.get(userId) + value)
+      }
+
+      return {
+        userOrder,
+        totalsByUser
+      }
+    },
+
+    async buildHiddenHeBatchPayload(files) {
+      const parsedFiles = await Promise.all(files.map(async (file) => ({
+        file,
+        parsed: this.parseAssetCsvText(await file.text(), file.name)
+      })))
+
+      const userIds = []
+      const seenUsers = new Set()
+
+      parsedFiles.forEach(({ parsed }) => {
+        parsed.userOrder.forEach((userId) => {
+          if (!seenUsers.has(userId)) {
+            seenUsers.add(userId)
+            userIds.push(userId)
+          }
+        })
+      })
+
+      if (!userIds.length) {
+        throw new Error('没有可用于聚合的用户资产数据')
+      }
+
+      const heFiles = parsedFiles.map(({ file, parsed }, fileIndex) => {
+        const rows = ['value']
+        userIds.forEach((userId) => {
+          const value = parsed.totalsByUser.get(userId) ?? 0
+          rows.push(String(Math.round(value)))
+        })
+
+        return new File(
+          [rows.join('\n')],
+          `he-hidden-${fileIndex + 1}-${file.name.replace(/\.csv$/i, '')}.csv`,
+          { type: 'text/csv' }
+        )
+      })
+
+      return {
+        userIds,
+        heFiles
+      }
+    },
+
+    async ensureHiddenHeContext(transactionId) {
+      const statusResponse = await axios.get(`${API_BASE}/api/privacy/he/public-key-status`, {
+        params: { transactionId }
+      })
+      const heRecord = statusResponse.data?.item || null
+      let privateKeyText = this.loadHiddenHePrivateKeyText(transactionId)
+
+      if (heRecord?.public_keys_ready && privateKeyText) {
+        return { heRecord, privateKeyText }
+      }
+
+      if (heRecord?.pcp_contract_id && !privateKeyText) {
+        throw new Error('当前交易已存在旧的 HE 公钥，但浏览器没有对应私钥，无法继续隐藏聚合。请使用新的交易重新发起。')
+      }
+
+      const keyPairs = await heCrypto.generateHeKeyPairs()
+      privateKeyText = heCrypto.serializeHeKeyMaterial({
+        algorithm: 'Paillier',
+        transactionId,
+        keyType: heCrypto.HE_PRIVATE_KEY_TYPE,
+        keyMaterial: keyPairs.paillier.privateKey
+      })
+
+      await axios.post(`${API_BASE}/api/privacy/he/public-keys`, {
+        transactionId,
+        ...heCrypto.buildHePublicKeyPayload(keyPairs)
+      })
+
+      this.saveHiddenHePrivateKeyText(transactionId, privateKeyText)
+
+      const refreshedStatus = await axios.get(`${API_BASE}/api/privacy/he/public-key-status`, {
+        params: { transactionId }
+      })
+
+      return {
+        heRecord: refreshedStatus.data?.item || heRecord,
+        privateKeyText
+      }
+    },
+
+    async pollHiddenHeUntilReady(transactionId, timeoutMs = 180000, intervalMs = 3000) {
+      const startAt = Date.now()
+
+      while (Date.now() - startAt < timeoutMs) {
+        const response = await axios.get(`${API_BASE}/api/privacy/he/status`, {
+          params: { transactionId }
+        })
+        const item = response.data?.item || null
+        const status = String(item?.pcp_status || '').toUpperCase()
+
+        if (status === 'PAM_PASSED' || status === 'COMPLETED') {
+          return item
+        }
+
+        if (['FAILED', 'PAM_FAILED', 'AUDIT_FAILED'].includes(status)) {
+          throw new Error(item?.last_error || `HE 聚合失败，当前状态 ${status}`)
+        }
+
+        await new Promise((resolve) => window.setTimeout(resolve, intervalMs))
+      }
+
+      throw new Error('HE 聚合超时，请稍后刷新状态重试')
+    },
+
+    async runHiddenHeAggregation(transactionId, files) {
+      const { userIds, heFiles } = await this.buildHiddenHeBatchPayload(files)
+      const { heRecord, privateKeyText } = await this.ensureHiddenHeContext(transactionId)
+      const publicKey = heCrypto.selectHePublicKey(heRecord, 'Paillier')
+
+      if (!publicKey) {
+        throw new Error('隐藏 HE 聚合缺少 Paillier 公钥')
+      }
+
+      const encryptedFiles = await Promise.all(heFiles.map(async (file) => {
+        const encryptedCsvText = await heCrypto.encryptHeCsv({
+          algorithm: 'Paillier',
+          csvText: await file.text(),
+          publicKey
+        })
+        return new File([encryptedCsvText], file.name, { type: 'text/csv' })
+      }))
+
+      const formData = new FormData()
+      formData.append('transactionId', transactionId)
+      formData.append('encType', 'Paillier')
+      formData.append('operation', 'ADD')
+      encryptedFiles.forEach((file, index) => {
+        formData.append(`file${index + 1}`, file, file.name)
+      })
+
+      await axios.post(`${API_BASE}/api/privacy/he/submit`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      })
+
+      await this.pollHiddenHeUntilReady(transactionId)
+
+      const resultResponse = await axios.get(`${API_BASE}/api/privacy/he/result`, {
+        params: { transactionId },
+        responseType: 'text'
+      })
+      const decryptedCsvText = await heCrypto.decryptHeResultCsv({
+        algorithm: 'Paillier',
+        encryptedCsvText: resultResponse.data,
+        privateKeyText
+      })
+      const resultLines = String(decryptedCsvText || '')
+        .replace(/^\uFEFF/, '')
+        .split(/\r?\n/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+
+      if (resultLines.length !== userIds.length + 1) {
+        throw new Error('HE 聚合结果行数与用户列表不一致')
+      }
+
+      const rows = ['user_id,total_assets']
+      userIds.forEach((userId, index) => {
+        const value = Number(resultLines[index + 1])
+        if (!Number.isFinite(value) || value < 0) {
+          throw new Error(`HE 聚合结果第 ${index + 1} 行不是合法非负数字`)
+        }
+        rows.push(`${userId},${Math.round(value)}`)
+      })
+
+      return new File(
+        [rows.join('\n')],
+        `asset-threshold-aggregated-${transactionId}.csv`,
+        { type: 'text/csv' }
+      )
     },
 
     async openMpcSellerDialog(row) {
@@ -1064,49 +1326,55 @@ async verifyContract(assetRow) {
 
       this.mpcDialog.visible = true
       this.mpcDialog.row = row
-      this.mpcDialog.file = null
+      this.mpcDialog.files = []
       this.mpcDialog.submitting = false
     },
 
     onMpcFileChange(event) {
-      this.mpcDialog.file = event.target.files?.[0] || null
+      this.mpcDialog.files = Array.from(event.target.files || [])
       event.target.value = ''
     },
 
     async submitMpcSellerData() {
       const row = this.mpcDialog.row
       if (!row?.transaction_id) return
-      if (!this.mpcDialog.file) {
-        this.$message?.warning('请先选择 JSON 文件')
+      if (!this.mpcDialog.files.length) {
+        this.$message?.warning('请先选择 CSV 文件')
         return
       }
 
-      if (!String(this.mpcDialog.file.name || '').toLowerCase().endsWith('.json')) {
-        this.$message?.warning('仅支持上传 JSON 文件')
+      if (this.mpcDialog.files.some((file) => !String(file.name || '').toLowerCase().endsWith('.csv'))) {
+        this.$message?.warning('仅支持上传 CSV 文件')
         return
       }
 
-      row.uploadingMpc = true
-      this.mpcDialog.submitting = true
-      try {
-        const formData = new FormData()
-        formData.append('transaction_id', row.transaction_id)
-        formData.append('file', this.mpcDialog.file, this.mpcDialog.file.name)
+      const transactionId = row.transaction_id
+      const files = [...this.mpcDialog.files]
 
-        await axios.post(`${API_BASE}/api/privacy/mpc/upload-seller-data`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
+      this.closeMpcSellerDialog()
+      this.mpcNoticeDialog.message = '资产交付正在进行中，请勿退出账户或关闭浏览器。'
+      this.mpcNoticeDialog.visible = true
 
-        await this.refreshMpcStatus(row, false)
-        this.$message?.success('MPC 卖方材料已提交')
-        this.closeMpcSellerDialog()
-      } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'MPC 材料提交失败'
-        this.$message?.error(message)
-      } finally {
-        row.uploadingMpc = false
-        this.mpcDialog.submitting = false
-      }
+      ;(async () => {
+        try {
+          const aggregatedFile = await this.runHiddenHeAggregation(transactionId, files)
+          const formData = new FormData()
+          formData.append('transaction_id', transactionId)
+          formData.append('files', aggregatedFile, aggregatedFile.name)
+
+          await axios.post(`${API_BASE}/api/privacy/mpc/upload-seller-data`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          })
+
+          await this.refreshMpcStatus(row, false)
+          this.mpcNoticeDialog.message = '交付材料已提交，后续计算将在后台继续，现在可以关闭浏览器或退出账户。'
+          this.mpcNoticeDialog.visible = true
+        } catch (error) {
+          const message = error?.response?.data?.message || error?.message || 'MPC 材料提交失败'
+          this.$message?.error(message)
+          await this.refreshMpcStatus(row, false)
+        }
+      })()
     },
 
     getSellerJoinPackage(row) {
@@ -1507,8 +1775,13 @@ async verifyContract(assetRow) {
     closeMpcSellerDialog() {
       this.mpcDialog.visible = false
       this.mpcDialog.row = null
-      this.mpcDialog.file = null
+      this.mpcDialog.files = []
       this.mpcDialog.submitting = false
+    },
+
+    closeMpcNoticeDialog() {
+      this.mpcNoticeDialog.visible = false
+      this.mpcNoticeDialog.message = ''
     },
 
     async downloadFlSellerGradient(row) {
@@ -1723,10 +1996,6 @@ async verifyContract(assetRow) {
         return String(dateString)
       }
     }
-  },
-  async mounted() {
-    await this.initUser()
-    await this.fetchRequestedAssets()
   }
 }
 </script>

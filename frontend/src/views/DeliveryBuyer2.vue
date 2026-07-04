@@ -288,7 +288,7 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="mpcDialog.visible" title="发起 MPC 计算" width="520px">
+        <el-dialog v-model="mpcDialog.visible" title="请求交付" width="520px">
           <div v-if="mpcDialog.row" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
@@ -299,7 +299,7 @@
               <el-input v-model="mpcDialog.threshold" placeholder="请输入本次比较的目标阈值" />
             </div>
             <div class="dialog-hint compact-hint">
-              <span>买方设置比较门槛，卖方提交待比较数据后系统会自动完成计算并返回是否达到要求。</span>
+              <span>买方设置总资产门槛，系统会返回每个用户是否达标。</span>
             </div>
           </div>
 
@@ -314,15 +314,30 @@
         <el-dialog v-model="mpcResultDialog.visible" title="计算结果" width="720px">
           <div v-if="mpcResultDialog.row && mpcResultDialog.result" class="dialog-body">
             <div class="dialog-row">
-              <span class="dialog-label">比较结果</span>
-              <span>{{ getMpcResultText(mpcResultDialog.result.output_value) }}</span>
-            </div>
-            <div class="dialog-row">
               <span class="dialog-label">目标阈值</span>
               <span>{{ formatMpcThreshold(mpcResultDialog.row) }}</span>
             </div>
+            <div class="dialog-row">
+              <span class="dialog-label">统计摘要</span>
+              <span>{{ formatMpcQualifiedCount(mpcResultDialog.result) }}</span>
+            </div>
+            <el-table
+              v-if="Array.isArray(mpcResultDialog.result.user_results)"
+              :data="mpcResultDialog.result.user_results"
+              border
+              size="small"
+              style="width: 100%"
+            >
+              <el-table-column prop="user_id" label="用户ID" min-width="220" />
+              <el-table-column prop="total_assets" label="汇总资产" min-width="140" />
+              <el-table-column label="是否达标" min-width="120">
+                <template #default="{ row }">
+                  {{ getMpcResultText(row.is_qualified) }}
+                </template>
+              </el-table-column>
+            </el-table>
             <div class="dialog-hint compact-hint">
-              <span>系统已基于卖方提交的数据完成隐私计算，返回本次比较是否达到要求，过程中不会展示对方原始值。</span>
+              <span>系统会先按用户汇总多份 CSV 中的资产，再执行阈值比较并返回批量筛选结果。</span>
             </div>
           </div>
 
@@ -1021,6 +1036,7 @@ export default {
         const formData = new FormData()
         formData.append('transaction_id', row.transaction_id)
         formData.append('threshold', String(threshold))
+        formData.append('compute_mode', 'asset_threshold_batch')
 
         await axios.post(`${API_BASE}/api/privacy/mpc/create-task`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
@@ -1070,6 +1086,13 @@ export default {
         return value ? '达到要求' : '未达到要求'
       }
       return '-'
+    },
+
+    formatMpcQualifiedCount(result) {
+      const userCount = Number(result?.user_count || 0)
+      const qualifiedCount = Number(result?.qualified_count || 0)
+      if (!userCount) return '-'
+      return `${qualifiedCount} / ${userCount} 人达标`
     },
 
     getHeOperationLabel(operation) {

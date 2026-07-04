@@ -7,6 +7,7 @@ const {
   getRemoteTaskResult
 } = require('./client');
 const {
+  MPC_COMPUTE_MODE_ASSET_THRESHOLD_BATCH,
   MPC_ALLOWED_PC_TYPES,
   MPC_TASK_TYPE_GC
 } = require('./constants');
@@ -14,7 +15,7 @@ const {
   isTerminalMpcStatus,
   mapMpcRecordRow,
   normalizeMpcStatus,
-  parseJsonFileBuffer,
+  parseSellerCsvFiles,
   validateGcComputeParams
 } = require('./gc');
 
@@ -86,6 +87,17 @@ function formatMpcRouteError(error) {
       error: error.message
     }
   };
+}
+
+function extractRemoteTaskError(statusData) {
+  const data = statusData && typeof statusData === 'object' ? statusData : {};
+  const nestedResult = data.result && typeof data.result === 'object' ? data.result : null;
+  return (
+    data.error ||
+    data.last_error ||
+    nestedResult?.error ||
+    null
+  );
 }
 
 function normalizePcType(value) {
@@ -295,7 +307,7 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
     const remoteStatus = normalizeMpcStatus(statusData.status);
 
     let nextResult = mapped.result;
-    let lastError = mapped.last_error;
+    let lastError = extractRemoteTaskError(statusData) || mapped.last_error;
     let taskStatus = remoteStatus;
 
     if (remoteStatus === 'done') {
@@ -332,7 +344,8 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
 
       const computeParams = validateGcComputeParams({
         threshold: req.body.threshold ?? DEFAULT_GC_COMPUTE_PARAMS.threshold,
-        risk_factor: req.body.risk_factor ?? DEFAULT_GC_COMPUTE_PARAMS.risk_factor
+        risk_factor: req.body.risk_factor ?? DEFAULT_GC_COMPUTE_PARAMS.risk_factor,
+        compute_mode: req.body.compute_mode ?? MPC_COMPUTE_MODE_ASSET_THRESHOLD_BATCH
       });
       const { transaction, digitalContract } = await requireMpcContext(transactionId);
       const existing = mapMpcRecordRow(await getMpcRecordByTransactionId(transactionId));
@@ -385,7 +398,7 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
 
   app.post(
     '/api/privacy/mpc/upload-seller-data',
-    upload.single('file'),
+    upload.array('files'),
     async (req, res) => {
       let transactionId = null;
       let record = null;
@@ -400,12 +413,14 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
           return res.status(404).json({ success: false, message: '请先创建 MPC 任务' });
         }
 
-        const sellerInput = parseJsonFileBuffer(req.file);
+        const parsedFiles = parseSellerCsvFiles(req.files);
         const client = createMpcClient();
 
         await uploadRemoteTaskSellerData(client, record.remote_task_id, {
           sellerId: record.seller_id,
-          file: req.file
+          payload: Buffer.from(JSON.stringify(parsedFiles.remotePayload), 'utf8'),
+          filename: 'seller-asset-threshold-batch.json',
+          contentType: 'application/json'
         });
 
         let statusBody = await getRemoteTaskStatus(client, record.remote_task_id);
@@ -428,8 +443,8 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
           buyerId: record.buyer_id,
           sellerId: record.seller_id,
           computeParams: record.compute_params,
-          sellerInput,
-          sellerFilename: req.file?.originalname || null,
+          sellerInput: parsedFiles.persistedInput,
+          sellerFilename: (req.files || []).map((file) => file.originalname).join(', '),
           taskStatus: nextStatus,
           remoteStatus: nextStatus,
           result: record.result,

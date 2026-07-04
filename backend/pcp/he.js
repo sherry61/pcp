@@ -12,7 +12,8 @@ function buildHeContractPayload({
   transaction,
   businessContractId,
   encType,
-  operation
+  operation,
+  sellerFileCount = 2
 }) {
   if (!transaction) {
     throw new Error('transaction is required');
@@ -31,7 +32,7 @@ function buildHeContractPayload({
     idempotency_key: `${sourceContractId}-he-${heComputeMode}`,
     buyer_id: buyerId,
     source_contract_id: sourceContractId,
-    seller_ids: buildHeLogicalSellerIds(sellerId),
+    seller_ids: buildHeLogicalSellerIds(sellerId, sellerFileCount),
     he_compute_mode: heComputeMode,
     csv_format: 'SINGLE_CIPHER_COLUMN'
   };
@@ -60,21 +61,29 @@ function resolveHeComputeMode(encType, operation) {
   throw new Error(`PCC 当前不支持 ${normalizedEncType} + ${normalizedOperation}`);
 }
 
-function buildHeLogicalSellerIds(sellerId) {
+function buildHeLogicalSellerIds(sellerId, count = 2) {
   const normalizedSellerId = requireNonEmpty(sellerId, 'sellerId');
-  return [
-    `${normalizedSellerId}#file1`,
-    `${normalizedSellerId}#file2`
-  ];
+  const normalizedCount = Number(count);
+  if (!Number.isInteger(normalizedCount) || normalizedCount <= 0) {
+    throw new Error('sellerFileCount 必须是正整数');
+  }
+
+  return Array.from({ length: normalizedCount }, (_, index) => (
+    `${normalizedSellerId}#file${index + 1}`
+  ));
 }
 
 function buildHeAttemptMetadata({
   contractId,
   sellerId,
-  publicKey
+  publicKey,
+  sellerFileFields
 }) {
   requireNonEmpty(contractId, 'contractId');
-  const logicalSellerIds = buildHeLogicalSellerIds(sellerId);
+  const normalizedFields = Array.isArray(sellerFileFields) && sellerFileFields.length
+    ? sellerFileFields
+    : ['file1', 'file2'];
+  const logicalSellerIds = buildHeLogicalSellerIds(sellerId, normalizedFields.length);
 
   if (!publicKey || typeof publicKey !== 'object') {
     throw new Error('publicKey is required');
@@ -83,16 +92,10 @@ function buildHeAttemptMetadata({
   return {
     idempotency_key: `${contractId}-attempt-${Date.now()}`,
     public_key: publicKey,
-    seller_files: [
-      {
-        seller_id: logicalSellerIds[0],
-        file_field: 'file1'
-      },
-      {
-        seller_id: logicalSellerIds[1],
-        file_field: 'file2'
-      }
-    ]
+    seller_files: logicalSellerIds.map((sellerFileId, index) => ({
+      seller_id: sellerFileId,
+      file_field: normalizedFields[index]
+    }))
   };
 }
 

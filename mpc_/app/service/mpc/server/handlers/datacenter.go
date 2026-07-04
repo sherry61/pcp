@@ -168,13 +168,13 @@ func (h *DataCenterHandler) GetUserData(c *gin.Context) {
 		Code:    0,
 		Message: "数据中心查询成功",
 		Data: map[string]interface{}{
-			"user_id":           userInfo.UserID,
-			"basic_attributes":  userInfo.Attributes, // 返回用户注册时的实际属性
-			"public_key":        userInfo.PublicKey,
-			"organization":      userInfo.Organization,
-			"created_at":        userInfo.CreatedAt,
-			"datacenter_id":     h.datacenterID,
-			"note":              "敏感数据如收入信息需要通过银行授权流程获取",
+			"user_id":          userInfo.UserID,
+			"basic_attributes": userInfo.Attributes, // 返回用户注册时的实际属性
+			"public_key":       userInfo.PublicKey,
+			"organization":     userInfo.Organization,
+			"created_at":       userInfo.CreatedAt,
+			"datacenter_id":    h.datacenterID,
+			"note":             "敏感数据如收入信息需要通过银行授权流程获取",
 		},
 	})
 }
@@ -200,11 +200,11 @@ func (h *DataCenterHandler) ProvideData(c *gin.Context) {
 	}
 
 	// ====== 第一步：智能合约A验证 - 授权书匹配 ======
-	
+
 	// 1. 从授权密文中提取用户授权哈希
 	// 这里简化处理，实际应该从区块链查询用户原始授权哈希
 	userAuthHash := req.AuthHash // 实际应该从链上查询用户的原始授权哈希
-	
+
 	// 2. 验证银行转发的授权与用户授权是否匹配
 	authMatchValid := h.verifyAuthorizationMatch(req.UserID, userAuthHash, req.AuthHash)
 	if !authMatchValid {
@@ -218,7 +218,7 @@ func (h *DataCenterHandler) ProvideData(c *gin.Context) {
 	// 验证授权完整性 - 检查授权哈希与密文的一致性
 	if !h.verifyAuthorizationIntegrity(req.AuthHash, req.AuthCiphertext, req.UserID) {
 		// 添加详细的调试信息
-		log.Printf("授权完整性验证失败 - UserID: %s, AuthHash: %.20s..., CiphertextLen: %d", 
+		log.Printf("授权完整性验证失败 - UserID: %s, AuthHash: %.20s..., CiphertextLen: %d",
 			req.UserID, req.AuthHash, len(req.AuthCiphertext))
 		c.JSON(http.StatusForbidden, models.Response{
 			Code:    403,
@@ -228,7 +228,7 @@ func (h *DataCenterHandler) ProvideData(c *gin.Context) {
 	}
 
 	// ====== 第二步：生成数据和ZKP证明 ======
-	
+
 	// 获取用户数据 - 先检查用户是否存在
 	userData := h.fetchUserData(req.UserID, req.RequestedTags)
 	if userData == nil {
@@ -238,7 +238,7 @@ func (h *DataCenterHandler) ProvideData(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// 检查用户数据是否包含错误
 	if errorMsg, hasError := userData["error"]; hasError {
 		c.JSON(http.StatusNotFound, models.Response{
@@ -247,18 +247,18 @@ func (h *DataCenterHandler) ProvideData(c *gin.Context) {
 		})
 		return
 	}
-	
+
 	// 生成ZKP证明数据归属
 	// 简化数据字符串以避免过长导致的问题
 	simpleDataStr := fmt.Sprintf("user:%s,tags:%v,time:%d", req.UserID, req.RequestedTags, time.Now().Unix())
-	
+
 	// 初始化哈希值
 	dataHash := zkp.GenerateDataHash(simpleDataStr, "default_nonce")
 	userIDHash := zkp.GenerateUserIDHash(req.UserID)
-	
+
 	var zkpProof []byte
 	var zkpVerified bool = false
-	
+
 	if h.zkpSystem != nil {
 		// 使用GenerateProofWithHash方法
 		proof, generatedDataHash, generatedUserIDHash, _, err := h.zkpSystem.GenerateProofWithHash(simpleDataStr, req.UserID)
@@ -284,7 +284,7 @@ func (h *DataCenterHandler) ProvideData(c *gin.Context) {
 	}
 
 	// ====== 第三步：智能合约B验证 - 数据归属验证 ======
-	
+
 	dataOwnershipValid := h.verifyDataOwnership(
 		req.UserID,
 		base64.StdEncoding.EncodeToString(dataHash),
@@ -292,7 +292,7 @@ func (h *DataCenterHandler) ProvideData(c *gin.Context) {
 		base64.StdEncoding.EncodeToString(zkpProof),
 		req.RequestedTags,
 	)
-	
+
 	if !dataOwnershipValid {
 		c.JSON(http.StatusForbidden, models.Response{
 			Code:    403,
@@ -302,7 +302,7 @@ func (h *DataCenterHandler) ProvideData(c *gin.Context) {
 	}
 
 	// ====== 第四步：审计验证通过，提供数据 ======
-	
+
 	// 加密数据
 	encryptedData := h.encryptData(userData, req.UserID)
 
@@ -479,7 +479,7 @@ func (h *DataCenterHandler) fetchUserData(userID string, tags []string) map[stri
 
 	// 从用户注册的属性中提取实际数据
 	userAttributes := h.parseUserAttributes(userInfo.Attributes)
-	
+
 	// 根据请求的标签返回相应的敏感数据
 	dataMap := make(map[string]interface{})
 	for _, tag := range tags {
@@ -496,7 +496,7 @@ func (h *DataCenterHandler) fetchUserData(userID string, tags []string) map[stri
 			if locationValue, exists := userAttributes["location"]; exists {
 				dataMap["location"] = map[string]interface{}{
 					"value":  locationValue,
-					"source": "datacenter_verified", 
+					"source": "datacenter_verified",
 					"type":   "geographic",
 				}
 			}
@@ -645,7 +645,7 @@ func (h *DataCenterHandler) verifyDataOwnership(userID, dataHash, userIDHash, zk
 	}
 
 	// 检查请求的数据标签是否在允许范围内
-	allowedTags := []string{"age", "location", "income", "credit", "credit_score", "basic_info"}
+	allowedTags := []string{"age", "location", "income", "credit", "credit_score", "total_assets", "basic_info"}
 	for _, requestedTag := range requestedTags {
 		found := false
 		for _, allowedTag := range allowedTags {
@@ -679,65 +679,65 @@ func (h *DataCenterHandler) verifyAuthorizationIntegrity(authHash, authCiphertex
 		log.Printf("授权完整性验证失败：授权哈希长度不足 - UserID: %s, HashLen: %d", userID, len(authHash))
 		return false
 	}
-	
+
 	if authCiphertext == "" {
 		log.Printf("授权完整性验证失败：授权密文为空 - UserID: %s", userID)
 		return false
 	}
-	
+
 	// 2. 检查明显的假哈希（如简单字符串）
 	fakeHashes := []string{
 		"fake_hash_12345678",
 		"tampered_hash",
-		"invalid_hash", 
+		"invalid_hash",
 		"test_hash",
 	}
-	
+
 	for _, fakeHash := range fakeHashes {
 		if strings.Contains(strings.ToLower(authHash), fakeHash) {
 			log.Printf("授权完整性验证失败：检测到假哈希 - UserID: %s, Hash: %s", userID, authHash)
 			return false
 		}
 	}
-	
+
 	// 3. 尝试base64解码密文并检查是否是假密文
 	ciphertextBytes, err := base64.StdEncoding.DecodeString(authCiphertext)
 	if err != nil {
 		log.Printf("授权完整性验证失败：密文base64解码失败 - UserID: %s, Error: %v", userID, err)
 		return false
 	}
-	
+
 	// 检查是否是明显的假密文
 	fakeCiphertexts := []string{
 		"dGFtcGVyZWRfY2lwaGVydGV4dA==", // "tampered_ciphertext"的base64
 		"ZmFrZV9jaXBoZXJ0ZXh0",         // "fake_ciphertext"的base64
 	}
-	
+
 	for _, fakeCipher := range fakeCiphertexts {
 		if authCiphertext == fakeCipher {
 			log.Printf("授权完整性验证失败：检测到假密文 - UserID: %s", userID)
 			return false
 		}
 	}
-	
+
 	// 4. 验证密文结构 - CP-ABE密文应该有特定的JSON结构
 	if !h.validateCiphertextStructure(ciphertextBytes) {
 		log.Printf("授权完整性验证失败：密文结构无效 - UserID: %s", userID)
 		return false
 	}
-	
+
 	// 5. 验证授权哈希与密文的密码学绑定
 	if !h.verifyHashCiphertextBinding(authHash, authCiphertext, userID) {
 		log.Printf("授权完整性验证失败：哈希密文绑定验证失败 - UserID: %s", userID)
 		return false
 	}
-	
+
 	// 6. 验证密文与用户ID的关联
 	if !h.verifyCiphertextUserBinding(authCiphertext, userID) {
 		log.Printf("授权完整性验证失败：密文用户绑定验证失败 - UserID: %s", userID)
 		return false
 	}
-	
+
 	log.Printf("授权完整性验证成功 - UserID: %s", userID)
 	return true
 }
@@ -747,13 +747,13 @@ func sanitizeInput(input string) string {
 	if input == "" {
 		return ""
 	}
-	
+
 	// HTML转义
 	escaped := strings.ReplaceAll(input, "<", "&lt;")
 	escaped = strings.ReplaceAll(escaped, ">", "&gt;")
 	escaped = strings.ReplaceAll(escaped, "\"", "&quot;")
 	escaped = strings.ReplaceAll(escaped, "'", "&#39;")
-	
+
 	// 检查恶意脚本模式
 	maliciousPatterns := []string{
 		"<script",
@@ -773,14 +773,14 @@ func sanitizeInput(input string) string {
 		"<object",
 		"<embed",
 	}
-	
+
 	inputLower := strings.ToLower(escaped)
 	for _, pattern := range maliciousPatterns {
 		if strings.Contains(inputLower, pattern) {
 			return "" // 返回空字符串表示输入无效
 		}
 	}
-	
+
 	return escaped
 }
 
@@ -791,13 +791,13 @@ func (h *DataCenterHandler) validateUserInput(userID, organization string, attri
 	if cleanUserID == "" || cleanUserID != userID {
 		return fmt.Errorf("用户ID包含非法字符")
 	}
-	
+
 	// 验证组织名称
 	cleanOrg := sanitizeInput(organization)
 	if cleanOrg == "" || cleanOrg != organization {
 		return fmt.Errorf("组织名称包含非法字符")
 	}
-	
+
 	// 验证属性
 	for _, attr := range attributes {
 		cleanAttr := sanitizeInput(attr)
@@ -805,7 +805,7 @@ func (h *DataCenterHandler) validateUserInput(userID, organization string, attri
 			return fmt.Errorf("属性包含非法字符: %s", attr)
 		}
 	}
-	
+
 	return nil
 }
 
@@ -816,7 +816,7 @@ func (h *DataCenterHandler) validateCiphertextStructure(ciphertextBytes []byte) 
 	if err := json.Unmarshal(ciphertextBytes, &ciphertext); err != nil {
 		return false
 	}
-	
+
 	// 检查必需的CP-ABE密文字段
 	requiredFields := []string{"Ct0", "Ct", "CtPrime", "Msp", "SymEnc", "Iv"}
 	for _, field := range requiredFields {
@@ -824,17 +824,17 @@ func (h *DataCenterHandler) validateCiphertextStructure(ciphertextBytes []byte) 
 			return false
 		}
 	}
-	
+
 	// 验证SymEnc字段不为空（包含实际的加密数据）
 	if symEnc, ok := ciphertext["SymEnc"].(string); !ok || symEnc == "" {
 		return false
 	}
-	
+
 	// 验证Iv字段不为空（初始化向量）
 	if iv, ok := ciphertext["Iv"].(string); !ok || iv == "" {
 		return false
 	}
-	
+
 	// 验证Msp字段包含必要的策略信息
 	if msp, ok := ciphertext["Msp"].(map[string]interface{}); !ok {
 		return false
@@ -844,7 +844,7 @@ func (h *DataCenterHandler) validateCiphertextStructure(ciphertextBytes []byte) 
 			return false
 		}
 	}
-	
+
 	return true
 }
 
@@ -855,20 +855,20 @@ func (h *DataCenterHandler) verifyHashCiphertextBinding(authHash, authCiphertext
 	if err != nil {
 		return false
 	}
-	
+
 	var ciphertext map[string]interface{}
 	if err := json.Unmarshal(ciphertextBytes, &ciphertext); err != nil {
 		return false
 	}
-	
+
 	// 2. 对于合法的授权哈希，我们采用更宽松的验证策略
 	// 主要防止明显的篡改攻击，而不是重新计算精确的哈希匹配
-	
+
 	// 检查授权哈希长度和格式的基本合理性
 	if len(authHash) < 32 {
 		return false
 	}
-	
+
 	// 检查哈希是否符合十六进制格式
 	if _, err := hex.DecodeString(authHash); err != nil {
 		// 如果不是纯十六进制，检查是否包含合理的字符
@@ -887,7 +887,7 @@ func (h *DataCenterHandler) verifyHashCiphertextBinding(authHash, authCiphertext
 			return false
 		}
 	}
-	
+
 	// 3. 只要授权哈希不是明显的假值，且密文结构正确，就允许通过
 	// 这样既能防护明显的篡改攻击，又允许合法的CP-ABE授权通过
 	return true
@@ -900,12 +900,12 @@ func (h *DataCenterHandler) verifyCiphertextUserBinding(authCiphertext, userID s
 	if err != nil {
 		return false
 	}
-	
+
 	var ciphertext map[string]interface{}
 	if err := json.Unmarshal(ciphertextBytes, &ciphertext); err != nil {
 		return false
 	}
-	
+
 	// 2. 检查Msp（策略）中是否包含用户ID信息
 	if msp, ok := ciphertext["Msp"].(map[string]interface{}); ok {
 		if rowToAttrib, ok := msp["RowToAttrib"].([]interface{}); ok {
@@ -915,7 +915,7 @@ func (h *DataCenterHandler) verifyCiphertextUserBinding(authCiphertext, userID s
 				fmt.Sprintf("user:%s", userID),
 				userID,
 			}
-			
+
 			// 检查策略中是否包含任何形式的用户ID属性
 			for _, attr := range rowToAttrib {
 				if attrStr, ok := attr.(string); ok {
@@ -926,7 +926,7 @@ func (h *DataCenterHandler) verifyCiphertextUserBinding(authCiphertext, userID s
 					}
 				}
 			}
-			
+
 			// 如果策略中包含合理数量的属性，但没有找到用户ID，
 			// 可能是策略格式不同，采用更宽松的验证
 			if len(rowToAttrib) > 0 {
@@ -934,15 +934,15 @@ func (h *DataCenterHandler) verifyCiphertextUserBinding(authCiphertext, userID s
 				hasValidAttributes := false
 				for _, attr := range rowToAttrib {
 					if attrStr, ok := attr.(string); ok {
-						if strings.Contains(attrStr, "info_tag:") || 
-						   strings.Contains(attrStr, "role:") ||
-						   strings.Contains(attrStr, "bank_id:") {
+						if strings.Contains(attrStr, "info_tag:") ||
+							strings.Contains(attrStr, "role:") ||
+							strings.Contains(attrStr, "bank_id:") {
 							hasValidAttributes = true
 							break
 						}
 					}
 				}
-				
+
 				// 如果包含其他有效属性，说明策略结构是合理的
 				// 在这种情况下，我们允许通过验证
 				if hasValidAttributes {
@@ -951,7 +951,7 @@ func (h *DataCenterHandler) verifyCiphertextUserBinding(authCiphertext, userID s
 			}
 		}
 	}
-	
+
 	// 如果Msp结构无法解析，但密文其他部分正确，也允许通过
 	// 这是为了兼容不同版本的CP-ABE实现
 	return false
