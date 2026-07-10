@@ -99,16 +99,16 @@
     </div>
   </div>
 
-  <!-- 模型选择 -->
+  <!-- 模型选择 
 <div class="form-group">
   <label for="model-selection">模型选择</label>
   <select id="model-selection" v-model="form.modelSelection">
-    <!-- 占位提示：默认显示 -->
+    
     <option value="">请选择模型</option>
-    <!-- 用户真正可以选择的选项 -->
+
     <option value="weighted_average">加权平均</option>
   </select>
-</div>
+</div>-->
 
 </div>
 
@@ -377,13 +377,19 @@
           <!-- 数据库保存状态 -->
           <div class="modal-section" v-show="!loadingHash">
             <transition name="fade" mode="out-in" appear>
-              <div v-if="loadingDatabase" key="databasePending">
+              <div v-if="loadingBlockchain && !loadingDatabase && !databaseSuccess" key="databaseWaiting">
+                <span class="pending-icon">...</span>
+                <p class="pending-text">
+                  <strong>本地数据库状态:</strong> 等待上链成功后入库
+                </p>
+              </div>
+              <div v-else-if="loadingDatabase" key="databasePending">
                 <span class="pending-icon">...</span>
                 <p class="pending-text">
                   <strong>本地数据库状态:</strong> 保存中
                 </p>
               </div>
-              <div v-else key="databaseResult">
+              <div v-else-if="!loadingBlockchain || databaseSuccess" key="databaseResult">
                 <el-icon v-if="databaseSuccess" class="success-icon">
                   <check />
                 </el-icon>
@@ -399,7 +405,7 @@
 
           <!-- 长安链上链状态 -->
           <!-- 长安链状态显示 -->
-          <div class="modal-section" v-show="!loadingDatabase">
+          <div class="modal-section" v-show="!loadingHash">
             <transition name="fade" mode="out-in" appear>
               <div v-if="loadingBlockchain" key="blockchainPending">
                 <span class="pending-icon">...</span>
@@ -583,9 +589,23 @@
     </div>
 
     <div class="button-container">
-      <button @click="submitValuation" class="confirm-button">提交计算</button>
-      <button @click="closeValuationModal" class="cancel-button">关闭</button>
-    </div>
+
+  <button 
+    @click="submitValuation" 
+    class="btn-primary"
+  >
+    提交计算
+  </button>
+
+
+  <button 
+    @click="closeValuationModal" 
+    class="btn-secondary"
+  >
+    关闭
+  </button>
+
+</div>
   </div>
 </div>
 
@@ -633,16 +653,16 @@
         </tbody>
       </table>
     </div>
-    <div class="button-container">
-      <button
-        @click="saveCurrentValuationRecord"
-        class="confirm-button"
-        :disabled="valuationSaving || !valuationMethodResults.length || valuationMethodResults[0].valuation === null"
-      >
-        {{ valuationSaving ? '保存中...' : '保存估值记录' }}
-      </button>
-      <button @click="closeValuationResultModal" class="confirm-button">确认</button>
-    </div>
+    <div class="button-container result-buttons">
+
+  <button 
+    @click="closeValuationResultModal" 
+    class="btn-primary"
+  >
+    确认
+  </button>
+
+</div>
   </div>
 </div>
 
@@ -1879,11 +1899,14 @@ async generateOmniPrint() {
       throw new Error(res.data?.message || '数字指纹生成失败');
     }
 
-    this.form.fingerprint = res.data.fingerprint;
-    this.form.fingerprintBits = res.data.fingerprint_bits;
+    const sanitizedFingerprint = this.sanitizeFingerprintIdentifier(res.data.fingerprint);
+    if (!sanitizedFingerprint) {
+      throw new Error('数字指纹生成结果为空或包含非法字符');
+    }
 
-    // 如果你想完全替换原来的哈希标识，就把 hashValue 也设置成新指纹
-    this.hashValue = res.data.fingerprint;
+    this.form.fingerprint = sanitizedFingerprint;
+    this.form.fingerprintBits = res.data.fingerprint_bits;
+    this.hashValue = sanitizedFingerprint;
 
     this.$message?.success('数字指纹生成成功');
 
@@ -1914,6 +1937,10 @@ getIdentifierMethodLabel(method) {
   };
 
   return methodMap[method] || method || '';
+},
+
+sanitizeFingerprintIdentifier(value) {
+  return String(value || '').replace(/[^A-Za-z0-9]/g, '');
 },
 
 normalizeChainmakerResult(raw = {}, httpStatus = 200) {
@@ -2010,9 +2037,14 @@ async generateSelectedIdentifier() {
         throw new Error(res.data?.message || '数字指纹生成失败');
       }
 
-      this.form.fingerprint = res.data.fingerprint;
+      const sanitizedFingerprint = this.sanitizeFingerprintIdentifier(res.data.fingerprint);
+      if (!sanitizedFingerprint) {
+        throw new Error('数字指纹生成结果为空或包含非法字符');
+      }
+
+      this.form.fingerprint = sanitizedFingerprint;
       this.form.fingerprintBits = res.data.fingerprint_bits || '';
-      this.hashValue = res.data.fingerprint;
+      this.hashValue = sanitizedFingerprint;
       this.hashSuccess = true;
       return this.hashValue;
     } catch (err) {
@@ -2398,6 +2430,13 @@ async openConfirmation() {
 async confirmForm() {
   this.showUnifiedModal = true; // 显示统一模态框
   this.loadingHash = true; // 开始哈希值生成流程
+  this.loadingDatabase = false;
+  this.loadingBlockchain = false;
+  this.hashSuccess = false;
+  this.databaseSuccess = false;
+  this.blockchainSuccess = false;
+  this.errorMessage = '';
+  this.blockchainResponseData = {};
 
   /*console.log('选中的证书名称:', this.form.selectedCertificate); // 输出 selectedCertificate 的值
 
@@ -2453,43 +2492,32 @@ async confirmForm() {
     return;
   }
 
-  // 调用 saveToChainmaker() 方法，处理 Mint 接口和 IssueAsset 接口逻辑
-  this.loadingBlockchain = true; // 开始区块链操作流程
-  this.loadingDatabase = true; // 开始数据库保存流程
+  // 先执行上链，只有上链成功后才允许入库
+  this.loadingBlockchain = true;
+  this.loadingDatabase = false;
 
   try {
-    // 并行处理数据库保存和区块链操作
-    const [databaseResponse, chainmakerResponse] = await Promise.all([
-      this.saveToDatabase(), // 保存到数据库
-      this.saveToChainmaker(), // 调用 Mint 和 IssueAsset
-    ]);
+    const chainmakerResponse = await this.saveToChainmaker();
 
-    // 数据库保存结果处理
-    if (databaseResponse.status === 201) {
-      this.databaseSuccess = true;
-    } else {
-      this.databaseSuccess = false;
-      this.errorMessage = `数据库保存失败：${databaseResponse.message}`;
-    }
-
-    // 区块链调用结果处理（显示 Mint 的结果）
     if (chainmakerResponse.code === 0) {
       this.blockchainSuccess = true;
       this.blockchainResponseData = chainmakerResponse;
 
-      if (databaseResponse.status === 201) {
-        const catalogResponse = await this.publishToDataCatalog();
-        this.blockchainResponseData = {
-          ...this.blockchainResponseData,
-          catalogPublish: catalogResponse,
-        };
+      this.loadingDatabase = true;
+      const databaseResponse = await this.saveToDatabase();
 
-        if (catalogResponse.success) {
-          this.blockchainResponseData.message = `${this.blockchainResponseData.message}，目录发布成功`;
-        }
+      if (databaseResponse.status === 201) {
+        this.databaseSuccess = true;
+        this.publishToDataCatalog().catch((catalogError) => {
+          console.error('目录发布失败:', catalogError);
+        });
+      } else {
+        this.databaseSuccess = false;
+        this.errorMessage = `数据库保存失败：${databaseResponse.data?.message || databaseResponse.message || '未知错误'}`;
       }
     } else {
       this.blockchainSuccess = false;
+      this.databaseSuccess = false;
       this.errorMessage = `Mint 接口调用失败：${chainmakerResponse.message}`;
     }
   } catch (error) {
@@ -2899,17 +2927,14 @@ formData.append('trade_end_ts', tradeEndTs);
 
         // 检查响应是否包含正确的返回数据
         if (response.status === 201 && response.data && response.data.message) {
-          this.databaseSuccess = true;
-          this.errorMessage = '';  // 清除错误信息
+          this.errorMessage = '';
           return response; // 返回成功响应
         } else {
-          this.databaseSuccess = false;
           this.errorMessage = `保存失败，服务器返回错误状态码：${response.status}`;
           return response; // 返回失败响应
         }
       } catch (error) {
         console.error('请求错误:', error);
-        this.databaseSuccess = false;
 
         // 文件重复错误检查
         if (error.response && error.response.status === 409) {
@@ -2922,7 +2947,6 @@ formData.append('trade_end_ts', tradeEndTs);
         return { status: error.response ? error.response.status : 500, data: { message: this.errorMessage } };
       } finally {
         this.loadingDatabase = false;
-        this.loadingBlockchain = false;
       }
     }
     ,
@@ -3150,6 +3174,78 @@ formData.append('trade_end_ts', tradeEndTs);
 </script>
 
 <style scoped>
+/* ===== 估值弹窗按钮 ===== */
+
+.button-container {
+  display: flex;
+  justify-content: center;
+  gap: 18px;
+  margin-top: 25px;
+}
+
+
+.btn-primary,
+.btn-secondary {
+
+  height: 42px;
+  min-width: 120px;
+
+  border-radius: 8px;
+
+  font-size: 15px;
+  font-weight: 600;
+
+  cursor: pointer;
+
+  transition: all 0.2s ease;
+
+}
+
+
+/* 主按钮 */
+.btn-primary {
+
+  background: #2563eb;
+
+  color:white;
+
+  border:none;
+
+}
+
+
+.btn-primary:hover {
+
+  background:#1d4ed8;
+
+}
+
+
+/* 次按钮 */
+.btn-secondary {
+
+  background:white;
+
+  color:#374151;
+
+  border:1px solid #d1d5db;
+
+}
+
+
+.btn-secondary:hover {
+
+  background:#f3f4f6;
+
+}
+
+
+/* 结果页单按钮居中 */
+.result-buttons {
+
+  justify-content:center;
+
+}
 :root {
   --label-width: 170px;
   --control-height: 42px;

@@ -1,4 +1,14 @@
 module.exports = {
+  chainWebpack: config => {
+    config.module
+      .rule('js')
+      .use('babel-loader')
+      .tap(options => ({
+        ...options,
+        cacheDirectory: false,
+        cacheCompression: false,
+      }));
+  },
   devServer: {
     host: '0.0.0.0',
     port: 8085,
