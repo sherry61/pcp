@@ -62,7 +62,7 @@
                 
                  <!--<th>备注</th>-->
 <th v-if="isSeller">编辑</th>
-<th v-if="isSeller">授权</th>
+<th v-if="isSeller">代理托管</th>
                 </tr>
               </thead>
              <tbody>
@@ -109,7 +109,7 @@
   </button>
 </td>
 <td v-if="isSeller">
-  <button :disabled="item.isProxied === 0" @click="handleAuthorization(item)" class="edit-button">授权</button>
+  <button :disabled="item.isProxied === 0" @click="handleAuthorization(item)" class="edit-button">代理托管</button>
 </td>
 
   </tr>
@@ -123,12 +123,12 @@
           <!-- 授权弹窗 -->
           <div v-if="showAuthorizationModal" class="modal">
             <div class="modal-content wide-modal">
-              <h3>确认授权</h3>
-              <p>请填写授权码并确认授权数量</p>
+             <!-- <h3>确认授权</h3>-->
+              <p>请填写托管码并确认数量</p>
 
               <div class="form-row">
                 <div class="form-group">
-                  <label for="target-address">授权码</label>
+                  <label for="target-address">托管码</label>
                   <input type="text" id="target-address" v-model="authorizationData.targetAddress" placeholder="请输入目标地址"
                     required />
                 </div>
@@ -136,7 +136,7 @@
 
               <div class="form-row">
         <div class="form-group">
-          <label for="authorization-quantity">授权数量</label>
+          <label for="authorization-quantity">托管数量</label>
           <!-- 授权数量输入框根据是否为不可分割资产来禁用 -->
           <input type="number" id="authorization-quantity" v-model="authorizationData.authorizationQuantity"
             min="1" :disabled="isIndivisible(selectedAsset.industry)" required />
@@ -144,7 +144,7 @@
       </div>
 
               <div class="button-container">
-                <button class="confirm-button" @click="confirmAuthorization">确认授权</button>
+                <button class="confirm-button" @click="confirmAuthorization">确认代理托管</button>
                 <button class="cancel-button" @click="cancelAuthorization">取消</button>
               </div>
             </div>

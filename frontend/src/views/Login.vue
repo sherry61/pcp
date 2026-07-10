@@ -73,6 +73,15 @@ export default {
   }
 },
   methods: {
+    async fetchPamEntryUrl(token) {
+      const response = await axios.get("http://10.112.47.214:3000/api/pam-entry-url", {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      });
+      return response.data?.url;
+    },
+
     async login() {
       this.loading = true; // 启用加载状态
       try {
@@ -119,9 +128,11 @@ export default {
 } else if (
   this.loginRole === 'auditor'
 ) {
-
-  window.location.href =
-    'http://10.112.47.214:5173/auth/ssologin';
+  const pamEntryUrl = await this.fetchPamEntryUrl(response.data.token);
+  if (!pamEntryUrl) {
+    throw new Error('未获取到审计平台跳转地址');
+  }
+  window.location.href = pamEntryUrl;
 
 }
       } catch (error) {

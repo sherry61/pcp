@@ -116,14 +116,42 @@
                       </div>
 
                       <button
-                        class="confirm-delivery-btn"
-                        @click="confirmDelivery(asset)"
-                        :disabled="!asset.buyerDeliveryRequested || asset.confirmingDelivery"
-                        :title="asset.buyerDeliveryRequested ? '确认买家交付申请' : '买家尚未申请交付'"
-                      >
-                        <span v-if="asset.confirmingDelivery">确认中...</span>
-                        <span v-else>确认交付</span>
-                      </button>
+
+class="confirm-delivery-btn"
+
+@click="confirmDelivery(asset)"
+
+:disabled="
+!asset.buyerDeliveryRequested ||
+asset.confirmingDelivery ||
+asset.vmStatus==='running'
+"
+
+>
+
+
+<span v-if="asset.confirmingDelivery">
+
+虚机创建中...
+
+</span>
+
+
+<span v-else-if="asset.vmStatus==='running'">
+
+已启动
+
+</span>
+
+
+<span v-else>
+
+确认交付
+
+</span>
+
+
+</button>
 
                       <div v-if="asset.deliveryConfirmMsg" class="tiny-msg">
                         {{ asset.deliveryConfirmMsg }}
@@ -679,8 +707,8 @@ if (contractObj.transaction_id) formData.append('transactionId', contractObj.tra
             );
             // 约定：{ success:true, requested:true/false, status:'pending|approved|...' }
             const requested = !!r?.data?.requested;
-           const status = String(r?.data?.status || '').toUpperCase(); // ✅ 统一转大写
-           asset.buyerDeliveryRequested = requested && status === 'PENDING';
+           //const status = String(r?.data?.status || '').toUpperCase(); // ✅ 统一转大写
+           asset.buyerDeliveryRequested =requested;
             // 如果你希望“approved 后也显示已申请”，可以改成：
             // asset.buyerDeliveryRequested = requested;
           } catch (e) {
@@ -721,45 +749,101 @@ if (contractObj.transaction_id) formData.append('transactionId', contractObj.tra
       }
     },*/
 
-async confirmDelivery(asset) {
-  if (!asset?.transaction_id) return;
+async confirmDelivery(asset){
 
-  asset.confirmingDelivery = true;
-  asset.deliveryConfirmMsg = '';
 
-  try {
-    const response = await axios.post(
-      'http://10.112.47.214:3000/api/delivery/secure-confirm',
-      {
-        transactionId: asset.transaction_id
-      },
-      {
-        timeout: 300000
-      }
-    );
+if(!asset?.transaction_id)
+return;
 
-    if (!response.data?.success) {
-      throw new Error(response.data?.message || '确认交付失败');
-    }
 
-    asset.deliveryConfirmMsg = `虚机已启动：${response.data.vmId}`;
-    asset.vmId = response.data.vmId;
-    asset.vmStatus = response.data.status;
+asset.confirmingDelivery=true;
 
-    this.$message.success('确认交付成功，虚机已启动，密钥协商已完成');
 
-    await this.fetchRequestedAssets();
-  } catch (error) {
-    const msg =
-      error.response?.data?.message ||
-      error.message ||
-      '确认交付失败';
+try{
 
-    asset.deliveryConfirmMsg = msg;
-    this.$message.error(msg);
-  } finally {
-    asset.confirmingDelivery = false;
-  }
+
+const response = await axios.post(
+
+'http://10.112.47.214:3000/api/delivery/secure-confirm',
+
+{
+ transactionId:
+ asset.transaction_id
+},
+
+{
+ timeout:300000
+}
+
+);
+
+
+
+if(!response.data.success){
+
+throw new Error(
+response.data.message
+);
+
+}
+
+
+
+asset.deliveryConfirmMsg =
+`虚机启动成功 VM:${response.data.vmId}`;
+
+
+asset.vmId =
+response.data.vmId;
+
+
+asset.vmStatus =
+response.data.status;
+
+
+
+this.$message.success(
+'确认交付成功，虚机已启动'
+);
+
+
+
+/*
+刷新卖家列表
+重新查询申请状态
+*/
+
+await this.fetchRequestedAssets();
+
+
+
+}catch(error){
+
+
+console.error(
+'确认交付失败:',
+error
+);
+
+
+this.$message.error(
+error.response?.data?.message ||
+error.message ||
+'确认失败'
+);
+
+
+
+}
+finally{
+
+
+asset.confirmingDelivery=false;
+
+
+}
+
+
 },
 
     // ====== 核心：拉卖家交易列表（沿用你原来 fetchRequestedAssets 的思路）======

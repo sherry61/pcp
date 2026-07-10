@@ -49,14 +49,16 @@
             <template v-slot="scope">
               <!-- ✅ 申请交付：永远显示（可下载也保留） -->
               <el-button
-                size="mini"
-                type="primary"
-                :loading="scope.row.requesting"
-                :disabled="scope.row.requesting"
-                @click="openRequestDialog(scope.row)"
-              >
-                {{ scope.row.requestBtnText }}
-              </el-button>
+  size="mini"
+  type="primary"
+  :loading="scope.row.requesting"
+  :disabled="scope.row.requestStatus==='PENDING'"
+  @click="openRequestDialog(scope.row)"
+>
+  {{scope.row.requestStatus==='PENDING'
+      ? '已申请'
+      : '申请交付'}}
+</el-button>
 
               <!-- ✅ 下载：只有可下载才可点 -->
               <el-button
@@ -270,12 +272,11 @@
                 取消
               </el-button>
               <el-button
-                type="primary"
-                :loading="requestSubmitting"
-                @click="submitRequestDelivery"
-              >
-                提交申请
-              </el-button>
+ type="primary"
+ :loading="requestSubmitting"
+ @click="submitRequestDelivery(requestForm)">
+提交申请
+</el-button>
             </span>
           </template>
         </el-dialog>
@@ -303,6 +304,7 @@ export default {
 
       isLoading: false,
       downloadList: [],
+      deliveryRequested:false,
 
       // ====== 弹窗相关 ======
       requestDialogVisible: false,
@@ -565,7 +567,7 @@ export default {
     /* =========================
      * 核心刷新逻辑
      * ========================= */
-    async refreshDownloadList() {
+    /*async refreshDownloadList() {
       this.isLoading = true;
       try {
         const buyerAddresses = await this.getAllCertAddresses();
@@ -717,7 +719,548 @@ await Promise.all(
       } finally {
         this.isLoading = false;
       }
-    },
+    },*/
+
+    async refreshDownloadList() {
+
+  this.isLoading = true;
+
+
+  try {
+
+
+    const buyerAddresses = await this.getAllCertAddresses();
+
+
+
+    // =========================================
+    // 1) 获取买家所有已确认交易
+    // =========================================
+
+    const allTxs = [];
+
+
+    for (const addr of buyerAddresses) {
+
+
+      const txRes = await axios.get(
+        `http://10.112.47.214:3000/api/buyer-transaction-status/${addr}`
+      );
+
+
+      const txs = txRes?.data?.transactions || [];
+
+
+
+      txs
+        .filter(tx => tx.status === '已确认')
+        .forEach(tx => {
+
+
+          allTxs.push({
+
+            transaction_id: tx.transaction_id,
+
+            asset_id: tx.asset_id,
+
+            asset_name: `${tx.asset_id}`,
+
+            seller_address: tx.seller_address,
+
+            buyer_address: tx.buyer_address
+
+          });
+
+
+        });
+
+
+    }
+
+
+
+    // 去重
+
+    const uniqTxs = [];
+
+    const seen = new Set();
+
+
+    for (const t of allTxs) {
+
+
+      const k = String(t.transaction_id);
+
+
+      if (!seen.has(k)) {
+
+        seen.add(k);
+
+        uniqTxs.push(t);
+
+      }
+
+    }
+
+
+
+
+
+    // =========================================
+    // 2) 查询可导出结果
+    // =========================================
+
+    const eligibleMap = new Map();
+
+
+
+    for (const addr of buyerAddresses) {
+
+
+      try {
+
+
+        const r = await axios.get(
+          'http://10.112.47.214:3000/api/vm/export/eligible',
+          {
+            params:{
+              vmId:this.activeVmId,
+              buyerAddress:addr
+            }
+          }
+        );
+
+
+
+        if(
+          r.data?.success &&
+          Array.isArray(r.data.items)
+        ){
+
+          r.data.items.forEach(item=>{
+
+
+            const tid = String(
+              item.transaction_id ??
+              item.transactionId ??
+              ''
+            );
+
+
+            if(tid){
+
+              eligibleMap.set(
+                tid,
+                item
+              );
+
+            }
+
+
+          });
+
+
+        }
+
+
+
+      }catch(e){
+
+
+        console.warn(
+          '[eligible]查询失败:',
+          e?.message || e
+        );
+
+
+      }
+
+
+    }
+
+
+
+
+
+    // =========================================
+    // 3) 查询交付历史
+    // =========================================
+
+    const deliveryInfoMap = new Map();
+
+
+
+    await Promise.all(
+
+      uniqTxs.map(async(tx)=>{
+
+
+        try{
+
+
+          const tid =
+            String(tx.transaction_id);
+
+
+
+          const detailRes =
+            await axios.get(
+
+              `http://10.112.47.214:3000/api/get-transaction-detail/${tid}`
+
+            );
+
+
+
+          const t =
+            detailRes?.data?.transaction;
+
+
+
+          if(!t)
+            return;
+
+
+
+
+          let historyArr=[];
+
+
+
+          if(Array.isArray(t.delivery_history)){
+
+
+            historyArr=t.delivery_history;
+
+
+          }else if(
+
+            typeof t.delivery_history==='string'
+            &&
+            t.delivery_history.trim().startsWith('[')
+
+          ){
+
+
+            try{
+
+              historyArr=
+                JSON.parse(t.delivery_history);
+
+
+            }catch(e){
+              console.error(
+      '申请交付失败',
+      e
+    );
+            }
+
+          }
+
+
+
+
+
+          historyArr =
+            historyArr.map((rec,idx)=>({
+
+
+              delivery_index:
+                rec.delivery_index ??
+                rec.index ??
+                rec.seq ??
+                idx+1,
+
+
+              delivered_at:
+                rec.delivered_at ||
+                rec.delivery_time ||
+                rec.time ||
+                rec.created_at ||
+                rec.timestamp ||
+                null
+
+
+            }));
+
+
+
+
+
+          deliveryInfoMap.set(
+            tid,
+            {
+
+
+              deliveryCount:
+
+                typeof t.delivery_count === 'number'
+
+                ? t.delivery_count
+
+                : historyArr.length,
+
+
+
+              deliveryLimit:
+
+                typeof t.delivery_limit === 'number'
+
+                ? t.delivery_limit
+
+                : 10,
+
+
+
+              deliveryHistory:historyArr
+
+
+            }
+          );
+
+
+
+        }catch(e){
+
+
+          console.warn(
+            '查询交付历史失败:',
+            e?.message || e
+          );
+
+
+        }
+
+
+      })
+
+    );
+
+
+
+
+
+    // =========================================
+    // 4) 新增：查询交付申请状态
+    // =========================================
+
+    const requestStatusMap = new Map();
+
+
+
+    await Promise.all(
+
+      uniqTxs.map(async(tx)=>{
+
+
+        try{
+
+
+          const tid =
+            String(tx.transaction_id);
+
+
+
+          const r = await axios.get(
+
+            `http://10.112.47.214:3000/api/delivery/seller/request-status/${tid}`
+
+          );
+
+
+
+          if(r.data?.requested){
+
+
+            requestStatusMap.set(
+
+              tid,
+
+              r.data.status
+
+            );
+
+
+          }
+
+
+
+        }catch(e){
+
+
+          // 没有申请记录忽略
+
+        }
+
+
+
+      })
+
+    );
+
+
+
+
+
+
+    // =========================================
+    // 5) 合并最终列表
+    // =========================================
+
+    this.downloadList = uniqTxs.map(tx=>{
+
+
+      const tid =
+        String(tx.transaction_id);
+
+
+
+      const eligible =
+        eligibleMap.get(tid);
+
+
+
+      const canDownload =
+        !!eligible;
+
+
+
+      const deliveryInfo =
+        deliveryInfoMap.get(tid)
+        ||
+        {
+
+          deliveryCount:0,
+
+          deliveryLimit:10,
+
+          deliveryHistory:[]
+
+        };
+
+
+
+
+      const requestStatus =
+        requestStatusMap.get(tid)
+        ||
+        'NONE';
+
+
+
+
+
+      let requestBtnText='申请交付';
+
+
+
+      if(requestStatus==='PENDING'){
+
+        requestBtnText='已申请';
+
+
+      }else if(requestStatus==='RUNNING'){
+
+
+        requestBtnText='交付中';
+
+
+      }else if(requestStatus==='SUCCESS'){
+
+
+        requestBtnText='已完成';
+
+
+      }else if(canDownload){
+
+
+        requestBtnText='再次申请交付';
+
+
+      }
+
+
+
+
+      return {
+
+
+        ...tx,
+
+
+        ...deliveryInfo,
+
+
+
+        canDownload,
+
+
+        statusText:
+
+          canDownload
+
+          ? '可下载'
+
+          : '交付中',
+
+
+
+        exportPayload:
+          eligible || null,
+
+
+
+        // 新增状态
+
+        requestStatus,
+
+
+        requestBtnText,
+
+
+
+        requesting:false,
+
+
+        downloading:false
+
+
+
+      };
+
+
+
+    });
+
+
+
+
+
+  }catch(e){
+
+
+    console.error(
+      '刷新买家交付列表失败:',
+      e
+    );
+
+
+    this.$message.error(
+      '加载交付列表失败'
+    );
+
+
+
+  }finally{
+
+
+    this.isLoading=false;
+
+
+  }
+
+
+},
 
     /* =========================
      * ✅ 打开申请交付弹窗
@@ -754,41 +1297,84 @@ await Promise.all(
     /* =========================
      * ✅ 提交申请交付（调用新接口 /api/delivery/request-vm）
      * ========================= */
-    async submitRequestDelivery(asset) {
+   
+
+async submitRequestDelivery(form) {
+
   try {
+
     const response = await axios.post(
       'http://10.112.47.214:3000/api/delivery/request-secure',
       {
-        transactionId: asset.transaction_id,
-        buyerAddress: asset.buyer_address,
-        sellerAddress: asset.seller_address,
-        assetId: asset.file_hash,
-        vmCpu: 4,
-        vmMemoryMb: 4096
-      },
-      {
-        timeout: 30000
+        transactionId: String(form.transaction_id),
+
+        buyerAddress: form.buyer_address,
+
+        sellerAddress: form.seller_address,
+
+        assetId: this.currentRowRef.asset_id,
+
+        vmCpu: Number(form.vm_cpu),
+
+        vmMemoryMb: Number(form.vm_memory_mb)
       }
     );
 
-    if (!response.data?.success) {
-      throw new Error(response.data?.message || '申请交付失败');
+
+    if (!response.data.success) {
+
+      throw new Error(
+        response.data.message || '申请失败'
+      );
+
     }
 
-    this.$message.success('交付申请已提交，等待卖家确认');
 
-    if (this.fetchPurchasedAssets) {
-      await this.fetchPurchasedAssets();
+    // ==============================
+    // 新增：更新当前资产状态
+    // ==============================
+
+    if (this.currentRowRef) {
+
+      this.currentRowRef.deliveryRequested = true;
+
+      this.currentRowRef.requestBtnText = '已申请';
+
+      this.currentRowRef.requestStatus = 'PENDING';
+
     }
-  } catch (error) {
-    this.$message.error(
-      error.response?.data?.message ||
-      error.message ||
-      '申请交付失败'
+
+
+    this.$message.success(
+      '交付申请已提交，等待卖家确认'
     );
-  }
-},
 
+
+    this.requestDialogVisible = false;
+
+
+    // 刷新列表
+    await this.refreshDownloadList();
+
+
+  } catch(e) {
+
+
+    console.error(
+      '申请交付失败',
+      e
+    );
+
+
+    this.$message.error(
+      e.response?.data?.message ||
+      e.message ||
+      '申请失败'
+    );
+
+  }
+
+},
     /* =========================
      * 下载逻辑（复用你原系统）
      * ========================= */

@@ -252,7 +252,7 @@
                 <option value="HE">同态加密</option>
                 <option value="PRE">代理重加密</option>
                 <option value="FL">联邦学习</option>
-                <option value="MPC">安全多方计算</option>
+                <option value="MPC">多方安全计算</option>
                 <option value="TEE">可信执行环境</option>
               </select>
             </div>
@@ -261,19 +261,44 @@
 
 
  <!-- 选择模型（来自 model_type 非空的资产） -->
-<div class="form-row">
-  <label for="model-select"><strong>选择模型：</strong></label>
-  <select id="model-select" v-model="selectedModelHash">
+<!-- 只有TEE模式显示模型选择 -->
+<div 
+  class="form-row"
+  v-if="selectedPcType === 'TEE'"
+>
+  <label for="model-select">
+    <strong>选择模型：</strong>
+  </label>
+
+  <select 
+    id="model-select" 
+    v-model="selectedModelHash"
+  >
     <option value="">请选择模型</option>
-    <option v-for="m in modelOptions" :key="m.file_hash" :value="m.file_hash">
+
+    <option 
+      v-for="m in modelOptions" 
+      :key="m.file_hash" 
+      :value="m.file_hash"
+    >
       {{ m.asset_name }}（{{ m.model_type }}）
     </option>
+
   </select>
 
-  <small v-if="loadingModels">正在加载模型列表...</small>
-  <small v-if="!loadingModels && modelOptions.length === 0" class="text-danger">
-    暂无可选模型（model_type 为空的不会出现在此处）
+
+  <small v-if="loadingModels">
+    正在加载模型列表...
   </small>
+
+
+  <small 
+    v-if="!loadingModels && modelOptions.length === 0" 
+    class="text-danger"
+  >
+    暂无可选模型
+  </small>
+
 </div>
 
 

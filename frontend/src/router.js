@@ -20,6 +20,7 @@ import DeliverySeller2 from './views/DeliverySeller2.vue'
 import DeliveryBuyer from './views/DeliveryBuyer2.vue'
 import DigitalContract from './views/DigitalContract.vue'
 import PenetrableSupervision from './views/PenetrableSupervision.vue'
+import ServiceManagement from './views/ServiceManagement.vue'
 import MarketSeller from './views/MarketSeller1.vue'
 
 const routes = [
@@ -62,6 +63,7 @@ const routes = [
   //{ path: '/delivery/buyer', name: 'DeliveryBuyer', component: DeliveryBuyer, meta: { requiresAuth: true } },
   { path: '/contract', name: 'DigitalContract', component: DigitalContract, meta: { requiresAuth: true }},
   { path: '/supervision', name: 'Supervision', component: PenetrableSupervision, meta: { requiresAuth: false }},
+  { path: '/services', name: 'ServiceManagement', component: ServiceManagement, meta: { requiresAuth: false }},
   {
   path: '/delivery',
   /*redirect: () => {

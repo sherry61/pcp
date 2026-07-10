@@ -870,8 +870,7 @@ closeCrossSearchModal() {
 },
 
 async crossSearchAssets() {
-  // ✅ MOD: 改为调用目录链后端（catalog_contract 对应的服务）
-  const kw = (this.crossSearchTerm || '').trim();
+  const kw = (this.crossSearchTerm || '').trim().toLowerCase();
   this.crossSearched = true;
 
   if (!kw) {
@@ -880,50 +879,112 @@ async crossSearchAssets() {
   }
 
   try {
-    // ✅ MOD: 调用你文档里的「按 name 在所有 org 中查询」
-    const res = await axios.get('/catalogapi/contract/datacatalogs/name/all', {
-  params: { name: kw }
-});
+    const allCatalogs = [];
+    let pageToken = '';
+    const seenTokens = new Set();
 
-    // 兼容你文档返回结构：{status, code, message, data:{result:[...]}}
-    const list = res?.data?.data?.result || [];
+    // 后端文档说明 page_size 最大 50
+    // 为避免死循环，最多翻 20 页；如果数据更多，可以调大 maxPages
+    const maxPages = 20;
 
-    // ✅ MOD: 后端会返回“所有版本”，前端筛选每个 id 的最新版本（version 最大）
+    for (let page = 0; page < maxPages; page++) {
+      const params = {
+        page_size: '50'
+      };
+
+      if (pageToken) {
+        params.page_token = pageToken;
+      }
+
+      const res = await axios.get('/catalogapi/contract/datacatalog/list', {
+        params
+      });
+
+      console.log('目录链列表原始返回:', res.data);
+
+      const result = res?.data?.data?.result;
+
+      // 文档结构：data.result.list
+      const list = Array.isArray(result?.list) ? result.list : [];
+
+      allCatalogs.push(...list);
+
+      const nextToken = result?.next_page_token;
+
+      if (!nextToken || seenTokens.has(nextToken)) {
+        break;
+      }
+
+      seenTokens.add(nextToken);
+      pageToken = nextToken;
+    }
+
+    const matched = allCatalogs.filter(item => {
+      const name = String(item?.name || '').toLowerCase();
+      const code = String(item?.code || '').toLowerCase();
+      const id = String(item?.id || '').toLowerCase();
+      const remark = String(item?.remark || '').toLowerCase();
+      const orgId = String(item?.orgId || '').toLowerCase();
+      const orgDID = String(item?.orgDID || '').toLowerCase();
+      const platformName = String(item?.platform_name || item?.PlatformName || '').toLowerCase();
+
+      return name.includes(kw)
+        || code.includes(kw)
+        || id.includes(kw)
+        || remark.includes(kw)
+        || orgId.includes(kw)
+        || orgDID.includes(kw)
+        || platformName.includes(kw);
+    });
+
+    // 保留同一 id 的最高版本；同时排除逻辑删除 status=-1
     const latestById = new Map();
-    for (const item of list) {
-      const id = item?.id;
+
+    for (const item of matched) {
+      const id = item?.id || item?.code || item?.name;
       if (!id) continue;
 
+      if (Number(item.status) === -1) {
+        continue;
+      }
+
       const prev = latestById.get(id);
-      if (!prev || (item.version ?? 0) > (prev.version ?? 0)) {
+      if (!prev || Number(item.version ?? 0) > Number(prev.version ?? 0)) {
         latestById.set(id, item);
       }
     }
 
-    // ✅ MOD: 统一映射成弹窗表格需要的字段（尽量复用你模板里的字段名）
     this.crossSearchResults = Array.from(latestById.values()).map(dc => ({
-      // 你表格里用 a.asset_name / a.file_hash，所以这里映射过去
-      asset_name: dc.name,
-      file_hash: dc.id,
+      // 弹窗表格字段
+      asset_name: dc.name || '',
+      file_hash: dc.id || dc.code || '',
 
-      // 平台/链展示用
-      orgDID: dc.orgDID,
-      orgId: dc.orgId,
-      chain_name: 'ChainMaker (chain1)',
+      // 平台/链展示字段
+      orgDID: dc.orgDID || '',
+      orgId: dc.orgId || '',
+      chain_name: dc.chain_type || 'ChainMaker (chain1)',
 
-      // 额外保留：后续右侧调配可能用得上
-      code: dc.code,
-      remark: dc.remark,
-      publishTime: dc.publishTime,
-      version: dc.version,
-      status: dc.status,
-      itemVOList: dc.itemVOList
+      // 后续调配可能用到的字段
+      code: dc.code || '',
+      remark: dc.remark || '',
+      publishTime: dc.publishTime || '',
+      version: dc.version ?? '',
+      status: dc.status ?? '',
+      itemVOList: dc.itemVOList || [],
+
+      // 文档返回里有这些字段，建议保留
+      platform_name: dc.platform_name || '',
+      platform_url: dc.platform_url || '',
+      chain_type: dc.chain_type || ''
     }));
 
+    if (this.crossSearchResults.length === 0) {
+      this.$message?.warning?.('未在目录链中检索到匹配资产');
+    }
   } catch (e) {
     console.error('跨平台检索（目录链）失败:', e);
     this.crossSearchResults = [];
-    this.$message?.error?.('跨平台检索失败：请检查目录链后端 http://10.112.47.214:8008 是否已启动');
+    this.$message?.error?.('跨平台检索失败：请检查目录链后端或代理配置');
   }
 },
 

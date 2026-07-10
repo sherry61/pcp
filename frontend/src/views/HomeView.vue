@@ -72,7 +72,7 @@
 
     <div class="industry-grid">
       <div
-        v-for="item in industryStats"
+        v-for="item in displayIndustryStats"
         :key="item.industryName"
         class="industry-chip"
       >
@@ -285,6 +285,13 @@ computed: {
     }
 
     return 'detail-increase';
+  },
+
+  displayIndustryStats() {
+    return this.industryStats.filter(item => {
+      return item.industryName &&
+             item.industryName !== '未分类';
+    });
   }
 }
 

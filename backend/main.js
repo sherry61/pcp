@@ -61,10 +61,22 @@ const DATA_CATALOG_PLATFORM_DID =
   process.env.DATA_CATALOG_PLATFORM_DID || 'did:web:data.web';
 const DATA_CATALOG_PLATFORM_URL =
   process.env.DATA_CATALOG_PLATFORM_URL || 'http://10.112.47.214';
+const PAM_WEB_BASE_URL =
+  process.env.PAM_WEB_BASE_URL || 'http://10.112.47.214:5174';
+const PAM_API_BASE_URL =
+  process.env.PAM_API_BASE_URL || 'http://10.112.47.214:8140';
+const PAM_VIEW_CLIENT_ID =
+  process.env.PAM_VIEW_CLIENT_ID || 'pam-web-dev-viewer-20260622';
+const PAM_VIEW_CLIENT_SECRET =
+  process.env.PAM_VIEW_CLIENT_SECRET || 'fAuslY49H9rKCIghfdY72NVu4WNDadR8-AEA_QBLr2I';
+const PAM_VIEW_SCOPE =
+  process.env.PAM_VIEW_SCOPE || 'dashboard';
+const PAM_VIEW_SESSION_ENDPOINT =
+  process.env.PAM_VIEW_SESSION_ENDPOINT || '/web/view-sessions';
 
 const VM_HOST_BASE_URL = 'http://10.112.14.6:8000';
-const VM_TOKEN = process.env.VM_TOKEN ||
-'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx';
+const VM_TOKEN =
+'a3051629280e66304271b04abb28e9e3b45cb887c67a6030a01cb4b4c2f48f93';
 const VM_SERVICE_BASE_URL = 'http://虚机服务IP:18080/api';
 
 const SUMMARY_RECORDS_DIR =
@@ -101,6 +113,88 @@ function buildDataCatalogKey(identifier) {
   // ChainMaker 目录合约用 id 作为 state key。
   // 原始数字指纹包含 "=" 等字符且长度过长，直接写入会触发合约调用失败。
   return `DC_${digest.slice(0, 32)}`;
+}
+
+function signPamViewSessionRequest(method, pathWithQuery, timestampMs, nonceValue, requestBody, secret) {
+  const bodyHash = crypto.createHash('sha256').update(requestBody).digest('hex');
+  const signingPayload = [
+    method.toUpperCase(),
+    pathWithQuery,
+    String(timestampMs),
+    nonceValue,
+    bodyHash
+  ].join('\n');
+
+  return crypto
+    .createHmac('sha256', secret)
+    .update(signingPayload)
+    .digest('hex');
+}
+
+async function createPamEntryUrl({ scope = PAM_VIEW_SCOPE, eventId = '', contractId = '' } = {}) {
+  if (!PAM_VIEW_CLIENT_SECRET) {
+    throw new Error('PAM_VIEW_CLIENT_SECRET 未配置');
+  }
+
+  const payload = {
+    scope,
+    access_ttl_seconds: 900,
+    refresh_idle_ttl_seconds: 2592000
+  };
+  if (eventId) {
+    payload.event_id = eventId;
+  }
+  if (contractId) {
+    payload.contract_id = contractId;
+  }
+
+  const requestUrl = new URL(PAM_VIEW_SESSION_ENDPOINT, `${PAM_API_BASE_URL.replace(/\/$/, '')}/`);
+  const pathWithQuery = `${requestUrl.pathname}${requestUrl.search}`;
+  const body = Buffer.from(JSON.stringify(payload));
+  const timestamp = Date.now();
+  const nonce = crypto.randomUUID();
+  const signature = signPamViewSessionRequest(
+    'POST',
+    pathWithQuery,
+    timestamp,
+    nonce,
+    body,
+    PAM_VIEW_CLIENT_SECRET
+  );
+
+  const response = await fetch(requestUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-client-id': PAM_VIEW_CLIENT_ID,
+      'x-timestamp': String(timestamp),
+      'x-nonce': nonce,
+      'x-signature': signature
+    },
+    body
+  });
+
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok || result.code !== 0 || !result.data?.access_token || !result.data?.refresh_token) {
+    throw new Error(result.message || `PAM view session request failed: HTTP ${response.status}`);
+  }
+
+  const data = result.data;
+  const hash = new URLSearchParams({
+    access_token: data.access_token,
+    refresh_token: data.refresh_token,
+    access_expires_at: data.access_expires_at || '',
+    refresh_expires_at: data.refresh_expires_at || '',
+    scope: data.scope || scope
+  });
+  if (data.event_id) {
+    hash.set('event_id', data.event_id);
+  }
+  if (data.contract_id) {
+    hash.set('contract_id', data.contract_id);
+  }
+
+  return `${PAM_WEB_BASE_URL.replace(/\/$/, '')}/audit#${hash.toString()}`;
 }
 
 // 把 db.query 封装成 Promise，方便用 async/await
@@ -1428,6 +1522,29 @@ app.post('/api/login', (req, res) => {
     });
 });
 
+app.get('/api/pam-entry-url', async (req, res) => {
+    const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.headers.token || req.query.token;
+
+    if (!token) {
+        return res.status(401).json({ error: '缺少登录令牌' });
+    }
+
+    try {
+        jwt.verify(token, secretKey);
+
+        const url = await createPamEntryUrl({
+            scope: String(req.query.scope || PAM_VIEW_SCOPE),
+            eventId: String(req.query.event_id || ''),
+            contractId: String(req.query.contract_id || '')
+        });
+
+        res.json({ message: '获取审计跳转地址成功', url });
+    } catch (error) {
+        console.error('获取 PAM 跳转地址失败:', error);
+        res.status(500).json({ error: error.message || '获取审计跳转地址失败' });
+    }
+});
+
 
 // 查询资产的API端点
 app.get('/api/query-asset-hash', (req, res) => {
@@ -1718,7 +1835,7 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
                 can_sell_asset, can_sell_view, can_sell_process, allow_resale,
                 trade_location, trade_start_ts, trade_end_ts,
                 allow_authorize, allow_supervision, model_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const values = [
@@ -3075,7 +3192,7 @@ app.post('/api/delivery/request-vm', (req, res) => {
 });
 
 // ============ [卖方] 查询某笔交易是否存在交付申请（用于按钮是否可点）============
-app.get('/api/delivery/seller/request-status/:transaction_id', (req, res) => {
+/*app.get('/api/delivery/seller/request-status/:transaction_id', (req, res) => {
   const transaction_id = req.params.transaction_id;
 
   if (!transaction_id) {
@@ -3125,6 +3242,98 @@ app.get('/api/delivery/seller/request-status/:transaction_id', (req, res) => {
       request: r
     });
   });
+});*/
+app.get('/api/delivery/seller/request-status/:transaction_id', (req,res)=>{
+
+  const transaction_id=req.params.transaction_id;
+
+
+  if(!transaction_id){
+    return res.status(400).json({
+      message:'缺少 transaction_id 参数'
+    });
+  }
+
+
+  const sql=`
+
+  SELECT
+    id,
+    transaction_id,
+    buyer_address,
+    seller_address,
+    asset_id,
+    vm_cpu,
+    vm_memory_mb,
+    status,
+    step,
+    created_at,
+    updated_at
+
+  FROM delivery_secure_jobs
+
+  WHERE transaction_id=?
+
+  ORDER BY id DESC
+
+  LIMIT 1
+
+  `;
+
+
+  db.query(sql,[String(transaction_id)],(err,results)=>{
+
+
+    if(err){
+
+      console.error(
+        '查询 delivery_secure_jobs失败:',
+        err
+      );
+
+      return res.status(500).json({
+        message:'数据库查询失败'
+      });
+
+    }
+
+
+
+    if(!results || results.length===0){
+
+      return res.json({
+
+        message:'暂无申请',
+
+        requested:false,
+
+        status:'NONE'
+
+      });
+
+    }
+
+
+
+    const r=results[0];
+
+
+    return res.json({
+
+      message:'查询成功',
+
+      requested:true,
+
+      status:r.status,
+
+      request:r
+
+    });
+
+
+  });
+
+
 });
 
 
@@ -3429,7 +3638,10 @@ async function negotiateKey(vmId, purpose) {
   };
 }
 
-async function createVm({ cpu = 4, memoryMb = 4096 }) {
+async function createVm({
+  cpu = 4,
+  memoryMb = 4096
+}) {
   const response = await axios.post(
     `${VM_HOST_BASE_URL}/api/v2/vms`,
     {
@@ -3438,15 +3650,19 @@ async function createVm({ cpu = 4, memoryMb = 4096 }) {
     },
     {
       headers: vmHeaders(),
-      timeout: 120000,
-      validateStatus: () => true
+      timeout:120000,
+      validateStatus:()=>true
     }
   );
+  if(
+    !response.data?.success ||
+    !response.data?.vmId
+  ){
 
-  if (!response.data?.success || !response.data?.vmId) {
-    throw new Error(`虚机创建失败：${JSON.stringify(response.data)}`);
+    throw new Error(
+      `虚机创建失败:${JSON.stringify(response.data)}`
+    );
   }
-
   return response.data;
 }
 
@@ -3517,7 +3733,15 @@ app.post('/api/delivery/request-secure', async (req, res) => {
         vmMemoryMb || 4096
       ]
     );
-
+await db.query(
+`
+UPDATE transactions
+SET delivery_request_status='pending'
+WHERE transaction_id=?
+`,
+[
+ transactionId
+]);
     return res.json({
       success: true,
       message: '交付申请已提交'
@@ -3531,7 +3755,7 @@ app.post('/api/delivery/request-secure', async (req, res) => {
   }
 });
 
-app.post('/api/delivery/secure-confirm', async (req, res) => {
+/*app.post('/api/delivery/secure-confirm', async (req, res) => {
   const { transactionId } = req.body;
 
   if (!transactionId) {
@@ -3561,16 +3785,6 @@ app.post('/api/delivery/secure-confirm', async (req, res) => {
       });
     }
 
-    await updateJob(transactionId, {
-      status: 'RUNNING',
-      step: 'KEY_0_NEGOTIATING',
-      last_error: null
-    });
-
-    const key0 = await negotiateKey(
-      `pre-${transactionId}`,
-      'KEY_0_MODEL_IMAGE'
-    );
 
     await updateJob(transactionId, {
       key0_status: 'READY',
@@ -3639,6 +3853,207 @@ app.post('/api/delivery/secure-confirm', async (req, res) => {
       message: err.message || '安全交付流程失败'
     });
   }
+});*/
+app.post('/api/delivery/secure-confirm', async (req, res) => {
+
+  const { transactionId } = req.body;
+
+
+  if (!transactionId) {
+
+    return res.status(400).json({
+      success:false,
+      message:'缺少 transactionId'
+    });
+
+  }
+
+
+  try {
+
+
+    // 查询交付任务
+    const results = await dbQuery(
+      `
+      SELECT *
+      FROM delivery_secure_jobs
+      WHERE transaction_id = ?
+      LIMIT 1
+      `,
+      [transactionId]
+    );
+
+
+    const job = results[0];
+
+
+    if (!job) {
+
+      return res.status(404).json({
+
+        success:false,
+
+        message:'未找到买家交付申请'
+
+      });
+
+    }
+
+
+
+    /*
+     * =====================
+     * 1. 创建虚机
+     * =====================
+     */
+
+
+    await updateJob(transactionId, {
+
+      status:'RUNNING',
+
+      step:'VM_CREATING',
+
+      last_error:null
+
+    });
+
+
+
+    const createResult = await createVm({
+
+      cpu: job.vm_cpu || 4,
+
+      memoryMb: job.vm_memory_mb || 4096
+
+    });
+
+
+
+    const vmId = createResult.vmId;
+
+
+
+    await updateJob(transactionId, {
+
+
+      vm_id: vmId,
+
+
+      vm_status:
+        createResult.status || 'created',
+
+
+      step:'VM_STARTING'
+
+
+    });
+
+
+
+
+    /*
+     * =====================
+     * 2. 启动虚机
+     * =====================
+     */
+
+
+    const startResult = await startVm(vmId);
+
+
+
+    await updateJob(transactionId, {
+
+
+      vm_status:
+        startResult.status || 'running',
+
+
+      status:
+        'VM_RUNNING',
+
+
+      step:
+        'VM_STARTED'
+
+
+    });
+
+
+
+
+    return res.json({
+
+      success:true,
+
+
+      message:
+      '虚机创建并启动成功',
+
+
+      transactionId,
+
+
+      vmId,
+
+
+      status:
+      'VM_RUNNING',
+
+
+      createResult,
+
+
+      startResult
+
+
+    });
+
+
+
+  } catch(err) {
+
+
+    console.error(
+      '[secure-confirm error]',
+      err
+    );
+
+
+
+    await updateJob(transactionId, {
+
+
+      status:'FAILED',
+
+
+      step:'FAILED',
+
+
+      last_error:
+      err.message
+
+
+    }).catch(()=>{});
+
+
+
+
+    return res.status(500).json({
+
+      success:false,
+
+
+      message:
+      err.message || '虚机创建启动失败'
+
+    });
+
+
+  }
+
+
 });
 
 const OMNIPRINT_BASE = {
@@ -4167,13 +4582,57 @@ app.get('/api/default-trade-cert-info', (req, res) => {
   });
 });
 
-app.get('/api/industry-transaction-stats', (req, res) => {
+/*app.get('/api/industry-transaction-stats', (req, res) => {
   const sql = `
     SELECT
       COALESCE(NULLIF(industry_raw_name, '')) AS industryName,
       COUNT(*) AS count
     FROM asset_registrations
     GROUP BY COALESCE(NULLIF(industry_raw_name, ''))
+    ORDER BY count DESC
+  `;
+
+  db.query(sql, (err, results) => {
+    if (err) {
+      console.error('获取领域交易数量失败:', err);
+      return res.status(500).json({
+        success: false,
+        message: '获取领域交易数量失败'
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: results
+    });
+  });
+});*/
+
+app.get('/api/industry-transaction-stats', (req, res) => {
+  const sql = `
+    SELECT
+      CASE
+        WHEN industry_raw_name LIKE '文化、体育和娱乐业%' THEN '文化、体育和娱乐业'
+        WHEN industry_raw_name LIKE '电力、热力、燃气及水生产和供应业%' THEN '电力、热力、燃气及水生产和供应业'
+        WHEN industry_raw_name LIKE '交通运输、仓储和邮政业%' THEN '交通运输、仓储和邮政业'
+        WHEN industry_raw_name LIKE '卫生和社会工作%' THEN '卫生和社会工作'
+        WHEN industry_raw_name LIKE '金融业%' THEN '金融业'
+        WHEN industry_raw_name LIKE '信息传输、软件和信息技术服务业%' THEN '信息传输、软件和信息技术服务业'
+        WHEN industry_raw_name LIKE '农、林、牧、渔业%' THEN '农、林、牧、渔业'
+        WHEN industry_raw_name LIKE '碳证交易%' THEN '碳证交易'
+        WHEN industry_raw_name LIKE '征信%' THEN '征信'
+        WHEN industry_raw_name LIKE '数字版权%' THEN '数字版权'
+        WHEN industry_raw_name LIKE '自动驾驶%' THEN '自动驾驶'
+        WHEN industry_raw_name LIKE '车联网%' THEN '车联网'
+        WHEN industry_raw_name LIKE '法律%' THEN '法律'
+        ELSE industry_raw_name
+      END AS industryName,
+      COUNT(*) AS count
+    FROM asset_registrations
+    WHERE industry_raw_name IS NOT NULL
+      AND industry_raw_name <> ''
+      AND industry_raw_name <> '未分类'
+    GROUP BY industryName
     ORDER BY count DESC
   `;
 

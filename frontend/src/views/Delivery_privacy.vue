@@ -676,7 +676,7 @@ export default {
   { label: '同态加密', value: 'homomorphic' },
   { label: '可信执行环境（TEE）', value: 'tee' },
   { label: '联邦学习', value: 'federated' },
-  { label: '安全多方计算（MPC）', value: 'mpc' },
+  { label: '多方安全计算（MPC）', value: 'mpc' },
   { label: '代理重加密', value: 'pre' },
 ],
     }

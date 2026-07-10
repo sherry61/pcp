@@ -173,7 +173,7 @@ export default {
                 HE: "同态加密",
                 PRE: "代理重加密",
                 FL: "联邦学习",
-                MPC: "安全多方计算",
+                MPC: "多方安全计算",
                 TEE: "可信执行环境"
               })[this.normalizePcType(tx.pc_type)] || "未选择",
             }));
