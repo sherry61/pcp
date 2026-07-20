@@ -530,7 +530,7 @@
 
     </div>
   </div>
-   <!-- 估值定价弹窗 -->
+<!-- 估值定价弹窗 -->
 <div v-if="showValuationModal" class="modal">
   <div class="modal-content wide-modal valuation-modal">
     <h3>价值评估</h3>
@@ -564,13 +564,20 @@
           >
             <label :for="field.key">{{ field.label }}</label>
             <input
-              v-if="field.type !== 'textarea'"
+              v-if="field.type !== 'textarea' && field.type !== 'text'"
               :id="field.key"
               type="number"
               :step="field.step || '0.01'"
               :min="field.min"
               :max="field.max"
               v-model.number="params[field.key]"
+            />
+            <input
+              v-else-if="field.type === 'text'"
+              :id="field.key"
+              type="text"
+              v-model.trim="params[field.key]"
+              :placeholder="field.placeholder || ''"
             />
             <textarea
               v-else
@@ -589,27 +596,15 @@
     </div>
 
     <div class="button-container">
-
-  <button 
-    @click="submitValuation" 
-    class="btn-primary"
-  >
-    提交计算
-  </button>
-
-
-  <button 
-    @click="closeValuationModal" 
-    class="btn-secondary"
-  >
-    关闭
-  </button>
-
-</div>
+      <button @click="submitValuation" class="btn-primary" :disabled="valuationCalculating">
+        {{ valuationCalculating ? '计算中...' : '提交计算' }}
+      </button>
+      <button @click="closeValuationModal" class="btn-secondary">关闭</button>
+    </div>
   </div>
 </div>
 
-<!-- 计算结果弹窗 -->
+<!-- 估值计算结果弹窗 -->
 <div v-if="showValuationResultModal" class="modal">
   <div class="modal-content wide-modal valuation-result-modal">
     <h3>计算结果</h3>
@@ -621,9 +616,9 @@
         <thead>
           <tr>
             <th>方法</th>
-            <th>公式</th>
-            <th>关键中间项</th>
-            <th>估值结果（万元）</th>
+            <th v-if="!isMlQwenResult">公式</th>
+            <th v-if="!isMlQwenResult">关键中间项</th>
+            <th>{{ isMlQwenResult ? '估值等级/范围' : '估值结果/范围（万元）' }}</th>
             <th>备注</th>
           </tr>
         </thead>
@@ -631,38 +626,56 @@
           <template v-for="item in valuationMethodResults" :key="item.methodName">
             <tr>
               <td>{{ item.methodName }}</td>
-              <td class="mono-cell">{{ item.formulaText }}</td>
-              <td>
+              <td v-if="!isMlQwenResult" class="mono-cell">{{ item.formulaText }}</td>
+              <td v-if="!isMlQwenResult">
                 <ul class="valuation-intermediate-list">
                   <li v-for="(line, idx) in item.intermediates" :key="idx" class="mono-cell">{{ line }}</li>
                 </ul>
               </td>
               <td>
-                <span v-if="item.valuation === null" class="warn-text">不可计算</span>
+                <span v-if="item.valuation === null && valuationResultDetail && valuationResultDetail.valuationLevel" class="mono-cell">
+                  {{ valuationResultDetail.valuationRange || valuationResultDetail.valuationLevelName }}
+                </span>
+                <span v-else-if="item.valuation === null" class="warn-text">不可计算</span>
                 <span v-else class="mono-cell">{{ formatNum(item.valuation) }}</span>
               </td>
-              <td>{{ item.valuation === null ? '请修正输入' : '计算成功' }}</td>
+              <td>{{ item.valuation === null && valuationResultDetail && valuationResultDetail.valuationLevel ? '估值成功' : (item.valuation === null ? '请修正输入' : '计算成功') }}</td>
             </tr>
             <tr class="valuation-note-row">
-              <td colspan="5"><strong>公式备注：</strong>{{ item.notes }}</td>
+              <td :colspan="isMlQwenResult ? 3 : 5"><strong>{{ isMlQwenResult ? '备注' : '公式备注' }}：</strong>{{ item.notes }}</td>
+            </tr>
+            <tr v-if="valuationResultDetail && valuationResultDetail.valuationLevel" class="valuation-note-row">
+              <td :colspan="isMlQwenResult ? 3 : 5">
+                <strong>估值等级：</strong>
+                {{ valuationResultDetail.valuationLevelName }} / {{ valuationResultDetail.valuationCategory }}
+                <span v-if="valuationResultDetail.valuationRange">
+                  / 估值范围：{{ valuationResultDetail.valuationRange }}
+                </span>
+                <span v-if="valuationResultDetail.modelVersion">
+                  （模型版本：{{ valuationResultDetail.modelVersion }}）
+                </span>
+                <ul class="valuation-intermediate-list">
+                  <li v-for="(line, idx) in valuationResultDetail.basis" :key="idx">{{ line }}</li>
+                </ul>
+              </td>
             </tr>
           </template>
           <tr v-if="valuationMethodResults.length === 0">
-            <td colspan="5">暂无结果</td>
+            <td :colspan="isMlQwenResult ? 3 : 5">暂无结果</td>
           </tr>
         </tbody>
       </table>
     </div>
-    <div class="button-container result-buttons">
-
-  <button 
-    @click="closeValuationResultModal" 
-    class="btn-primary"
-  >
-    确认
-  </button>
-
-</div>
+    <div class="button-container">
+      <button
+        @click="saveCurrentValuationRecord"
+        class="btn-primary"
+        :disabled="valuationSaving || valuationCalculating || !valuationMethodResults.length || (valuationMethodResults[0].valuation === null && !(valuationResultDetail && valuationResultDetail.valuationLevel))"
+      >
+        {{ valuationSaving ? '保存中...' : '保存估值记录' }}
+      </button>
+      <button @click="closeValuationResultModal" class="btn-primary">确认</button>
+    </div>
   </div>
 </div>
 
@@ -809,9 +822,40 @@ gradeRationale: '',
         { value: 'comparison', label: '比较法' },
         { value: 'technical', label: '技术分析法' },
         { value: 'dcf', label: 'DCF估值法' },
-        { value: 'ahp', label: '层次分析法(AHP)' }
+        { value: 'ahp', label: '层次分析法(AHP)' },
+        { value: 'ml_qwen_opensea', label: 'Qwen增强机器学习估值' }
       ],
       valuationSections: [
+        {
+          method: 'ml_qwen_opensea',
+          title: 'OpenSea 产品信息（Qwen增强机器学习估值）',
+          fields: [
+            {
+              key: 'openseaAssetName',
+              label: '物品名称',
+              type: 'text',
+              span: 2,
+              placeholder: '请输入 qwen_features_with_names.csv 中的物品名称',
+              hint: '服务器将用物品名称匹配本地 OpenSea/Twitter 结构化特征和已提取的 Qwen full feature。'
+            },
+            {
+              key: 'openseaCollectionName',
+              label: '集合名称',
+              type: 'text',
+              span: 2,
+              placeholder: '可选，用于保存记录展示'
+            },
+            {
+              key: 'openseaDescription',
+              label: '产品描述',
+              type: 'textarea',
+              span: 2,
+              placeholder: '可选；当前机器学习估值不直接调用 Qwen，而是使用服务器端已提取的 Qwen full feature。'
+            }
+          ],
+          noteLabel: '模型估值说明',
+          note: '该方法不直接让 Qwen 输出估值，而是使用已经提取完成的 Qwen 特征，与 OpenSea/Twitter 结构化特征一起输入服务器端机器学习模型，输出五档估值等级。'
+        },
         {
           method: 'cost',
           title: '成本法参数',
@@ -938,6 +982,9 @@ gradeRationale: '',
         }
       ],
       valuationDefaults: {
+        openseaAssetName: '',
+        openseaCollectionName: '',
+        openseaDescription: '',
         cOneoff: 180,
         cOngoing: 85,
         cQualityEval: 22,
@@ -987,6 +1034,9 @@ gradeRationale: '',
         ahpRelComparison: 6
       },
       valuationExample: {
+        openseaAssetName: 'More Rips #1/1',
+        openseaCollectionName: '示例集合',
+        openseaDescription: '使用服务器端已提取 Qwen full feature 的机器学习估值示例。',
         cOneoff: 220,
         cOngoing: 98,
         cQualityEval: 27,
@@ -1036,6 +1086,9 @@ gradeRationale: '',
         ahpRelComparison: 6.8
       },
       params: {
+        openseaAssetName: '',
+        openseaCollectionName: '',
+        openseaDescription: '',
         cOneoff: 180,
         cOngoing: 85,
         cQualityEval: 22,
@@ -1087,7 +1140,11 @@ gradeRationale: '',
       valuationMethodResults: [],
       valuationResultStatus: '输入有效，结果已更新',
       valuationHasErrors: false,
+      valuationCalculating: false,
       valuationSaving: false,
+      valuationModelApiUrl: (typeof window !== 'undefined' && window.__VALUATION_MODEL_API_URL__) || 'http://10.112.47.214:8039/predict',
+      valuationResultDetail: null,
+      lastValuationInputSnapshot: null,
       showValuationModal: false,
       showValuationResultModal: false,
 
@@ -1097,7 +1154,10 @@ gradeRationale: '',
     selectedValuationSection(){
         return this.valuationSections.find(
             x=>x.method===this.selectedValuationMethod
-        )
+        ) || null
+    },
+    isMlQwenResult() {
+      return this.selectedValuationMethod === 'ml_qwen_opensea';
     }
 },
   watch: {
@@ -1140,7 +1200,8 @@ gradeRationale: '',
         comparison: '比较法',
         technical: '技术分析法',
         dcf: 'DCF估值法',
-        ahp: '层次分析法(AHP)'
+        ahp: '层次分析法(AHP)',
+        ml_qwen_opensea: 'Qwen增强机器学习估值'
       };
       return mapping[methodKey] || methodKey;
     },
@@ -1320,35 +1381,58 @@ buildErrorResult(methodName, errors) {
         notes: '该方法输入存在错误，请根据提示修正后重算。'
       };
     },
+    getSelectedMethodInputSnapshot() {
+      if (!this.selectedValuationSection || !Array.isArray(this.selectedValuationSection.fields)) {
+        return {};
+      }
+      return this.selectedValuationSection.fields.reduce((snapshot, field) => {
+        snapshot[field.key] = this.params[field.key];
+        return snapshot;
+      }, {});
+    },
     async saveCurrentValuationRecord() {
       const currentResult = this.valuationMethodResults[0];
-      if (!currentResult || currentResult.valuation === null) {
+      const valuationDetail = this.valuationResultDetail || {};
+      if (!currentResult || (currentResult.valuation === null && !valuationDetail.valuationLevel)) {
         this.$message.warning('当前结果不可保存，请先修正参数并重新计算');
         return;
       }
 
-      const selectedAsset = this.selectedAssetForValuation || {};
-      const fileHash = selectedAsset.fileHash || selectedAsset.id || '';
+      const fileHash = this.hashValue && this.hashValue !== '未生成标识值'
+        ? this.hashValue
+        : (this.form.fingerprint || '');
       if (!fileHash) {
-        this.$message.error('缺少资产哈希，无法保存估值记录');
+        this.$message.error('请先生成资产哈希，再保存估值记录');
         return;
       }
 
       const payload = {
         fileHash,
-        assetName: selectedAsset.assetName || '',
+        assetName: this.form.assetName || '',
         methodKey: this.selectedValuationMethod,
         methodName: currentResult.methodName,
         finalValuation: currentResult.valuation,
-        valuationUnit: '万元',
+        valuationUnit: valuationDetail.valuationUnit || '万元',
+        valuationLevel: valuationDetail.valuationLevel,
+        valuationLevelName: valuationDetail.valuationLevelName,
+        valuationCategory: valuationDetail.valuationCategory,
+        valuationRange: valuationDetail.valuationRange,
+        basis: valuationDetail.basis || [],
+        modelVersion: valuationDetail.modelVersion || '',
         calcStatus: 1,
         statusMessage: '计算成功',
-        inputSnapshot: this.getSelectedMethodInputSnapshot(),
+        inputSnapshot: this.lastValuationInputSnapshot || this.getSelectedMethodInputSnapshot(),
         resultSnapshot: {
           formulaText: currentResult.formulaText,
           intermediates: currentResult.intermediates,
           notes: currentResult.notes,
-          valuation: currentResult.valuation
+          valuation: currentResult.valuation,
+          valuationLevel: valuationDetail.valuationLevel,
+          valuationLevelName: valuationDetail.valuationLevelName,
+          valuationCategory: valuationDetail.valuationCategory,
+          valuationRange: valuationDetail.valuationRange,
+          basis: valuationDetail.basis || [],
+          modelVersion: valuationDetail.modelVersion || ''
         },
         createdByUserId: this.userId || '',
         createdByUsername: this.username || ''
@@ -1453,8 +1537,7 @@ if (indivisibleRawSet.has(raw)) return 'WH';
   }
 },
 
-openValuationModal(asset) {
-      this.selectedAssetForValuation = asset;
+openValuationModal() {
       this.showValuationModal = true;
     },
     resetValuationToDefaults() {
@@ -1463,44 +1546,117 @@ openValuationModal(asset) {
     useValuationExample() {
       this.params = { ...this.valuationExample };
     },
-    submitValuation() {
-  const validation = this.validateValuationInputs(this.params);
+    async submitValuation() {
+      const selectedMethodLabel = this.getMethodLabel(this.selectedValuationMethod);
 
-  this.valuationMethodResults = this.buildMethodResults(
-    validation,
-    this.selectedValuationMethod
-  );
+      if (this.selectedValuationMethod !== 'ml_qwen_opensea') {
+        const validation = this.validateValuationInputs(this.params);
+        this.valuationMethodResults = this.buildMethodResults(validation, this.selectedValuationMethod);
+        const hasError = this.valuationMethodResults.length === 0 ||
+          this.valuationMethodResults.some(item => item.valuation === null);
 
-  const hasError =
-    this.valuationMethodResults.length === 0 ||
-    this.valuationMethodResults.some(item => item.valuation === null);
+        this.valuationHasErrors = hasError;
+        this.valuationResultDetail = null;
+        this.lastValuationInputSnapshot = this.getSelectedMethodInputSnapshot();
+        this.valuationResultStatus = hasError
+          ? `${selectedMethodLabel}输入存在错误，请按提示修正`
+          : `${selectedMethodLabel}计算完成，结果已更新`;
 
-  this.valuationHasErrors = hasError;
+        // 登记页保留原有能力：传统估值结果自动回填“资产估值”。
+        const firstValid = this.valuationMethodResults.find(
+          item => item.valuation !== null && item.valuation !== undefined
+        );
+        if (firstValid) {
+          this.form.price = Number(firstValid.valuation).toFixed(2);
+        }
 
-  const selectedMethodLabel = this.getMethodLabel(this.selectedValuationMethod);
+        this.showValuationResultModal = true;
+        this.showValuationModal = false;
+        if (hasError) {
+          this.$message.warning(`${selectedMethodLabel}参数存在问题，请查看结果明细`);
+        } else {
+          this.$message.success(`${selectedMethodLabel}估值计算完成，已写入资产估值`);
+        }
+        return;
+      }
 
-  this.valuationResultStatus = hasError
-    ? `${selectedMethodLabel}输入存在错误，请按提示修正`
-    : `${selectedMethodLabel}计算完成，结果已更新`;
+      const inputSnapshot = this.getSelectedMethodInputSnapshot();
+      const generatedHash = this.hashValue && this.hashValue !== '未生成标识值'
+        ? this.hashValue
+        : (this.form.fingerprint || '');
+      const payload = {
+        fileHash: generatedHash,
+        assetName: inputSnapshot.openseaAssetName || this.form.assetName || '',
+        assetType: this.form.assetType || '',
+        description: inputSnapshot.openseaDescription || this.form.description || '',
+        methodKey: this.selectedValuationMethod,
+        inputSnapshot
+      };
 
-  // 核心新增：把估值结果自动写入上链登记表单里的资产估值
-  const firstValid = this.valuationMethodResults.find(
-    item => item.valuation !== null && item.valuation !== undefined
-  );
+      this.valuationCalculating = true;
+      this.valuationResultDetail = null;
+      try {
+        const response = await axios.post(this.valuationModelApiUrl, payload);
+        if (!response.data || response.data.code !== 0) {
+          throw new Error(response.data?.message || '本地估值服务返回异常');
+        }
 
-  if (firstValid) {
-    this.form.price = Number(firstValid.valuation).toFixed(2);
-  }
+        const result = response.data.data || {};
+        const valuation = result.valuationAmount === null || result.valuationAmount === undefined
+          ? null
+          : Number(result.valuationAmount);
+        if (valuation !== null && !Number.isFinite(valuation)) {
+          throw new Error('服务器模型服务返回的估值金额格式无效');
+        }
+        if (!result.valuationLevel) {
+          throw new Error('服务器模型服务未返回有效五档估值等级');
+        }
 
-  this.showValuationResultModal = true;
-  this.showValuationModal = false;
+        this.lastValuationInputSnapshot = inputSnapshot;
+        this.valuationResultDetail = {
+          valuationAmount: valuation,
+          valuationUnit: result.valuationUnit || '万元',
+          valuationLevel: result.valuationLevel,
+          valuationLevelName: result.valuationLevelName || '',
+          valuationCategory: result.valuationCategory || '',
+          valuationRange: result.valuationRange || '',
+          basis: Array.isArray(result.basis) ? result.basis : [],
+          modelVersion: result.modelVersion || ''
+        };
+        this.valuationMethodResults = [{
+          methodName: result.methodName || selectedMethodLabel,
+          formulaText: result.formulaText || '-',
+          intermediates: Array.isArray(result.intermediates) ? result.intermediates : [],
+          valuation,
+          notes: this.valuationResultDetail.basis.join('；') || '服务器模型服务已完成五档估值分级。'
+        }];
+        this.valuationHasErrors = false;
+        this.valuationResultStatus = `${selectedMethodLabel}完成，结果已更新`;
 
-  if (hasError) {
-    this.$message.warning(`${selectedMethodLabel}参数存在问题，请查看结果明细`);
-  } else {
-    this.$message.success(`${selectedMethodLabel}估值计算完成，已写入资产估值`);
-  }
-},
+        if (valuation !== null) {
+          this.form.price = valuation.toFixed(2);
+          this.$message.success(`${selectedMethodLabel}完成，已写入资产估值`);
+        } else {
+          this.$message.success(`${selectedMethodLabel}完成`);
+        }
+      } catch (error) {
+        console.error('服务器模型估值失败:', error);
+        const message = error?.message || '服务器模型服务不可用或服务异常';
+        this.lastValuationInputSnapshot = inputSnapshot;
+        this.valuationMethodResults = [this.buildErrorResult(selectedMethodLabel, [
+          message,
+          `请确认服务器模型服务已启动：${this.valuationModelApiUrl}`
+        ])];
+        this.valuationMethodResults[0].notes = message;
+        this.valuationHasErrors = true;
+        this.valuationResultStatus = `${selectedMethodLabel}失败，请检查服务器模型服务`;
+        this.$message.error('服务器模型估值失败，请检查模型服务');
+      } finally {
+        this.valuationCalculating = false;
+        this.showValuationResultModal = true;
+        this.showValuationModal = false;
+      }
+    },
 
        closeValuationModal() {
       this.showValuationModal = false;
@@ -1871,6 +2027,13 @@ openValuationModal(asset) {
         minimumFractionDigits: digits,
         maximumFractionDigits: digits
       });
+    },
+    formatPercent(value, digits = 2) {
+      const number = Number(value);
+      if (!Number.isFinite(number)) {
+        return String(value);
+      }
+      return `${(number * 100).toFixed(digits)}%`;
     },
 
 async generateOmniPrint() {
@@ -3218,6 +3381,12 @@ formData.append('trade_end_ts', tradeEndTs);
 
   background:#1d4ed8;
 
+}
+
+.btn-primary:disabled,
+.btn-secondary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 

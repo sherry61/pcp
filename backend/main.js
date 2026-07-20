@@ -3650,7 +3650,7 @@ async function createVm({
     },
     {
       headers: vmHeaders(),
-      timeout:120000,
+      timeout:10 * 60 * 1000,
       validateStatus:()=>true
     }
   );
@@ -3672,7 +3672,7 @@ async function startVm(vmId) {
     {},
     {
       headers: vmHeaders(),
-      timeout: 120000,
+      timeout: 5 * 60 * 1000,
       validateStatus: () => true
     }
   );
@@ -4055,6 +4055,94 @@ app.post('/api/delivery/secure-confirm', async (req, res) => {
 
 
 });
+
+
+app.post('/api/delivery/test-start-vm', async (req, res) => {
+
+  const {
+    vmId
+  } = req.body;
+
+
+  if (!vmId) {
+
+    return res.status(400).json({
+
+      success:false,
+
+      message:'缺少 vmId'
+
+    });
+
+  }
+
+
+  try {
+
+
+    console.log(
+      '[test-start-vm] 开始启动虚机:',
+      vmId
+    );
+
+
+
+    /*
+     * 调用虚机服务启动接口
+     */
+    const startResult = await startVm(vmId);
+
+
+
+    console.log(
+      '[test-start-vm] 启动结果:',
+      startResult
+    );
+
+
+
+    return res.json({
+
+      success:true,
+
+      message:'虚机启动成功',
+
+      vmId,
+
+      status:
+        startResult.status || 'running',
+
+      startResult
+
+    });
+
+
+
+  } catch(err) {
+
+
+    console.error(
+      '[test-start-vm error]',
+      err
+    );
+
+
+
+    return res.status(500).json({
+
+      success:false,
+
+      message:
+        err.message || '虚机启动失败'
+
+    });
+
+
+  }
+
+
+});
+
 
 const OMNIPRINT_BASE = {
   text: 'http://10.112.47.214:8110',

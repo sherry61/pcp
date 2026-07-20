@@ -772,7 +772,7 @@ const response = await axios.post(
 },
 
 {
- timeout:300000
+ timeout:12 * 60 * 1000
 }
 
 );
