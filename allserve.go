@@ -85,6 +85,20 @@ func main() {
 			Dir:     "/home/super/r/GoSDK2/cmd",
 			Port:    "8849",
 		},
+		{
+			Name:    "mpc-server",
+			Command: "./mpc_server",
+			Args:    []string{},
+			Dir:     "/home/super/fqh/mpc_/app/service/mpc",
+			Port:    "28091",
+		},
+		{
+			Name:    "mpc-flask",
+			Command: "/home/super/fqh/.venvs/mpc-flask/bin/python",
+			Args:    []string{"-m", "flask", "--app", "app.app", "run", "--host", "0.0.0.0", "--port", "28090"},
+			Dir:     "/home/super/fqh/mpc_",
+			Port:    "28090",
+		},
 	}
 
 	var wg sync.WaitGroup
