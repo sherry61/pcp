@@ -144,7 +144,7 @@ function getPcpPreBaseUrl() {
 function getPreDecryptPythonPath() {
   const candidates = [
     process.env.PRE_DECRYPT_PYTHON,
-    '/tmp/pcc-pre-interop/bin/python',
+    '/home/super/fqh/.venvs/pcc-pre-interop/bin/python',
     '/usr/bin/python3',
     '/usr/local/bin/python3'
   ].filter(Boolean);

@@ -200,7 +200,7 @@
 后端会找这些 Python 路径：
 
 - `PRE_DECRYPT_PYTHON`
-- `/tmp/pcc-pre-interop/bin/python`
+- `/home/super/fqh/.venvs/pcc-pre-interop/bin/python`
 - `/usr/bin/python3`
 - `/usr/local/bin/python3`
 
