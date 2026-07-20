@@ -307,16 +307,10 @@ export default {
         if (permissionResponse.status === 200 && permissionResponse.data.code === 0) {
           this.$message.success(`权限 [${rightType}] 交易成功`);
         } else {
-          this.$message.warning(`权限 [${rightType}] 交易失败: ${permissionResponse.data.message}`);
+          console.warn(`权限 [${rightType}] 交易失败:`, permissionResponse.data);
         }
       } catch (permError) {
         console.error(`购买权限 [${rightType}] 异常:`, permError);
-        const backendMessage =
-          permError?.response?.data?.message ||
-          permError?.response?.data?.error ||
-          permError?.message ||
-          '未知错误';
-        this.$message.error(`权限 [${rightType}] 交易失败: ${backendMessage}`);
       }
     }
 
