@@ -906,7 +906,7 @@ export default {
           this.$message?.success('FL 状态已刷新')
         }
       } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'FL 状态刷新失败'
+        const message = this.formatFlApiError(error, 'FL 状态刷新失败')
         if (showMessage) {
           this.$message?.error(message)
         }
@@ -1108,6 +1108,16 @@ async verifyContract(assetRow) {
 
     getHiddenHePrivateKeyStorageKey(transactionId) {
       return `mpcHiddenHePrivateKey:${String(transactionId || '')}`
+    },
+
+    formatFlApiError(error, fallbackMessage) {
+      const responseData = error?.response?.data || {}
+      const message = responseData?.message || error?.message || fallbackMessage
+      const detail = responseData?.error || responseData?.detail || ''
+      if (!detail || detail === message) {
+        return message
+      }
+      return `${message}: ${detail}`
     },
 
     loadHiddenHePrivateKeyText(transactionId) {
@@ -1678,7 +1688,7 @@ async verifyContract(assetRow) {
         this.flDeliveryDialog.asset = row
         this.flDeliveryDialog.file = null
       } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'FL 交付准备失败'
+        const message = this.formatFlApiError(error, 'FL 交付准备失败')
         this.$message?.error(message)
       } finally {
         row.processingFl = false
@@ -1735,7 +1745,7 @@ async verifyContract(assetRow) {
         this.$message?.success(response.data?.message || '交付已提交')
         this.closeFlDeliveryDialog()
       } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'FL 提交失败'
+        const message = this.formatFlApiError(error, 'FL 提交失败')
         this.$message?.error(message)
       } finally {
         this.flDeliveryDialog.submitting = false

@@ -246,15 +246,8 @@
             </div>
 
             <div class="form-row">
-              <label for="pc-type-select"><strong>资产交付方法：</strong></label>
-              <select id="pc-type-select" v-model="selectedPcType" class="form-control">
-                <option value="">请选择资产交付方法</option>
-                <option value="HE">同态加密</option>
-                <option value="PRE">代理重加密</option>
-                <option value="FL">联邦学习</option>
-                <option value="MPC">多方安全计算</option>
-                <option value="TEE">可信执行环境</option>
-              </select>
+              <label><strong>资产交付方法：</strong></label>
+              <div class="form-control">{{ getPcTypeLabel(selectedPcType || asset.pc_type) }}</div>
             </div>
 
 
@@ -503,6 +496,18 @@ export default {
   return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 },
 
+    getPcTypeLabel(pcType) {
+  const labelMap = {
+    HE: '同态加密',
+    PRE: '代理重加密',
+    FL: '联邦学习',
+    MPC: '多方安全计算',
+    TEE: '可信执行环境'
+  };
+
+  return labelMap[String(pcType || '').trim().toUpperCase()] || '未配置';
+},
+
     async fetchModelOptions() {
   try {
     this.loadingModels = true;
@@ -634,7 +639,7 @@ async openPurchaseModal() {
   this.insufficientBalance = (this.asset.price || 1200) > this.userBalance;
   this.selectedPermissions = [];
   this.processingChoice = null;
-  this.selectedPcType = '';
+  this.selectedPcType = String(this.asset.pc_type || '').trim().toUpperCase();
   this.expirationTime = '';
   this.purchaseQuantity = 1;
   this.errorMessage = '';
@@ -745,7 +750,7 @@ if (!certAddr) {
   }
 
   if (!this.selectedPcType) {
-    alert("请选择资产交付方法！");
+    alert("该资产尚未配置交付方法！");
     return;
   }
 

@@ -121,6 +121,22 @@
                 <input type="file" id="file" @change="handleFileChange" required />
               </div>
             </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label for="pc-type">
+                  <span class="required-asterisk">*</span>
+                  资产交付方法
+                </label>
+                <select id="pc-type" v-model="form.pcType" required>
+                  <option value="">请选择资产交付方法</option>
+                  <option value="HE">同态加密</option>
+                  <option value="PRE">代理重加密</option>
+                  <option value="FL">联邦学习</option>
+                  <option value="MPC">多方安全计算</option>
+                  <option value="TEE">可信执行环境</option>
+                </select>
+              </div>
+            </div>
 <!-- 资产领域：放到分类分级上面 -->
 <div class="form-row">
   <div class="form-group">
@@ -336,7 +352,8 @@
             <p><strong>地址:</strong> {{ form.address }}</p>
             <p><strong>数据资产上链登记内容:</strong> {{ form.description }}</p>
             <p><strong>数字标识:</strong> {{ getIdentifierMethodLabel(form.algorithm) }}</p>
-            <p><strong>模型选择:</strong> 
+            <p><strong>资产交付方法:</strong> {{ getPcTypeLabel(form.pcType) }}</p>
+            <p><strong>模型选择:</strong>
   {{ form.modelSelection === 'weighted_average' ? '加权平均' : form.modelSelection }}
 </p>
             
@@ -746,6 +763,7 @@ gradingMethods: [
         isSellProcessRight: false,  // 允许出售加工权
         allow_resale: 0,  // 初始为不允许二次交易
         modelSelection: '',
+        pcType: '',
         analysisMethod: '',
 analysisResultText: '',
 fingerprint: '',
@@ -2102,6 +2120,18 @@ getIdentifierMethodLabel(method) {
   return methodMap[method] || method || '';
 },
 
+getPcTypeLabel(pcType) {
+  const labelMap = {
+    HE: '同态加密',
+    PRE: '代理重加密',
+    FL: '联邦学习',
+    MPC: '多方安全计算',
+    TEE: '可信执行环境'
+  };
+
+  return labelMap[String(pcType || '').trim().toUpperCase()] || '未选择';
+},
+
 sanitizeFingerprintIdentifier(value) {
   return String(value || '').replace(/[^A-Za-z0-9]/g, '');
 },
@@ -3050,6 +3080,7 @@ async saveTradingTime() {
       formData.append('can_sell_view', this.form.isSellReadRight ? '1':'0');
       formData.append('allow_resale', this.form.allow_resale); // 将 allow_resale 传递到后端
       formData.append('model_selection', this.form.modelSelection);
+      formData.append('pc_type', this.form.pcType);
       // 交易地点
 const tradeLocation =
   this.selectedRegionOptions && this.selectedRegionOptions.length === 2

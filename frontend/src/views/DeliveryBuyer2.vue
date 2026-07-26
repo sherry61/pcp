@@ -897,6 +897,16 @@ export default {
       return Boolean(row?.flRecord?.buyer_result_ready || status === 'PAM_PASSED' || status === 'COMPLETED')
     },
 
+    formatFlApiError(error, fallbackMessage) {
+      const responseData = error?.response?.data || {}
+      const message = responseData?.message || error?.message || fallbackMessage
+      const detail = responseData?.error || responseData?.detail || ''
+      if (!detail || detail === message) {
+        return message
+      }
+      return `${message}: ${detail}`
+    },
+
     getBuyerFlActionLabel(row) {
       if (!row?.flRecord?.pcp_contract_id) {
         return '请求交付'
@@ -956,7 +966,7 @@ export default {
           this.$message?.success('FL 状态已刷新')
         }
       } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'FL 状态刷新失败'
+        const message = this.formatFlApiError(error, 'FL 状态刷新失败')
         if (showMessage) {
           this.$message?.error(message)
         }
@@ -1197,7 +1207,7 @@ export default {
         this.$message?.success(response.data?.message || 'FL 交付请求已提交，私钥已下载到本地')
         this.closeFlRequestDialog()
       } catch (error) {
-        const message = error?.response?.data?.message || error?.message || 'FL 交付请求提交失败'
+        const message = this.formatFlApiError(error, 'FL 交付请求提交失败')
         this.$message?.error(message)
       } finally {
         row.requestingFlDelivery = false

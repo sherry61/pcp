@@ -50,7 +50,7 @@ const ASSET_ANALYSIS_BASE_URL =
 const PRE_UPLOAD_DIR = process.env.PRE_UPLOAD_DIR || '/home/super/r/localdata/pre_uploads';
 const DIGITAL_CONTRACT_BASE_URL =
   process.env.DIGITAL_CONTRACT_BASE_URL || 'http://10.112.14.6:18080/api';
-const SUMMARY_API_BASE = 'http://10.112.47.214:8020';
+const SUMMARY_API_BASE = 'http://10.112.47.214:8022';
 const DATA_CATALOG_BASE_URL =
   process.env.DATA_CATALOG_BASE_URL || 'http://127.0.0.1:8008';
 const DATA_CATALOG_ORG_DID =
@@ -1783,7 +1783,7 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
         is_proxied, number, price,
         can_sell_asset, can_sell_view, can_sell_process, allow_resale,
         trade_location, trade_start_ts, trade_end_ts,
-        allow_authorize, allow_supervision, model_selection
+        allow_authorize, allow_supervision, model_selection, pc_type
     } = req.body;
 
     const picture = req.file;
@@ -1834,8 +1834,8 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
                 picture, is_proxied, number, price,
                 can_sell_asset, can_sell_view, can_sell_process, allow_resale,
                 trade_location, trade_start_ts, trade_end_ts,
-                allow_authorize, allow_supervision, model_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                allow_authorize, allow_supervision, model_type, pc_type
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const values = [
@@ -1867,7 +1867,8 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
             trade_end_ts || null,
             allow_authorize || 0,
             allow_supervision || 0,
-            model_selection || null
+            model_selection || null,
+            pc_type || null
         ];
 
         console.log('准备插入的数据:', values);
@@ -2292,7 +2293,8 @@ app.get('/api/asset/:id', (req, res) => {
       agent_count,
       view_right_owner,
       process_right_owner,
-      model_type
+      model_type,
+      pc_type
     FROM asset_registrations
     WHERE file_hash = ?
     LIMIT 1
