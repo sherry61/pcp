@@ -302,8 +302,8 @@
   class="custom-cascader">
 </el-cascader>-->
 
-              <!-- 这里使用el组件的级联选项添加一个资产交易地点，省市区 -->
-              <!--<label class="full-width-label left-align">资产交易地点设置</label>
+              <!-- 资产的使用地点和时间窗口，随登记信息持久化。 -->
+              <label class="full-width-label left-align">资产交易地点设置</label>
               <el-cascader v-model="selectedRegionOptions" :options="regionData" :props="cascaderProps"
                 @change="handleRegionChange" placeholder="请选择资产交易地点" clearable />
               <div class="form-group full-width">
@@ -324,7 +324,7 @@
                   :prefix-icon="'el-icon-time'" :clear-icon="'el-icon-circle-close'" :disabled-date="disabledEndDate"
                   :disabled-time="disabledEndTime" :align="left" :popper-append-to-body="true" :transfer="true"
                   :popper-options="{ boundariesElement: 'body' }" :scroll-to-option="true" />
-              </div> -->
+              </div>
 
 
             </div>
@@ -2495,36 +2495,11 @@ getCatalogPublishMessage() {
 
 
 
-     async handleRegionChange(value) {
-  if (!value || value.length !== 2) {
-    this.$message.warning('请完整选择省、市');
-    return;
-  }
-
-  const transactionLocation = value.join('-');
-  console.log('用户选择的地区:', transactionLocation);
-
-  const isDynamicCertSet = await this.setDynamicCert();
-  if (!isDynamicCertSet) {
-    this.$message.error('动态证书配置失败，无法继续操作');
-    return;
-  }
-
-  try {
-    const response = await axios.post('http://10.112.47.214:8848/pre/SetAllowedLocations', {
-      allowedLocations: [transactionLocation]
-    });
-
-    if (response.status === 200 && response.data.code === 0) {
-      this.$message.success('交易地点设置成功');
-    } else {
-      this.$message.error('设置交易地点失败');
-    }
-  } catch (error) {
-    console.error('请求 SetAllowedLocations 时出错:', error);
-    this.$message.error('请求失败，请检查网络或稍后再试');
-  }
-},
+    handleRegionChange(value) {
+      if (value && value.length !== 2) {
+        this.$message.warning('请完整选择省、市');
+      }
+    },
     parseJwt(token) {
       const base64Url = token.split('.')[1];
       const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
@@ -2606,10 +2581,9 @@ async openConfirmation() {
   }
 
   try {
-    // 如果你希望交易时间不是必填，可以用这个判断
+    // 时间窗口是可选配置；填写时仅校验后随资产登记持久化。
     if (this.transactionStartTime && this.transactionEndTime) {
-      await this.saveTradingTime();
-      console.log('交易时间已成功设置');
+      this.validateTimeRange();
     }
 
     this.showConfirmation = true;
@@ -2985,53 +2959,8 @@ async gradeAssetLevel() {
   }
 },
 
-async saveTradingTime() {
-  if (this.transactionStartTime && this.transactionEndTime) {
-    // 格式化时间为 yyyy-mm-dd HH:mm:ss，补全为标准格式
-    const today = new Date().toISOString().split('T')[0]; // 获取今天的日期 yyyy-mm-dd
-
-    // 将用户选择的时间添加到今天的日期中
-    const startDateTimeString = `${today} ${this.transactionStartTime}`;
-    const endDateTimeString = `${today} ${this.transactionEndTime}`;
-
-    // 转换为 Date 对象
-    const startTime = new Date(startDateTimeString);
-    const endTime = new Date(endDateTimeString);
-
-    // 检查转换后的时间是否有效
-    if (isNaN(startTime) || isNaN(endTime)) {
-      this.$message.error('请输入有效的开始时间和结束时间');
-      return;
-    }
-
-    // 转换为时间戳
-    const startTimeStamp = startTime.getTime();
-    const endTimeStamp = endTime.getTime();
-
-    console.log("Sending startTime:", startTimeStamp, "endTime:", endTimeStamp);
-
-    if (startTimeStamp && endTimeStamp && startTimeStamp < endTimeStamp) {
-      try {
-        const response = await axios.post('http://10.112.47.214:8848/pre/SetTradingTime', {
-          startTime: startTimeStamp, // 毫秒级时间戳
-          endTime: endTimeStamp      // 毫秒级时间戳
-        });
-
-        if (response.status === 200 && response.data.code === 0) {
-          console.log('交易时间设置成功');
-        } else {
-          throw new Error(`交易时间设置失败: ${response.data.message}`);
-        }
-      } catch (error) {
-        console.error('调用 SetTradingTime 接口时出错:', error);
-        this.$message.error('交易时间设置失败，请稍后重试');
-      }
-    } else {
-      this.$message.error('开始时间必须小于结束时间');
-    }
-  } else {
-    this.$message.error('请填写完整的交易时间');
-  }
+saveTradingTime() {
+  this.validateTimeRange();
 }
 ,
 
@@ -3094,7 +3023,12 @@ let tradeStartTs = '';
 let tradeEndTs = '';
 
 if (this.transactionStartTime && this.transactionEndTime) {
-  const today = new Date().toISOString().split('T')[0];
+  const now = new Date();
+  const today = [
+    now.getFullYear(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  ].join('-');
 
   tradeStartTs = new Date(`${today} ${this.transactionStartTime}`).getTime();
   tradeEndTs = new Date(`${today} ${this.transactionEndTime}`).getTime();
