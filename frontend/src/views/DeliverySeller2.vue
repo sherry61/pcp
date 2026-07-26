@@ -50,7 +50,7 @@
                     type="primary"
                     :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerHeDeliveryDisabled(row) }]"
                     :loading="row.checkingHe"
-                    :disabled="isSellerHeDeliveryDisabled(row)"
+                    :disabled="isSellerHeDeliveryDisabled(row) || isDeliveryExpired(row)"
                     @click="openHeDelivery(row)"
                   >
                     {{ getSellerHeActionLabel(row) }}
@@ -61,7 +61,7 @@
                     type="primary"
                     :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerFlDeliveryDisabled(row) }]"
                     :loading="row.processingFl || row.uploadingFlBatch || row.checkingFl"
-                    :disabled="isSellerFlDeliveryDisabled(row)"
+                    :disabled="isSellerFlDeliveryDisabled(row) || isDeliveryExpired(row)"
                     @click="openFlDeliveryDialog(row)"
                   >
                     {{ getSellerFlDeliveryActionLabel(row) }}
@@ -72,7 +72,7 @@
                     type="primary"
                     :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerPreDeliveryDisabled(row) }]"
                     :loading="row.processingPre || row.checkingPre"
-                    :disabled="isSellerPreDeliveryDisabled(row)"
+                    :disabled="isSellerPreDeliveryDisabled(row) || isDeliveryExpired(row)"
                     @click="openPreDelivery(row)"
                   >
                     {{ getSellerPreActionLabel(row) }}
@@ -82,7 +82,7 @@
                     size="small"
                     type="primary"
                     :class="['action-btn-primary', { 'action-btn-disabled-primary': !canOpenMpcSellerDialog(row) }]"
-                    :disabled="!canOpenMpcSellerDialog(row)"
+                    :disabled="!canOpenMpcSellerDialog(row) || isDeliveryExpired(row)"
                     @click="openMpcSellerDialog(row)"
                   >
                     {{ getSellerMpcActionLabel(row) }}
@@ -93,7 +93,7 @@
                     type="warning"
                     class="action-btn-secondary"
                     :loading="row.downloadingFlGradient"
-                    :disabled="!getLatestSellerGradientPackage(row)"
+                    :disabled="!getLatestSellerGradientPackage(row) || isDeliveryExpired(row)"
                     @click="downloadFlSellerGradient(row)"
                   >
                     下载结果
@@ -158,7 +158,7 @@
 
           <template #footer>
             <el-button @click="closeHeDialog">取消</el-button>
-            <el-button type="primary" :loading="heDialog.submitting" @click="submitHeDelivery">
+            <el-button type="primary" :loading="heDialog.submitting" :disabled="isDeliveryExpired(heDialog.asset)" @click="submitHeDelivery">
               执行交付
             </el-button>
           </template>
@@ -192,7 +192,7 @@
 
           <template #footer>
             <el-button @click="closePreDialog">取消</el-button>
-            <el-button type="primary" :loading="preDialog.submitting" @click="submitPreDelivery">
+            <el-button type="primary" :loading="preDialog.submitting" :disabled="isDeliveryExpired(preDialog.asset)" @click="submitPreDelivery">
               执行交付
             </el-button>
           </template>
@@ -226,7 +226,7 @@
 
           <template #footer>
             <el-button @click="closeFlDeliveryDialog">取消</el-button>
-            <el-button type="primary" :loading="flDeliveryDialog.submitting" @click="submitFlDelivery">
+            <el-button type="primary" :loading="flDeliveryDialog.submitting" :disabled="isDeliveryExpired(flDeliveryDialog.asset)" @click="submitFlDelivery">
               执行交付
             </el-button>
           </template>
@@ -257,7 +257,7 @@
 
           <template #footer>
             <el-button @click="closeFlDecryptDialog">取消</el-button>
-            <el-button type="primary" :loading="flDecryptDialog.processing" @click="confirmDecryptFlResult">
+            <el-button type="primary" :loading="flDecryptDialog.processing" :disabled="isDeliveryExpired(flDecryptDialog.row)" @click="confirmDecryptFlResult">
               解密并导出
             </el-button>
           </template>
@@ -286,7 +286,7 @@
 
           <template #footer>
             <el-button @click="closeMpcSellerDialog">取消</el-button>
-            <el-button type="primary" :loading="mpcDialog.submitting" @click="submitMpcSellerData">
+            <el-button type="primary" :loading="mpcDialog.submitting" :disabled="isDeliveryExpired(mpcDialog.row)" @click="submitMpcSellerData">
               执行交付
             </el-button>
           </template>
@@ -328,6 +328,10 @@
                 <div class="contract-item">
                   <label>创建时间</label>
                   <span class="value">{{ formatDate(contractInfo.data.created_at) }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>过期时间</label>
+                  <span class="value">{{ formatDate(contractInfo.data.constraints?.expiration_time) }}</span>
                 </div>
                 <div class="contract-item">
                   <label>交付方法</label>
@@ -544,6 +548,7 @@ export default {
                   seller_address: item.seller_address,
                   buyer_address: item.buyer_address,
                   quantity: item.quantity,
+                  expiration_time: item.expiration_time,
                   flRecord: null,
                   heRecord: null,
                   preRecord: null,
@@ -956,6 +961,24 @@ export default {
       }
     },
 
+    getDeliveryExpirationTimestamp(row) {
+      const value = row?.expiration_time
+      if (!value) return null
+      const timestamp = new Date(String(value).replace(' ', 'T')).getTime()
+      return Number.isFinite(timestamp) ? timestamp : null
+    },
+
+    isDeliveryExpired(row) {
+      const timestamp = this.getDeliveryExpirationTimestamp(row)
+      return timestamp !== null && timestamp <= Date.now()
+    },
+
+    ensureDeliveryActive(row) {
+      if (!this.isDeliveryExpired(row)) return true
+      this.$message?.warning('数字合约已过期，不能继续交付或下载结果')
+      return false
+    },
+
     getSellerHeActionLabel(row) {
       const status = String(row?.heRecord?.pcp_status || '').toUpperCase()
       if (
@@ -1094,7 +1117,7 @@ async verifyContract(assetRow) {
   }
 },
     canOpenMpcSellerDialog(row) {
-      if (!row?.transaction_id) {
+      if (!row?.transaction_id || this.isDeliveryExpired(row)) {
         return false
       }
 
@@ -1354,7 +1377,7 @@ async verifyContract(assetRow) {
     },
 
     async openMpcSellerDialog(row) {
-      if (!row?.transaction_id) return
+      if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
 
       await this.refreshMpcStatus(row, false)
 
@@ -1381,7 +1404,7 @@ async verifyContract(assetRow) {
 
     async submitMpcSellerData() {
       const row = this.mpcDialog.row
-      if (!row?.transaction_id) return
+      if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
       if (!this.mpcDialog.files.length) {
         this.$message?.warning('请先选择 CSV 文件')
         return
@@ -1501,7 +1524,7 @@ async verifyContract(assetRow) {
     },
 
     async openHeDelivery(row) {
-      if (!row?.transaction_id) return
+      if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
 
       row.checkingHe = true
       try {
@@ -1539,7 +1562,7 @@ async verifyContract(assetRow) {
     },
 
     async submitHeDelivery() {
-      if (!this.heDialog.asset) return
+      if (!this.heDialog.asset || !this.ensureDeliveryActive(this.heDialog.asset)) return
       if (!this.heDialog.file1 || !this.heDialog.file2) {
         this.$message?.warning('请先选择文件1和文件2')
         return
@@ -1609,7 +1632,7 @@ async verifyContract(assetRow) {
     },
 
     async openPreDelivery(row) {
-      if (!row?.transaction_id) return
+      if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
 
       row.checkingPre = true
       try {
@@ -1640,7 +1663,7 @@ async verifyContract(assetRow) {
     },
 
     async openFlDeliveryDialog(row) {
-      if (!row?.transaction_id) return
+      if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
 
       row.checkingFl = true
       try {
@@ -1706,7 +1729,7 @@ async verifyContract(assetRow) {
     },
 
     async submitFlDelivery() {
-      if (!this.flDeliveryDialog.asset) return
+      if (!this.flDeliveryDialog.asset || !this.ensureDeliveryActive(this.flDeliveryDialog.asset)) return
       if (!this.flDeliveryDialog.file) {
         this.$message?.warning('请先选择压缩包')
         return
@@ -1754,7 +1777,7 @@ async verifyContract(assetRow) {
     },
 
     async submitPreDelivery() {
-      if (!this.preDialog.asset) return
+      if (!this.preDialog.asset || !this.ensureDeliveryActive(this.preDialog.asset)) return
       if (!this.preDialog.file) {
         this.$message?.warning('请先选择原始压缩包')
         return
@@ -1842,6 +1865,7 @@ async verifyContract(assetRow) {
     },
 
     async downloadFlSellerGradient(row) {
+      if (!this.ensureDeliveryActive(row)) return
       await this.downloadFlSellerResult(row, {
         resultRole: 'fl_gradient_epoch_bundle',
         batchIndex: null,
@@ -1851,6 +1875,7 @@ async verifyContract(assetRow) {
     },
 
     async autoDownloadFlSellerBottomModel(row, privateKeyText) {
+      if (!this.ensureDeliveryActive(row)) return
       const joinPackage = this.getSellerBottomModelPackage(row)
       if (!joinPackage?.download_token) {
         throw new Error('底层模型暂未就绪，请稍后刷新后重试')
@@ -1888,6 +1913,7 @@ async verifyContract(assetRow) {
       rowLoadingKey,
       filename
     }) {
+      if (!this.ensureDeliveryActive(row)) return
       row[rowLoadingKey] = true
       try {
         const response = await axios.get(`${API_BASE}/api/privacy/fl/result`, {
@@ -1926,6 +1952,7 @@ async verifyContract(assetRow) {
         this.$message?.warning('请先选择私钥文件')
         return
       }
+      if (!this.ensureDeliveryActive(this.flDecryptDialog.row)) return
 
       this.flDecryptDialog.processing = true
       try {

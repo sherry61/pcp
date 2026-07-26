@@ -233,7 +233,13 @@
             <!-- 过期时间输入框（当选择非“所有权”的权限时显示） -->
 <div class="form-row" v-if="showExpirationInput">
   <label for="expiration">权限过期时间：</label>
-  <input id="expiration" type="datetime-local" class="form-control" v-model="expirationTime" />
+  <input
+    id="expiration"
+    type="datetime-local"
+    class="form-control"
+    v-model="expirationTime"
+    :min="minimumExpirationTime"
+  />
 </div>
 
             <div class="form-row">
@@ -418,6 +424,18 @@ export default {
     
   showExpirationInput() {
     return this.selectedPermissions.some(p => p !== '持有权');
+  },
+
+  minimumExpirationTime() {
+    // datetime-local 只精确到分钟，向上取整以避免选择当前分钟的已过时间。
+    const minimum = new Date();
+    minimum.setMinutes(minimum.getMinutes() + 1, 0, 0);
+    const year = minimum.getFullYear();
+    const month = String(minimum.getMonth() + 1).padStart(2, '0');
+    const day = String(minimum.getDate()).padStart(2, '0');
+    const hour = String(minimum.getHours()).padStart(2, '0');
+    const minute = String(minimum.getMinutes()).padStart(2, '0');
+    return `${year}-${month}-${day}T${hour}:${minute}`;
   }
 
   },
@@ -752,6 +770,14 @@ if (!certAddr) {
   if (!this.selectedPcType) {
     alert("该资产尚未配置交付方法！");
     return;
+  }
+
+  if (this.showExpirationInput && this.expirationTime) {
+    const expirationTimestamp = new Date(this.expirationTime).getTime();
+    if (!Number.isFinite(expirationTimestamp) || expirationTimestamp <= Date.now()) {
+      alert('权限过期时间必须晚于当前时间！');
+      return;
+    }
   }
 
   // 👇 打印请求体内容，调试用

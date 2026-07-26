@@ -57,7 +57,7 @@
                     type="primary"
                     class="action-btn-primary"
                     :loading="row.uploadingKeys"
-                    :disabled="row.heRecord?.public_keys_ready"
+                    :disabled="row.heRecord?.public_keys_ready || isDeliveryExpired(row)"
                     @click="uploadHePublicKeys(row)"
                   >
                     {{ row.heRecord?.public_keys_ready ? '已请求' : '请求交付' }}
@@ -79,7 +79,7 @@
                     type="primary"
                     class="action-btn-primary"
                     :loading="row.requestingFlDelivery"
-                    :disabled="Boolean(row.flRecord?.pcp_contract_id)"
+                    :disabled="Boolean(row.flRecord?.pcp_contract_id) || isDeliveryExpired(row)"
                     @click="openFlRequestDialog(row)"
                   >
                     {{ getBuyerFlActionLabel(row) }}
@@ -101,7 +101,7 @@
                     type="primary"
                     class="action-btn-primary"
                     :loading="row.uploadingPreKey"
-                    :disabled="row.preRecord?.buyer_public_key_ready"
+                    :disabled="row.preRecord?.buyer_public_key_ready || isDeliveryExpired(row)"
                     @click="uploadPrePublicKey(row)"
                   >
                     {{ row.preRecord?.buyer_public_key_ready ? '已请求' : '请求交付' }}
@@ -134,7 +134,7 @@
                     type="success"
                     class="action-btn-secondary"
                     :loading="row.viewingMpcResult"
-                    :disabled="row.mpcRecord?.task_status !== 'done'"
+                    :disabled="row.mpcRecord?.task_status !== 'done' || isDeliveryExpired(row)"
                     @click="viewMpcResult(row)"
                   >
                     查看结果
@@ -189,7 +189,7 @@
 
           <template #footer>
             <el-button @click="closeFlRequestDialog">取消</el-button>
-            <el-button type="primary" :loading="flDialog.submitting" @click="submitFlRequest">
+            <el-button type="primary" :loading="flDialog.submitting" :disabled="isDeliveryExpired(flDialog.row)" @click="submitFlRequest">
               请求交付
             </el-button>
           </template>
@@ -220,7 +220,7 @@
 
           <template #footer>
             <el-button @click="closeDecryptDialog">取消</el-button>
-            <el-button type="primary" :loading="decryptDialog.processing" @click="confirmDecryptResult">
+            <el-button type="primary" :loading="decryptDialog.processing" :disabled="isDeliveryExpired(decryptDialog.row)" @click="confirmDecryptResult">
               解密并下载
             </el-button>
           </template>
@@ -251,7 +251,7 @@
 
           <template #footer>
             <el-button @click="closePreDecryptDialog">取消</el-button>
-            <el-button type="primary" :loading="preDecryptDialog.processing" @click="confirmDecryptPreResult">
+            <el-button type="primary" :loading="preDecryptDialog.processing" :disabled="isDeliveryExpired(preDecryptDialog.row)" @click="confirmDecryptPreResult">
               解密并下载
             </el-button>
           </template>
@@ -282,7 +282,7 @@
 
           <template #footer>
             <el-button @click="closeFlDecryptDialog">取消</el-button>
-            <el-button type="primary" :loading="flDecryptDialog.processing" @click="confirmDecryptFlResult">
+            <el-button type="primary" :loading="flDecryptDialog.processing" :disabled="isDeliveryExpired(flDecryptDialog.row)" @click="confirmDecryptFlResult">
               解密并导出
             </el-button>
           </template>
@@ -305,7 +305,7 @@
 
           <template #footer>
             <el-button @click="closeMpcDialog">取消</el-button>
-            <el-button type="primary" :loading="mpcDialog.submitting" @click="submitMpcTask()">
+            <el-button type="primary" :loading="mpcDialog.submitting" :disabled="isDeliveryExpired(mpcDialog.row)" @click="submitMpcTask()">
               请求交付
             </el-button>
           </template>
@@ -363,6 +363,10 @@
                 <div class="contract-item">
                   <label>创建时间</label>
                   <span class="value">{{ formatDate(contractInfo.data.created_at) }}</span>
+                </div>
+                <div class="contract-item">
+                  <label>过期时间</label>
+                  <span class="value">{{ formatDate(contractInfo.data.constraints?.expiration_time) }}</span>
                 </div>
                 <div class="contract-item">
                   <label>交付方法</label>
@@ -584,6 +588,7 @@ export default {
                   buyer_address: item.buyer_address,
                   seller_address: item.seller_address,
                   quantity: item.quantity,
+                  expiration_time: item.expiration_time,
                   flRecord: null,
                   heRecord: null,
                   preRecord: null,
@@ -882,19 +887,37 @@ export default {
       return labelMap[this.getBuyerDeliveryStatus(row)] || '计算中'
     },
 
+    getDeliveryExpirationTimestamp(row) {
+      const value = row?.expiration_time
+      if (!value) return null
+      const timestamp = new Date(String(value).replace(' ', 'T')).getTime()
+      return Number.isFinite(timestamp) ? timestamp : null
+    },
+
+    isDeliveryExpired(row) {
+      const timestamp = this.getDeliveryExpirationTimestamp(row)
+      return timestamp !== null && timestamp <= Date.now()
+    },
+
+    ensureDeliveryActive(row) {
+      if (!this.isDeliveryExpired(row)) return true
+      this.$message?.warning('数字合约已过期，不能继续交付或下载结果')
+      return false
+    },
+
     canDownloadHeResult(row) {
       const status = String(row?.heRecord?.pcp_status || '').toUpperCase()
-      return Boolean(row?.heRecord?.result_ready || status === 'PAM_PASSED' || status === 'COMPLETED')
+      return !this.isDeliveryExpired(row) && Boolean(row?.heRecord?.result_ready || status === 'PAM_PASSED' || status === 'COMPLETED')
     },
 
     canDownloadPreResult(row) {
       const status = String(row?.preRecord?.pcp_status || '').toUpperCase()
-      return Boolean(row?.preRecord?.result_ready || status === 'PAM_PASSED' || status === 'COMPLETED')
+      return !this.isDeliveryExpired(row) && Boolean(row?.preRecord?.result_ready || status === 'PAM_PASSED' || status === 'COMPLETED')
     },
 
     canDownloadFlBuyerResult(row) {
       const status = String(row?.flRecord?.pcp_status || '').toUpperCase()
-      return Boolean(row?.flRecord?.buyer_result_ready || status === 'PAM_PASSED' || status === 'COMPLETED')
+      return !this.isDeliveryExpired(row) && Boolean(row?.flRecord?.buyer_result_ready || status === 'PAM_PASSED' || status === 'COMPLETED')
     },
 
     formatFlApiError(error, fallbackMessage) {
@@ -1019,11 +1042,11 @@ export default {
 
     canTriggerMpcBuyerAction(row) {
       const status = String(row?.mpcRecord?.task_status || '').toLowerCase()
-      return !row?.mpcRecord?.remote_task_id || status === 'failed'
+      return !this.isDeliveryExpired(row) && (!row?.mpcRecord?.remote_task_id || status === 'failed')
     },
 
     openMpcDialog(row) {
-      if (!row?.transaction_id) return
+      if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
       this.mpcDialog.visible = true
       this.mpcDialog.row = row
       this.mpcDialog.threshold = row?.mpcRecord?.compute_params?.threshold ?? ''
@@ -1032,7 +1055,7 @@ export default {
 
     async submitMpcTask() {
       const row = this.mpcDialog.row
-      if (!row?.transaction_id) return
+      if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
 
       const threshold = Number(this.mpcDialog.threshold)
       if (!Number.isFinite(threshold) || threshold < 0) {
@@ -1065,7 +1088,7 @@ export default {
     },
 
     async viewMpcResult(row) {
-      if (!row?.transaction_id) return
+      if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
 
       row.viewingMpcResult = true
       try {
@@ -1115,7 +1138,7 @@ export default {
     },
 
     async uploadHePublicKeys(row) {
-      if (!row?.transaction_id) return
+      if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
       row.uploadingKeys = true
       try {
         const keyPairs = await heCrypto.generateHeKeyPairs()
@@ -1148,7 +1171,7 @@ export default {
     },
 
     openFlRequestDialog(row) {
-      if (!row?.transaction_id) return
+      if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
       this.flDialog.visible = true
       this.flDialog.row = row
       this.flDialog.topModelFile = null
@@ -1165,7 +1188,7 @@ export default {
     },
 
     async submitFlRequest() {
-      if (!this.flDialog.row) return
+      if (!this.flDialog.row || !this.ensureDeliveryActive(this.flDialog.row)) return
       if (!this.flDialog.topModelFile || !this.flDialog.bottomModelFile) {
         this.$message?.warning('请先选择 Top 模型和 Bottom 模型文件')
         return
@@ -1246,7 +1269,7 @@ export default {
     },
 
     async uploadPrePublicKey(row) {
-      if (!row?.transaction_id || row.preRecord?.buyer_public_key_ready) return
+      if (!row?.transaction_id || row.preRecord?.buyer_public_key_ready || !this.ensureDeliveryActive(row)) return
 
       row.uploadingPreKey = true
       try {
@@ -1373,6 +1396,7 @@ export default {
         this.$message?.warning('请先选择解密文件')
         return
       }
+      if (!this.ensureDeliveryActive(this.decryptDialog.row)) return
 
       this.decryptDialog.processing = true
       try {
@@ -1423,6 +1447,7 @@ export default {
         this.$message?.warning('请先选择 PRE 私钥文件')
         return
       }
+      if (!this.ensureDeliveryActive(this.preDecryptDialog.row)) return
 
       this.preDecryptDialog.processing = true
       try {
@@ -1497,6 +1522,7 @@ export default {
         this.$message?.warning('请先选择 FL 私钥文件')
         return
       }
+      if (!this.ensureDeliveryActive(this.flDecryptDialog.row)) return
 
       this.flDecryptDialog.processing = true
       try {
