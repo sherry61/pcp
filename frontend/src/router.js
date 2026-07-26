@@ -22,6 +22,7 @@ import DigitalContract from './views/DigitalContract.vue'
 import PenetrableSupervision from './views/PenetrableSupervision.vue'
 import ServiceManagement from './views/ServiceManagement.vue'
 import MarketSeller from './views/MarketSeller1.vue'
+import TransactionSupervision from './views/TransactionSupervision.vue'
 
 const routes = [
   { path: '/home', name: 'Home', component: HomeView, meta: { requiresAuth: true, roles: ['buyer','seller','auditor'] } },
@@ -64,6 +65,7 @@ const routes = [
   { path: '/contract', name: 'DigitalContract', component: DigitalContract, meta: { requiresAuth: true }},
   { path: '/supervision', name: 'Supervision', component: PenetrableSupervision, meta: { requiresAuth: false }},
   { path: '/services', name: 'ServiceManagement', component: ServiceManagement, meta: { requiresAuth: false }},
+  { path: '/transaction-supervision', name: 'TransactionSupervision', component: TransactionSupervision, meta: { requiresAuth: false }},
   {
   path: '/delivery',
   /*redirect: () => {

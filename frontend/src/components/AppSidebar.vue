@@ -29,6 +29,7 @@
       <router-link to="/home" @click="setBuyerRoleForRegulator">主页</router-link>
       <router-link to="/market" @click="setBuyerRoleForRegulator">交易市场</router-link>
       <router-link to="/supervision">监管平台</router-link>
+      <router-link to="/transaction-supervision">交易穿透监管</router-link>
     </template>
 
     <template v-else-if="!isAuditor">

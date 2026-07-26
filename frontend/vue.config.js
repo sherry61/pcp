@@ -1,3 +1,5 @@
+const transactionSupervisionTarget = process.env.VUE_APP_TRANSACTION_SUPERVISION_API_TARGET;
+
 module.exports = {
   chainWebpack: config => {
     config.module
@@ -14,7 +16,14 @@ module.exports = {
     port: 8085,
     https: true,
     proxy: {
-
+      '/api/transaction-supervision': {
+          target: transactionSupervisionTarget,
+          changeOrigin: true,
+          pathRewrite: {
+          '^/api/transaction-supervision': '/api/transaction-supervision'
+        },
+          secure: false
+        },
       // ===== CA 服务 =====
       '/api/ca': {
         target: 'http://10.112.47.214:8090',
