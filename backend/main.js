@@ -1807,6 +1807,8 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
     } = req.body;
 
     const picture = req.file;
+    const resolvedAssetType = assetType || '一般数据';
+    const resolvedAssetCategory = asset_category || '其他数据';
 
     console.log('接收到的请求体:', req.body);
     console.log('上传的图片:', picture);
@@ -1860,7 +1862,7 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
 
         const values = [
             assetName,
-            assetType,
+            resolvedAssetType,
             email,
             address,
             owner_address,
@@ -1872,7 +1874,7 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
             industry,
             industry_raw || '',
             industry_raw_name || '',
-            asset_category || null,
+            resolvedAssetCategory,
             predicted_domain || null,
             picture.buffer,
             is_proxied || 0,

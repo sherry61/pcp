@@ -77,11 +77,11 @@
   </div>
 </div>
             <div class="form-row">
-  <!-- 数字标识选择 -->
+  <!-- 存证方法选择 -->
   <div class="form-group">
     <label class="full-width-label left-align">
       <span class="required-asterisk" title="必填：用于生成资产元数据名称。">*</span>
-      数字标识选择
+      存证方法选择
     </label>
     <div class="radio-group">
       <div class="radio-item">
@@ -351,7 +351,7 @@
 <p><strong>分级方法:</strong> {{ getMethodLabelByOptions(gradingMethods, form.gradingMethod) }}</p>
             <p><strong>地址:</strong> {{ form.address }}</p>
             <p><strong>数据资产上链登记内容:</strong> {{ form.description }}</p>
-            <p><strong>数字标识:</strong> {{ getIdentifierMethodLabel(form.algorithm) }}</p>
+            <p><strong>存证方法:</strong> {{ getIdentifierMethodLabel(form.algorithm) }}</p>
             <p><strong>资产交付方法:</strong> {{ getPcTypeLabel(form.pcType) }}</p>
             <p><strong>模型选择:</strong>
   {{ form.modelSelection === 'weighted_average' ? '加权平均' : form.modelSelection }}
@@ -373,7 +373,7 @@
               <div v-if="loadingHash" key="hashPending">
                 <span class="pending-icon">...</span>
                 <p class="pending-text">
-                  <strong>文件哈希值:</strong> 生成中
+                  <strong>存证状态:</strong> 处理中
                 </p>
               </div>
               <div v-else key="hashResult">
@@ -384,7 +384,7 @@
                   <close />
                 </el-icon>
                 <p :class="{ 'success-text': hashSuccess, 'error-text': !hashSuccess }">
-                  <strong>文件哈希值:</strong> {{ hashValue || '哈希生成失败' }}
+                  <strong>存证状态:</strong> {{ hashSuccess ? '成功' : '失败' }}
                 </p>
                 <p v-if="!hashSuccess" class="error-text">哈希生成失败：{{ errorMessage }}</p>
               </div>
@@ -2548,18 +2548,18 @@ async openConfirmation() {
     return;
   }
 
-  // ✅ 新的一体化分类分级方法
-  if (!this.form.analysisMethod) {
-    this.showError = true;
-    this.errorMessage = '请选择分类分级方法。';
-    return;
+  // 分类分级是可选的：未执行模型分析时使用可登记的默认值，便于测试流程。
+  if (!this.form.assetCategory) {
+    this.form.assetCategory = '其他数据';
   }
 
-  // ✅ 一体化接口返回后，assetCategory 存 classification，assetType 存 grade
-  if (!this.form.assetCategory || !this.form.assetType) {
-    this.showError = true;
-    this.errorMessage = '请先点击“分类分级”按钮生成资产类别和资产等级。';
-    return;
+  if (!this.form.assetType) {
+    this.form.assetType = '一般数据';
+  }
+
+  if (!this.form.analysisResultText) {
+    this.form.analysisResultText =
+      '资产类别：其他数据；资产等级：一般数据（默认值）';
   }
 
   if (!this.form.industry) {
