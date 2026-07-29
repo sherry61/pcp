@@ -105,6 +105,76 @@ export default {
       return String(value || "").trim().toUpperCase();
     },
 
+    buildUsageControlVerifyPayload({
+      operationsArr,
+      quantityLimit,
+      tokenId,
+      expirationIso,
+      pcType,
+      modelFileHash
+    }) {
+      const effectiveExpiration =
+        expirationIso || new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
+      const payload = {
+        delivery_cnt: String(quantityLimit || 1),
+        fileHash: String(tokenId || ""),
+        timestamp: effectiveExpiration,
+        control_count: String(quantityLimit || 1),
+        control_time: effectiveExpiration,
+        control_data_field: String(tokenId || ""),
+        control_execution_env: pcType || ""
+      };
+
+      if (modelFileHash) {
+        payload.control_machine_learning_models = String(modelFileHash);
+      }
+
+      const actionMap = {
+        "访问": "action_access",
+        "访问权": "action_access",
+        "查看": "action_read",
+        "查看权": "action_read",
+        "查阅": "action_read",
+        "查阅权": "action_read",
+        "复制": "action_reproduce",
+        "复制权": "action_reproduce",
+        "下载": "action_download",
+        "下载权": "action_download",
+        "计算": "action_compute",
+        "计算权": "action_compute",
+        "加工": "action_process",
+        "加工权": "action_process",
+        "处理": "action_process",
+        "处理权": "action_process",
+        "联合开发": "action_joint_develop",
+        "联合开发权": "action_joint_develop",
+        "分发": "action_distribute",
+        "分发权": "action_distribute",
+        "删除": "action_delete",
+        "删除权": "action_delete",
+        "持有": "action_sell",
+        "持有权": "action_sell",
+        "所有": "action_sell",
+        "所有权": "action_sell"
+      };
+
+      payload.actions = operationsArr;
+      operationsArr.forEach((operation) => {
+        const actionKey = actionMap[operation];
+        if (actionKey) {
+          payload[actionKey] = "true";
+        }
+      });
+
+      if (pcType === "HE") payload.action_compute = "true";
+      if (pcType === "PRE") payload.action_encrypt = "true";
+      if (pcType === "FL") payload.action_joint_develop = "true";
+      if (pcType === "MPC") payload.action_compute = "true";
+
+      return payload;
+    },
+
     async fetchUserId(username) {
       const response = await axios.post("http://10.112.47.214:3000/api/get-user-id", { username });
       this.userId = response?.data?.id || "";
@@ -261,7 +331,7 @@ export default {
 
   const modelFileHash = tx.model_file_hash || null;
 
-  await axios.post("http://10.112.47.214:3000/api/save-digital-contract", {
+  const digitalContractBase = {
     transaction_id: asset.transaction_id,
     contract_id: contractId,
     contract_name: contractName,
@@ -276,9 +346,23 @@ export default {
     processing_type: processingType,
     model_file_hash: modelFileHash,
     pc_type: pcType
+  };
+
+  const verifyPayload = this.buildUsageControlVerifyPayload({
+    operationsArr,
+    quantityLimit,
+    tokenId,
+    expirationIso,
+    pcType,
+    modelFileHash
   });
 
-  this.$message.success("数字合约已生成并保存");
+  await axios.post("http://10.112.47.214:3000/api/save-digital-contract", {
+    ...digitalContractBase,
+    verify_payload: verifyPayload
+  });
+
+  this.$message.success("数字合约策略校验小JSON已生成并保存");
 
 } catch (err) {
   console.error("保存数字合约失败:", err);
@@ -311,6 +395,12 @@ export default {
         }
       } catch (permError) {
         console.error(`购买权限 [${rightType}] 异常:`, permError);
+            const backendMessage =
+          permError?.response?.data?.message ||
+          permError?.response?.data?.error ||
+          permError?.message ||
+          '未知错误';
+        this.$message.error(`权限 [${rightType}] 交易失败: ${backendMessage}`);
       }
     }
 

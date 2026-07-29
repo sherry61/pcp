@@ -82,7 +82,27 @@ const VM_SERVICE_BASE_URL = 'http://虚机服务IP:18080/api';
 const SUMMARY_RECORDS_DIR =
   process.env.SUMMARY_RECORDS_DIR || '/home/super/zym';
 
+const CSV_ENGINE_BASE_URL =
+  process.env.CSV_ENGINE_BASE_URL ||
+  'http://10.112.14.6:18080';
 
+const CSV_API_PATHS = {
+  receiveKey:
+    process.env.CSV_RECEIVE_KEY_PATH ||
+    '/api/receive-key',
+
+  receiveFile:
+    process.env.CSV_RECEIVE_FILE_PATH ||
+    '/api/receive-file',
+
+  verifyContract:
+    process.env.CSV_VERIFY_CONTRACT_PATH ||
+    '/apiJSON/receive-json',
+
+  getResult:
+    process.env.CSV_GET_RESULT_PATH ||
+    '/api/get-result'
+};
  
 // 缓存 TTL
 const KEY_CACHE_TTL_MIN = parseInt(process.env.KEY_CACHE_TTL_MIN || '30', 10);
@@ -2753,7 +2773,8 @@ app.post('/api/save-digital-contract', (req, res) => {
     quantity_limit,
     processing_type,      // 资产类型
     model_file_hash,
-    pc_type
+    pc_type,
+    verify_payload
     // 🚫 不再有 contract_content
   } = req.body;
 
@@ -2766,6 +2787,73 @@ app.post('/api/save-digital-contract', (req, res) => {
   if (expiration_time && typeof expiration_time === 'string') {
     // 兼容 "2025-07-21T21:10:00" / "2025-07-21 21:10:00"
     formattedExpiration = expiration_time.replace('T', ' ').slice(0, 19);
+  }
+
+  const verifyPayload = {
+    delivery_cnt: String(
+      verify_payload?.delivery_cnt ??
+      verify_payload?.deliveryCnt ??
+      quantity_limit ??
+      1
+    ),
+    fileHash: String(
+      verify_payload?.fileHash ??
+      token_id ??
+      ''
+    ),
+    timestamp:
+      verify_payload?.timestamp ??
+      verify_payload?.expireTime ??
+      expiration_time ??
+      new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
+  };
+
+  const allowedVerifyPolicyKeys = [
+    'actions',
+    'control_time',
+    'control_time_window',
+    'control_count',
+    'control_frequency',
+    'control_region',
+    'control_network_address',
+    'control_provider_node_id',
+    'control_consumer_node_id',
+    'control_data_status',
+    'control_data_size',
+    'control_distribution_data_size',
+    'control_data_field',
+    'control_execution_env',
+    'control_algorithm',
+    'control_machine_learning_models',
+    'control_application',
+    'action_transform',
+    'action_anonymize',
+    'action_desensitize',
+    'action_encrypt',
+    'action_access',
+    'action_read',
+    'action_reproduce',
+    'action_download',
+    'action_compute',
+    'action_process',
+    'action_joint_develop',
+    'action_distribute',
+    'action_policy_transmit',
+    'action_sell',
+    'action_delete',
+    'action_result_download',
+    'action_log_record_send',
+    'action_use_notify',
+    'action_expansion_item'
+  ];
+
+  if (verify_payload && typeof verify_payload === 'object') {
+    allowedVerifyPolicyKeys.forEach((key) => {
+      const value = verify_payload[key];
+      if (value !== undefined && value !== null && value !== '') {
+        verifyPayload[key] = value;
+      }
+    });
   }
 
   const query = `
@@ -2812,6 +2900,7 @@ app.post('/api/save-digital-contract', (req, res) => {
     res.status(201).json({
       message: '数字合约已成功保存',
       contractDbId: results.insertId,
+      verifyPayload
     });
   });
 });
@@ -3426,6 +3515,838 @@ app.get('/api/get-total-transaction-stats', (req, res) => {
   });
 });
 
+async function getDeliveryJob(transactionId) {
+  const results = await dbQuery(
+    `
+    SELECT *
+    FROM delivery_secure_jobs
+    WHERE transaction_id = ?
+    LIMIT 1
+    `,
+    [String(transactionId)]
+  );
+
+  return results[0] || null;
+}
+
+function assertCsvResponse(response, actionName) {
+  const data = response?.data;
+
+  if (!response) {
+    throw new Error(`${actionName}失败：没有收到远程响应`);
+  }
+
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(
+      `${actionName}失败，HTTP ${response.status}：${JSON.stringify(data)}`
+    );
+  }
+
+  if (Number(data?.code) !== 200) {
+    throw new Error(
+      `${actionName}失败：${JSON.stringify(data)}`
+    );
+  }
+
+  return data;
+}
+
+function generateEcKeyPairPem() {
+  const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
+    namedCurve: 'prime256v1'
+  });
+
+  return {
+    publicKeyPem: publicKey.export({
+      type: 'spki',
+      format: 'pem'
+    }),
+
+    privateKeyPem: privateKey.export({
+      type: 'pkcs8',
+      format: 'pem'
+    })
+  };
+}
+
+/*async function requestEncryptedSm4Key({
+  vmId,
+  ecPublicKeyPem
+}) {
+  const response = await axios.post(
+    `${CSV_ENGINE_BASE_URL}${CSV_API_PATHS.receiveKey}`,
+    {
+      vmId: String(vmId),
+
+      // 文档中疑似使用 ecPublickKey，存在拼写问题
+      ecPublicKey: ecPublicKeyPem
+    },
+    {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: 120000,
+      validateStatus: () => true
+    }
+  );
+
+  const data = assertCsvResponse(
+    response,
+    '获取并封装SM4密钥'
+  );
+
+  const envelope = data.data || data;
+
+  if (
+    !envelope.ephPub &&
+    !envelope.ephPubdata
+  ) {
+    throw new Error(
+      `密钥接口返回中缺少 ephPub：${JSON.stringify(data)}`
+    );
+  }
+
+  return envelope;
+}*/
+
+async function requestEncryptedSm4Key({
+  vmId,
+  fileType,
+  ecPublicKeyPem
+}) {
+  const payload={
+    vmId:String(vmId),
+    fileType:fileType || 'data',
+    ecPublicKey:ecPublicKeyPem
+  };
+  console.log('[receiveKey请求参数]');
+  console.log(JSON.stringify(payload,null,2));
+  const response = await axios.post(
+    `${CSV_ENGINE_BASE_URL}${CSV_API_PATHS.receiveKey}`,
+    payload,
+    {
+      headers:{
+        'Content-Type':'application/json'
+      },
+      timeout:120000,
+      validateStatus:()=>true
+    }
+  );
+  console.log('[receiveKey响应]');
+  console.log('status:',response.status);
+  console.log(JSON.stringify(response.data,null,2));
+  const data = assertCsvResponse(
+    response,
+    '获取并封装SM4密钥'
+  );
+}
+
+app.post('/api/delivery/key/contract', async (req, res) => {
+  const {
+    transactionId,
+    fileTypes,
+    sellerEcPublicKey
+  } = req.body;
+
+  if (!transactionId) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 transactionId'
+    });
+  }
+
+  if (!sellerEcPublicKey) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少卖方 EC 公钥'
+    });
+  }
+
+  try {
+    const job = await getDeliveryJob(transactionId);
+
+    if (!job) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到交付任务'
+      });
+    }
+
+    if (!job.vm_id) {
+      return res.status(409).json({
+        success: false,
+        message: '虚机尚未创建'
+      });
+    }
+
+    if (
+      String(job.vm_status).toLowerCase() !== 'running'
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: '虚机尚未启动'
+      });
+    }
+
+    await updateJob(transactionId, {
+      status: 'RUNNING',
+      step: 'CONTRACT_KEY_NEGOTIATING',
+      key1_status: 'NEGOTIATING',
+      last_error: null
+    });
+
+    const envelope = await requestEncryptedSm4Key({
+      vmId: job.vm_id,
+      fileType:fileTypes,
+      ecPublicKeyPem: sellerEcPublicKey
+    });
+
+    await updateJob(transactionId, {
+      key1_status: 'READY',
+      contract_key_envelope: JSON.stringify(envelope),
+      step: 'WAITING_ENCRYPTED_CONTRACT'
+    });
+
+    return res.json({
+      success: true,
+      message: '合约密钥获取成功',
+      transactionId,
+      vmId: job.vm_id,
+      keyPurpose: 'CONTRACT',
+      envelope
+    });
+  } catch (err) {
+    console.error('[contract-key] error:', err);
+
+    await updateJob(transactionId, {
+      key1_status: 'FAILED',
+      status: 'FAILED',
+      step: 'CONTRACT_KEY_FAILED',
+      last_error: err.message
+    }).catch(() => {});
+
+    return res.status(500).json({
+      success: false,
+      message: err.message || '合约密钥获取失败'
+    });
+  }
+});
+
+async function verifyEncryptedContractRemote({
+  vmId,
+  iv,
+  ciphertext,
+  fileHash,
+  expirationTime,
+  deliveredCount
+}) {
+  const payload = {
+    vmId: String(vmId),
+    iv,
+    ciphertext,
+    fileHash,
+    expirationTime
+  };
+
+  if (deliveredCount !== undefined) {
+    payload.deliveried_cnt = String(deliveredCount);
+  }
+
+  const response = await axios.post(
+    `${CSV_ENGINE_BASE_URL}${CSV_API_PATHS.verifyContract}`,
+    payload,
+    {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: 120000,
+      validateStatus: () => true
+    }
+  );
+
+  return assertCsvResponse(
+    response,
+    '数字合约校验'
+  );
+}
+app.post('/api/delivery/contract/verify', async (req, res) => {
+  const {
+    transactionId,
+    iv,
+    ciphertext,
+    fileHash,
+    expirationTime,
+    deliveredCount
+  } = req.body;
+
+  if (!transactionId || !iv || !ciphertext || !fileHash) {
+    return res.status(400).json({
+      success: false,
+      message:
+        '缺少 transactionId、iv、ciphertext 或 fileHash'
+    });
+  }
+
+  try {
+    const job = await getDeliveryJob(transactionId);
+
+    if (!job || !job.vm_id) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到有效虚机任务'
+      });
+    }
+
+    if (job.key1_status !== 'READY') {
+      return res.status(409).json({
+        success: false,
+        message: '合约密钥尚未准备完成'
+      });
+    }
+
+    await updateJob(transactionId, {
+      contract_status: 'VERIFYING',
+      step: 'CONTRACT_VERIFYING',
+      last_error: null
+    });
+
+    const remoteResult =
+      await verifyEncryptedContractRemote({
+        vmId: job.vm_id,
+        iv,
+        ciphertext,
+        fileHash,
+        expirationTime,
+        deliveredCount
+      });
+
+    const verifyData =
+      remoteResult.data || remoteResult;
+
+    const verified =
+      verifyData.verified === true;
+
+    await updateJob(transactionId, {
+      contract_status:
+        verified ? 'PASSED' : 'REJECTED',
+
+      contract_verify_result:
+        JSON.stringify(remoteResult),
+
+      step:
+        verified
+          ? 'CONTRACT_VERIFIED'
+          : 'CONTRACT_REJECTED'
+    });
+
+    return res.json({
+      success: verified,
+      message:
+        verified
+          ? '数字合约校验通过'
+          : '数字合约校验未通过',
+      transactionId,
+      vmId: job.vm_id,
+      verifyResult: remoteResult
+    });
+  } catch (err) {
+    console.error('[contract-verify] error:', err);
+
+    await updateJob(transactionId, {
+      contract_status: 'FAILED',
+      step: 'CONTRACT_VERIFY_FAILED',
+      last_error: err.message
+    }).catch(() => {});
+
+    return res.status(500).json({
+      success: false,
+      message: err.message || '数字合约校验失败'
+    });
+  }
+});
+
+app.post('/api/delivery/key/data', async (req, res) => {
+  const {
+    transactionId,
+    buyerEcPublicKey,
+    sellerEcPublicKey
+  } = req.body;
+
+  if (
+    !transactionId ||
+    !buyerEcPublicKey ||
+    !sellerEcPublicKey
+  ) {
+    return res.status(400).json({
+      success: false,
+      message:
+        '缺少 transactionId、buyerEcPublicKey 或 sellerEcPublicKey'
+    });
+  }
+
+  try {
+    const job = await getDeliveryJob(transactionId);
+
+    if (!job || !job.vm_id) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到有效虚机任务'
+      });
+    }
+
+    if (job.contract_status !== 'PASSED') {
+      return res.status(409).json({
+        success: false,
+        message: '数字合约尚未校验通过'
+      });
+    }
+
+    await updateJob(transactionId, {
+      key2_status: 'NEGOTIATING',
+      step: 'DATA_KEY_NEGOTIATING',
+      last_error: null
+    });
+
+    const coordinatorKeyPair =
+      generateEcKeyPairPem();
+
+    const vmEnvelope =
+      await requestEncryptedSm4Key({
+        vmId: job.vm_id,
+        ecPublicKeyPem:
+          coordinatorKeyPair.publicKeyPem
+      });
+
+    const sm4Key =
+      await unwrapSm4Envelope(
+        vmEnvelope,
+        coordinatorKeyPair.privateKeyPem
+      );
+
+    if (
+      !Buffer.isBuffer(sm4Key) ||
+      sm4Key.length !== 16
+    ) {
+      throw new Error(
+        '解封得到的SM4密钥长度不是16字节'
+      );
+    }
+
+    const buyerEnvelope =
+      encryptSm4ForParticipant(
+        sm4Key,
+        buyerEcPublicKey
+      );
+
+    const sellerEnvelope =
+      encryptSm4ForParticipant(
+        sm4Key,
+        sellerEcPublicKey
+      );
+
+    await updateJob(transactionId, {
+      key2_status: 'READY',
+
+      data_key_envelope: JSON.stringify({
+        buyerEnvelope,
+        sellerEnvelope
+      }),
+
+      step: 'WAITING_ENCRYPTED_FILES'
+    });
+
+    sm4Key.fill(0);
+
+    return res.json({
+      success: true,
+      message: '数据计算密钥生成成功',
+      transactionId,
+      vmId: job.vm_id,
+
+      buyerEnvelope,
+      sellerEnvelope
+    });
+  } catch (err) {
+    console.error('[data-key] error:', err);
+
+    await updateJob(transactionId, {
+      key2_status: 'FAILED',
+      step: 'DATA_KEY_FAILED',
+      last_error: err.message
+    }).catch(() => {});
+
+    return res.status(500).json({
+      success: false,
+      message: err.message || '数据计算密钥获取失败'
+    });
+  }
+});
+
+async function uploadEncryptedFileRemote({
+  vmId,
+  fileName,
+  fileType,
+  iv,
+  ciphertext
+}) {
+  const response = await axios.post(
+    `${CSV_ENGINE_BASE_URL}${CSV_API_PATHS.receiveFile}`,
+    {
+      vmId: String(vmId),
+      fileName,
+      name: fileName,
+      fileType,
+      mimeType: 'text/csv',
+      iv,
+      ciphertext
+    },
+    {
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      timeout: 300000,
+      validateStatus: () => true
+    }
+  );
+
+  return assertCsvResponse(
+    response,
+    `上传${fileType}加密文件`
+  );
+}
+app.post('/api/delivery/file/upload', async (req, res) => {
+  const {
+    transactionId,
+    fileName,
+    fileType,
+    iv,
+    ciphertext
+  } = req.body;
+
+  if (
+    !transactionId ||
+    !fileName ||
+    !fileType ||
+    !iv ||
+    !ciphertext
+  ) {
+    return res.status(400).json({
+      success: false,
+      message:
+        '缺少 transactionId、fileName、fileType、iv 或 ciphertext'
+    });
+  }
+
+  if (!['data', 'weight'].includes(fileType)) {
+    return res.status(400).json({
+      success: false,
+      message: 'fileType 只能是 data 或 weight'
+    });
+  }
+
+  try {
+    const job = await getDeliveryJob(transactionId);
+
+    if (!job || !job.vm_id) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到有效虚机任务'
+      });
+    }
+
+    if (job.key2_status !== 'READY') {
+      return res.status(409).json({
+        success: false,
+        message: '数据计算密钥尚未准备完成'
+      });
+    }
+
+    await updateJob(transactionId, {
+      data_status: 'UPLOADING',
+      step:
+        fileType === 'data'
+          ? 'DATA_FILE_UPLOADING'
+          : 'WEIGHT_FILE_UPLOADING',
+      last_error: null
+    });
+
+    const remoteResult =
+      await uploadEncryptedFileRemote({
+        vmId: job.vm_id,
+        fileName,
+        fileType,
+        iv,
+        ciphertext
+      });
+
+    const remoteData =
+      remoteResult.data || remoteResult;
+
+    const updateFields = {
+      data_status:
+        remoteData.computed === true
+          ? 'COMPUTED'
+          : 'WAITING_COUNTERPART',
+
+      step:
+        remoteData.computed === true
+          ? 'RESULT_READY'
+          : fileType === 'data'
+            ? 'WAITING_WEIGHT_FILE'
+            : 'WAITING_DATA_FILE'
+    };
+
+    if (fileType === 'data') {
+      updateFields.data_file_status = 'RECEIVED';
+    } else {
+      updateFields.weight_file_status = 'RECEIVED';
+    }
+
+    if (remoteData.computed === true) {
+      updateFields.result_status = 'READY';
+    }
+
+    await updateJob(
+      transactionId,
+      updateFields
+    );
+
+    return res.json({
+      success: true,
+      message:
+        remoteData.message ||
+        `${fileType}文件接收成功`,
+      transactionId,
+      vmId: job.vm_id,
+      fileType,
+      remoteResult
+    });
+  } catch (err) {
+    console.error('[file-upload] error:', err);
+
+    await updateJob(transactionId, {
+      data_status: 'FAILED',
+      step: 'FILE_UPLOAD_FAILED',
+      last_error: err.message
+    }).catch(() => {});
+
+    return res.status(500).json({
+      success: false,
+      message: err.message || '加密文件上传失败'
+    });
+  }
+});
+
+
+app.post('/api/delivery/file/upload', async (req, res) => {
+  const {
+    transactionId,
+    fileName,
+    fileType,
+    iv,
+    ciphertext
+  } = req.body;
+
+  if (
+    !transactionId ||
+    !fileName ||
+    !fileType ||
+    !iv ||
+    !ciphertext
+  ) {
+    return res.status(400).json({
+      success: false,
+      message:
+        '缺少 transactionId、fileName、fileType、iv 或 ciphertext'
+    });
+  }
+
+  if (!['data', 'weight'].includes(fileType)) {
+    return res.status(400).json({
+      success: false,
+      message: 'fileType 只能是 data 或 weight'
+    });
+  }
+
+  try {
+    const job = await getDeliveryJob(transactionId);
+
+    if (!job || !job.vm_id) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到有效虚机任务'
+      });
+    }
+
+    if (job.key2_status !== 'READY') {
+      return res.status(409).json({
+        success: false,
+        message: '数据计算密钥尚未准备完成'
+      });
+    }
+
+    await updateJob(transactionId, {
+      data_status: 'UPLOADING',
+      step:
+        fileType === 'data'
+          ? 'DATA_FILE_UPLOADING'
+          : 'WEIGHT_FILE_UPLOADING',
+      last_error: null
+    });
+
+    const remoteResult =
+      await uploadEncryptedFileRemote({
+        vmId: job.vm_id,
+        fileName,
+        fileType,
+        iv,
+        ciphertext
+      });
+
+    const remoteData =
+      remoteResult.data || remoteResult;
+
+    const updateFields = {
+      data_status:
+        remoteData.computed === true
+          ? 'COMPUTED'
+          : 'WAITING_COUNTERPART',
+
+      step:
+        remoteData.computed === true
+          ? 'RESULT_READY'
+          : fileType === 'data'
+            ? 'WAITING_WEIGHT_FILE'
+            : 'WAITING_DATA_FILE'
+    };
+
+    if (fileType === 'data') {
+      updateFields.data_file_status = 'RECEIVED';
+    } else {
+      updateFields.weight_file_status = 'RECEIVED';
+    }
+
+    if (remoteData.computed === true) {
+      updateFields.result_status = 'READY';
+    }
+
+    await updateJob(
+      transactionId,
+      updateFields
+    );
+
+    return res.json({
+      success: true,
+      message:
+        remoteData.message ||
+        `${fileType}文件接收成功`,
+      transactionId,
+      vmId: job.vm_id,
+      fileType,
+      remoteResult
+    });
+  } catch (err) {
+    console.error('[file-upload] error:', err);
+
+    await updateJob(transactionId, {
+      data_status: 'FAILED',
+      step: 'FILE_UPLOAD_FAILED',
+      last_error: err.message
+    }).catch(() => {});
+
+    return res.status(500).json({
+      success: false,
+      message: err.message || '加密文件上传失败'
+    });
+  }
+});
+
+app.post('/api/delivery/result', async (req, res) => {
+  const { transactionId } = req.body;
+
+  if (!transactionId) {
+    return res.status(400).json({
+      success: false,
+      message: '缺少 transactionId'
+    });
+  }
+
+  try {
+    const job = await getDeliveryJob(transactionId);
+
+    if (!job || !job.vm_id) {
+      return res.status(404).json({
+        success: false,
+        message: '未找到有效虚机任务'
+      });
+    }
+
+    if (
+      !['READY', 'FETCHING', 'DONE'].includes(
+        job.result_status
+      )
+    ) {
+      return res.status(409).json({
+        success: false,
+        message: '计算结果尚未生成'
+      });
+    }
+
+    await updateJob(transactionId, {
+      result_status: 'FETCHING',
+      step: 'RESULT_FETCHING',
+      last_error: null
+    });
+
+    const remoteResult =
+      await getEncryptedResultRemote(job.vm_id);
+
+    const encryptedResult =
+      remoteResult.data || remoteResult;
+
+    if (
+      !encryptedResult.iv ||
+      !encryptedResult.ciphertext
+    ) {
+      throw new Error(
+        `结果接口缺少iv或ciphertext：${JSON.stringify(remoteResult)}`
+      );
+    }
+
+    await updateJob(transactionId, {
+      result_status: 'ENCRYPTED_RESULT_READY',
+
+      encrypted_result:
+        JSON.stringify(encryptedResult),
+
+      step: 'WAITING_BUYER_RESULT_DECRYPT'
+    });
+
+    return res.json({
+      success: true,
+      message: '加密计算结果获取成功',
+      transactionId,
+      vmId: job.vm_id,
+
+      // 买家使用K2自行解密
+      encryptedResult
+    });
+  } catch (err) {
+    console.error('[get-result] error:', err);
+
+    await updateJob(transactionId, {
+      result_status: 'FAILED',
+      step: 'RESULT_FETCH_FAILED',
+      last_error: err.message
+    }).catch(() => {});
+
+    return res.status(500).json({
+      success: false,
+      message: err.message || '获取计算结果失败'
+    });
+  }
+});
+
 app.post('/api/digital-contract/verify', async (req, res) => {
   try {
     const {
@@ -3434,8 +4355,17 @@ app.post('/api/digital-contract/verify', async (req, res) => {
       fileHash,
       deliveredCnt = '0',
       deliveryCnt = '2000',
-      expireTime
+      expireTime,
+      verify_payload,
+      verifyPayload
     } = req.body || {};
+
+    const policyPayload = verify_payload || verifyPayload || {};
+    const finalFileHash = fileHash || policyPayload.fileHash;
+    const finalDeliveryCnt =
+      deliveryCnt || policyPayload.delivery_cnt || policyPayload.deliveryCnt || '2000';
+    const finalExpireTime =
+      expireTime || policyPayload.timestamp || policyPayload.expireTime;
 
     if (!transactionId) {
       return res.status(400).json({
@@ -3505,6 +4435,54 @@ app.post('/api/digital-contract/verify', async (req, res) => {
         new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
     };
 
+    const allowedVerifyPolicyKeys = [
+      'actions',
+      'control_time',
+      'control_time_window',
+      'control_count',
+      'control_frequency',
+      'control_region',
+      'control_network_address',
+      'control_provider_node_id',
+      'control_consumer_node_id',
+      'control_data_status',
+      'control_data_size',
+      'control_distribution_data_size',
+      'control_data_field',
+      'control_execution_env',
+      'control_algorithm',
+      'control_machine_learning_models',
+      'control_application',
+      'action_transform',
+      'action_anonymize',
+      'action_desensitize',
+      'action_encrypt',
+      'action_access',
+      'action_read',
+      'action_reproduce',
+      'action_download',
+      'action_compute',
+      'action_process',
+      'action_joint_develop',
+      'action_distribute',
+      'action_policy_transmit',
+      'action_sell',
+      'action_delete',
+      'action_result_download',
+      'action_log_record_send',
+      'action_use_notify',
+      'action_expansion_item'
+    ];
+
+    if (policyPayload && typeof policyPayload === 'object') {
+      allowedVerifyPolicyKeys.forEach((key) => {
+        const value = policyPayload[key];
+        if (value !== undefined && value !== null && value !== '') {
+          plainContract[key] = value;
+        }
+      });
+    }
+    
     const sharedIv = crypto.randomBytes(16).toString('base64');
 
     const encContract = await sm4CbcEncryptCompat(
