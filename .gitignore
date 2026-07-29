@@ -38,6 +38,7 @@ mpc_/app/service/mpc/.gomodcache/
 mpc_/app/service/mpc/coverage/
 mpc_/app/service/mpc/JesseQ/
 mpc_/app/service/mpc/mpc_server
+mpc_/app/service/mpc/mpc_/
 mpc_/app/service/mpc/config/crypto_config/
 mpc_/app/service/mpc/config/crypto_config_backup/
 mpc_/app/service/mpc/contracts/**/*.7z
