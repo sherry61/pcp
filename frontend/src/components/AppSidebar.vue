@@ -25,7 +25,11 @@
     <!-- 仅管理员可见，通过 isAdminVisible 控制显示，避免闪现 -->
     <!-- <router-link v-if="isAdminVisible" to="/user-management">用户管理(管理员)</router-link> -->
 
-    <template v-if="isRegulator">
+    <template v-if="isAdministrator">
+      <router-link to="/home">主页</router-link>
+    </template>
+
+    <template v-else-if="isRegulator">
       <router-link to="/home" @click="setBuyerRoleForRegulator">主页</router-link>
       <router-link to="/market" @click="setBuyerRoleForRegulator">交易市场</router-link>
       <router-link to="/supervision">监管平台</router-link>
@@ -33,8 +37,6 @@
     </template>
 
     <template v-else-if="!isAuditor">
-      <router-link to="/home">主页</router-link>
-
       <router-link v-if="isSeller" to="/chain-registration">
         上链登记
       </router-link>
@@ -93,6 +95,9 @@ export default {
   isAuditor() {
   return this.userRole === 'auditor';
 },
+  isAdministrator() {
+    return this.loginRole === 'admin';
+  },
   isRegulator() {
     return this.loginRole === 'regulator';
   },

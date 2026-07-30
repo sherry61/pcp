@@ -25,7 +25,7 @@ import MarketSeller from './views/MarketSeller1.vue'
 import TransactionSupervision from './views/TransactionSupervision.vue'
 
 const routes = [
-  { path: '/home', name: 'Home', component: HomeView, meta: { requiresAuth: true, roles: ['buyer','seller','auditor'] } },
+  { path: '/home', name: 'Home', component: HomeView, meta: { requiresAuth: true, roles: ['admin','buyer','seller','auditor'] } },
 
 { path: '/chain-registration', component: ChainRegistrationView, meta: { requiresAuth: true, roles: ['seller'] } },
 { path: '/asset-management2', component: AssetManagementView2, meta: { requiresAuth: true, roles: ['buyer','seller','auditor'] } },
@@ -112,6 +112,7 @@ const router = createRouter({
 });*/
 
 router.beforeEach((to, from, next) => {
+  const loginRole = localStorage.getItem('login_role');
   let role = localStorage.getItem('user_role');
   if (!role) {
     role = 'seller';
@@ -119,6 +120,11 @@ router.beforeEach((to, from, next) => {
   }
   const token = localStorage.getItem('token');
   //const role = localStorage.getItem('user_role') || 'buyer';
+
+  // 管理员当前仅开放主页，访问其他系统页面时统一回到主页。
+  if (loginRole === 'admin' && to.name !== 'Home' && to.name !== 'Login') {
+    return next('/home');
+  }
 
   // 需要登录
   if (to.matched.some(r => r.meta.requiresAuth)) {

@@ -44,6 +44,15 @@
       />
       审计方
     </label>
+
+    <label class="role-item">
+      <input
+        type="radio"
+        value="admin"
+        v-model="loginRole"
+      />
+      管理员
+    </label>
   </div>
 </div>
 
@@ -94,10 +103,12 @@ export default {
         console.log("登录成功", response.data);
         localStorage.setItem("token", response.data.token);
         localStorage.setItem( "login_role", this.loginRole);
-        if (this.loginRole === 'regulator') {
+        if (this.loginRole === 'admin') {
+          localStorage.setItem('user_role', 'admin');
+        } else if (this.loginRole === 'regulator') {
           localStorage.setItem('user_role', 'buyer');
         } else if (!localStorage.getItem('user_role')) {
-          localStorage.setItem('user_role', 'seller');
+          localStorage.setItem('user_role', 'buyer');
         }
 
         // 2. 获取公网 IP
@@ -111,11 +122,11 @@ export default {
 
   localStorage.setItem(
     'user_role',
-    'seller'
+    'buyer'
   );
 
   this.$router.push({
-    name: 'Home'
+    path: '/market'
   });
 
 } else if (
@@ -124,6 +135,10 @@ export default {
 
   this.$router.push({
     name: 'Supervision'
+  });
+} else if (this.loginRole === 'admin') {
+  this.$router.push({
+    name: 'Home'
   });
 } else if (
   this.loginRole === 'auditor'
