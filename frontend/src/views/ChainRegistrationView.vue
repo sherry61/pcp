@@ -302,31 +302,10 @@
   class="custom-cascader">
 </el-cascader>-->
 
-              <!-- 资产的使用地点和时间窗口，随登记信息持久化。 -->
+              <!-- 资产的使用地点随登记信息持久化。 -->
               <label class="full-width-label left-align">资产交易地点设置</label>
               <el-cascader v-model="selectedRegionOptions" :options="regionData" :props="cascaderProps"
                 @change="handleRegionChange" placeholder="请选择资产交易地点" clearable />
-              <div class="form-group full-width">
-                <label class="full-width-label left-align">资产交易时间设置</label>
-                <el-time-picker  v-model="transactionStartTime" placeholder="开始时间"
-                  :picker-options="startTimePickerOptions" @change="validateTimeRange" :clearable="true"
-                  :editable="false" :arrow-control="false" :format="'HH:mm:ss'" :value-format="'HH:mm:ss'"
-                  :picker-type="'time'" :use-12h="false" :is-range="false" :start-placeholder="'Start Time'"
-                  :end-placeholder="'End Time'" :range-separator="'至'" :popper-class="'time-picker-popper'"
-                  :prefix-icon="'el-icon-time'" :clear-icon="'el-icon-circle-close'" :disabled-date="disabledStartDate"
-                  :disabled-time="disabledStartTime" :align="left" :popper-append-to-body="true" :transfer="true"
-                  :popper-options="{ boundariesElement: 'body' }" :scroll-to-option="true" />
-                <el-time-picker v-model="transactionEndTime" placeholder="结束时间"
-                  :picker-options="endTimePickerOptions" @change="validateTimeRange" :clearable="true"
-                  :editable="false" :arrow-control="false" :format="'HH:mm:ss'" :value-format="'HH:mm:ss'"
-                  :picker-type="'time'" :use-12h="false" :is-range="false" :start-placeholder="'Start Time'"
-                  :end-placeholder="'End Time'" :range-separator="'至'" :popper-class="'time-picker-popper'"
-                  :prefix-icon="'el-icon-time'" :clear-icon="'el-icon-circle-close'" :disabled-date="disabledEndDate"
-                  :disabled-time="disabledEndTime" :align="left" :popper-append-to-body="true" :transfer="true"
-                  :popper-options="{ boundariesElement: 'body' }" :scroll-to-option="true" />
-              </div>
-
-
             </div>
 
 
@@ -826,11 +805,6 @@ gradeRationale: '',
         checkStrictly: false, // 级联选择时必须选中父节点
         emitPath: true // 返回完整的路径数组
       },
-      transactionStartTime: null, // 新增资产交易时间字段
-      transactionEndTime: null,
-      startTimePickerOptions: {}, // 动态生成
-      endTimePickerOptions: {},   // 动态生成
-
       selectedValuationMethod: 'cost',
  valuationMethodOptions: [
         { value: 'cost', label: '成本法' },
@@ -1181,16 +1155,6 @@ gradeRationale: '',
   watch: {
     'form.industryRaw': function () {
     this.handleIndustryChange();  // ✅ 统一在这里做映射 + 证书 + 数量锁定
-  },
-    transactionStartTime(newVal) {
-      this.startTimePickerOptions = {}; // 清空限制
-      if (newVal) {
-        this.endTimePickerOptions = {
-          selectableRange: `${newVal}:00:00 - 23:59:00`
-        };
-      } else {
-        this.endTimePickerOptions = {};
-      }
     }
   },
   mounted() {
@@ -2568,30 +2532,7 @@ async openConfirmation() {
     return;
   }
 
-  if (this.transactionStartTime && !this.transactionEndTime) {
-    this.showError = true;
-    this.errorMessage = '如果设置了开始时间，必须设置结束时间。';
-    return;
-  }
-
-  if (!this.transactionStartTime && this.transactionEndTime) {
-    this.showError = true;
-    this.errorMessage = '如果设置了结束时间，必须设置开始时间。';
-    return;
-  }
-
-  try {
-    // 时间窗口是可选配置；填写时仅校验后随资产登记持久化。
-    if (this.transactionStartTime && this.transactionEndTime) {
-      this.validateTimeRange();
-    }
-
-    this.showConfirmation = true;
-  } catch (error) {
-    console.error('交易时间设置失败:', error);
-    this.showError = true;
-    this.errorMessage = '交易时间设置失败，请检查输入';
-  }
+  this.showConfirmation = true;
 },
 
 async confirmForm() {
@@ -2959,13 +2900,6 @@ async gradeAssetLevel() {
   }
 },
 
-saveTradingTime() {
-  this.validateTimeRange();
-}
-,
-
-
-
     closeUnifiedModal() {
       this.showUnifiedModal = false;
       this.loadingHash = this.loadingDatabase = this.loadingBlockchain = this.loadingFiscoChain = false;
@@ -3017,25 +2951,6 @@ const tradeLocation =
     : '';
 
 formData.append('trade_location', tradeLocation);
-
-// 交易时间
-let tradeStartTs = '';
-let tradeEndTs = '';
-
-if (this.transactionStartTime && this.transactionEndTime) {
-  const now = new Date();
-  const today = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, '0'),
-    String(now.getDate()).padStart(2, '0')
-  ].join('-');
-
-  tradeStartTs = new Date(`${today} ${this.transactionStartTime}`).getTime();
-  tradeEndTs = new Date(`${today} ${this.transactionEndTime}`).getTime();
-}
-
-formData.append('trade_start_ts', tradeStartTs);
-formData.append('trade_end_ts', tradeEndTs);
 
 
       // 打印 formData 中的内容，转换为对象形式
@@ -3251,47 +3166,6 @@ formData.append('trade_end_ts', tradeEndTs);
         });
     },
 
-    validateTimeRange() {
-      // 如果有开始时间且没有结束时间
-      if (this.transactionStartTime && !this.transactionEndTime) {
-        this.$message.error('请选择结束时间');
-        return;
-      }
-      // 如果有结束时间且没有开始时间
-      if (this.transactionEndTime && !this.transactionStartTime) {
-        this.$message.error('请选择开始时间');
-        return;
-      }
-      // 如果开始时间 >= 结束时间，报错
-      if (this.transactionStartTime && this.transactionEndTime) {
-        if (this.transactionStartTime >= this.transactionEndTime) {
-          this.$message.error('结束时间必须晚于开始时间');
-          this.transactionEndTime = null;
-        }
-      }
-    },
-    
-    // 处理保存交易时间
-  
-
-    disabledStartDate(time) {
-      return time.getTime() > Date.now();
-    },
-    disabledStartTime(time) {
-      if (this.transactionEndTime) {
-        return time.getTime() >= new Date(`1970-01-01T${this.transactionEndTime}:00Z`).getTime();
-      }
-      return false;
-    },
-    disabledEndDate(time) {
-      return time.getTime() > Date.now();
-    },
-    disabledEndTime(time) {
-      if (this.transactionStartTime) {
-        return time.getTime() <= new Date(`1970-01-01T${this.transactionStartTime}:00Z`).getTime();
-      }
-      return false;
-    },
     getMethodLabelByOptions(methods, value) {
   const item = methods.find(m => m.value === value);
   return item ? item.label : value;

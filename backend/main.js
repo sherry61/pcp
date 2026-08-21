@@ -227,15 +227,6 @@ function dbQuery(sql, params = []) {
   });
 }
 
-function userDbQuery(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    userDb.query(sql, params, (err, results) => {
-      if (err) return reject(err);
-      resolve(results);
-    });
-  });
-}
-
 function firstDefined(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null && value !== '') {
@@ -247,7 +238,7 @@ function firstDefined(...values) {
 }
 
 async function getDefaultRegisterCertInfoByUserId(userId) {
-  const userRows = await userDbQuery(
+  const userRows = await dbQuery(
     `
       SELECT default_register_cert
       FROM users
@@ -671,38 +662,23 @@ app.use(express.json({ limit: '50mb' }));               // 解析 application/js
 app.use(express.urlencoded({ extended: true, limit: '50mb' })); // 解析 application/x-www-form-urlencoded
 
 
-// MySQL连接配置
+// MySQL连接配置；通过 MAIN_DB_NAME 切换测试库/正式库。
+const MAIN_DB_NAME = process.env.MAIN_DB_NAME || 'r01_prod';
 const db = mysql.createConnection({
     host: 'localhost',
     user: 'root',
     password: '123456',
-    database: 'r01'
+    database: MAIN_DB_NAME
 });
 
 db.connect(err => {
     if (err) {
-        console.error('MySQL r01 连接失败:', err);
+        console.error(`MySQL ${MAIN_DB_NAME} 连接失败:`, err);
         return;
     }
-    console.log('MySQL r01 连接成功');
+    console.log(`MySQL ${MAIN_DB_NAME} 连接成功`);
     
 });
-
-// MySQL连接配置 - User Management Database
-const userDb = mysql.createConnection({
-    host: 'localhost',
-    user: 'root',
-    password: '123456',
-    database: 'user_management'
-});
-userDb.connect(err => {
-    if (err) {
-        console.error('MySQL user_management 连接失败:', err);
-        return;
-    }
-    console.log('MySQL user_management 连接成功');
-});
-
 
 // MySQL连接配置 - Active Chainmaker CA org1 Database
 const chainmakerCaDb = mysql.createConnection({
@@ -1207,7 +1183,7 @@ app.get('/api/get-assets', (req, res) => {
 app.get('/api/get-user', (req, res) => {
     const query = 'SELECT * FROM users';
 
-    userDb.query(query, (err, results) => {
+    db.query(query, (err, results) => {
         if (err) {
             console.error('获取数据失败:', err);
             return res.status(500).json({ error: '服务器内部错误' });
@@ -1384,7 +1360,7 @@ app.post('/api/update-user', (req, res) => {
     const sql = `UPDATE users SET username = ?, usertype = ?,email = ?, address = ?  WHERE id = ?`;
     const values = [username, usertype, email, address, id];
  
-    userDb.query(sql, values, (err, result) => {
+    db.query(sql, values, (err, result) => {
         if (err) {
             return res.status(500).json({ message: '数据库更新错误', error: err });
         }
@@ -1404,7 +1380,7 @@ app.post('/api/get-user-id', (req, res) => {
     }
 
     const query = 'SELECT id FROM users WHERE username = ?';
-    userDb.query(query, [username], (err, results) => {
+    db.query(query, [username], (err, results) => {
         if (err) {
             console.error('查询数据失败:', err);
             return res.status(500).json({ error: '服务器内部错误' });
@@ -1479,7 +1455,7 @@ app.post('/api/register', async (req, res) => {
 
     // 检查是否已经存在同名用户
     const checkUserQuery = 'SELECT * FROM users WHERE username = ?';
-    userDb.query(checkUserQuery, [username], async (err, results) => {
+    db.query(checkUserQuery, [username], async (err, results) => {
         if (err) {
             console.error('数据库查询错误:', err);
             return res.status(500).json({ error: '服务器内部错误' });
@@ -1494,7 +1470,7 @@ app.post('/api/register', async (req, res) => {
 
         // 插入新用户数据
         const insertUserQuery = 'INSERT INTO users (username, password, email, phone_number, address) VALUES (?, ?, ?, ?, ?)';
-        userDb.query(insertUserQuery, [username, hashedPassword, email || null, phoneNumber || null, address || null], (err, results) => {
+        db.query(insertUserQuery, [username, hashedPassword, email || null, phoneNumber || null, address || null], (err, results) => {
             if (err) {
                 console.error('插入数据失败:', err);
                 return res.status(500).json({ error: '服务器内部错误' });
@@ -1517,7 +1493,7 @@ app.post('/api/login', (req, res) => {
 
     // 查找用户
     const findUserQuery = 'SELECT * FROM users WHERE username = ?';
-    userDb.query(findUserQuery, [username], async (err, results) => {
+    db.query(findUserQuery, [username], async (err, results) => {
         if (err) {
             console.error('数据库查询错误:', err);
             return res.status(500).json({ error: '服务器内部错误' });
@@ -1695,7 +1671,7 @@ app.post('/api/get-user-user', (req, res) => {
 
     const query = `SELECT * FROM users WHERE id = ? ORDER BY id DESC`;
     
-    userDb.query(query, [user_id], (err, results) => {
+    db.query(query, [user_id], (err, results) => {
         if (err) {
             console.error('查询数据失败:', err);
             return res.status(500).json({ error: '服务器内部错误' });
@@ -1739,7 +1715,7 @@ app.post('/api/update-user-user', async (req, res) => {
     values.push(id);
 
     // 执行数据库更新
-    userDb.query(sql, values, (err, result) => {
+    db.query(sql, values, (err, result) => {
         if (err) {
             return res.status(500).json({ message: '数据库更新错误', error: err });
         }
@@ -2431,7 +2407,7 @@ app.post('/api/add-certificate', (req, res) => {
     // 根据确定的列名查询当前证书列表
     const selectQuery = `SELECT ${certColumn} FROM users WHERE id = ?`;
 
-    userDb.query(selectQuery, [userId], (err, results) => {
+    db.query(selectQuery, [userId], (err, results) => {
         if (err) {
             console.error('查询证书失败:', err);
             return res.status(500).json({ message: '服务器内部错误' });
@@ -2454,7 +2430,7 @@ app.post('/api/add-certificate', (req, res) => {
 
         // 动态生成 UPDATE 语句，更新对应的列
         const updateQuery = `UPDATE users SET ${certColumn} = ? WHERE id = ?`;
-        userDb.query(updateQuery, [JSON.stringify(currentCertificates), userId], (err, result) => {
+        db.query(updateQuery, [JSON.stringify(currentCertificates), userId], (err, result) => {
             if (err) {
                 console.error('更新证书失败:', err);
                 return res.status(500).json({ message: '服务器内部错误' });
@@ -5476,7 +5452,7 @@ app.post('/api/save-default-cert', (req, res) => {
   }
 
   const sql = `
-    UPDATE user_management.users
+    UPDATE users
     SET default_register_cert = ?,
         default_trade_cert = ?
     WHERE id = ?
@@ -5520,7 +5496,7 @@ app.get('/api/default-cert', (req, res) => {
   const sql = `
     SELECT default_register_cert,
            default_trade_cert
-    FROM user_management.users
+    FROM users
     WHERE id = ?
     LIMIT 1
   `;
@@ -5610,7 +5586,7 @@ app.get('/api/default-register-cert-info', (req, res) => {
     LIMIT 1
   `;
 
-  userDb.query(userSql, [userId], (err, userRows) => {
+  db.query(userSql, [userId], (err, userRows) => {
     if (err) {
       console.error('查询默认上链证书失败:', err);
       return res.status(500).json({
@@ -5751,7 +5727,7 @@ app.get('/api/default-trade-cert-info', (req, res) => {
     LIMIT 1
   `;
 
-  userDb.query(userSql, [userId], (err, userRows) => {
+  db.query(userSql, [userId], (err, userRows) => {
     if (err) {
       console.error('查询默认交易证书失败:', err);
       return res.status(500).json({

@@ -35,6 +35,7 @@
               <span class="v mono">{{ a.buyer_address }}</span>
             </div>
             <div class="row"><span class="k">申请数量:</span><span class="v">{{ a.quantity }}</span></div>
+            <div class="row"><span class="k">过期时间:</span><span class="v">{{ formatExpirationTime(a.expiration_time) }}</span></div>
             <div class="row pc-row">
               <span class="k">资产交付方法:</span>
               <span class="v">{{ a.pc_type_label || "未选择" }}</span>
@@ -43,10 +44,11 @@
             <div class="actions">
               <button
                 class="btn primary"
-                :disabled="a.status !== '待确认'"
+                :disabled="a.status !== '待确认' || isTransactionExpired(a)"
+                :title="isTransactionExpired(a) ? '交易已过期，不能确认' : ''"
                 @click="confirmTransaction(a)"
               >
-                确认交易
+                {{ isTransactionExpired(a) ? '交易已过期' : '确认交易' }}
               </button>
             </div>
           </div>
@@ -238,6 +240,7 @@ export default {
               seller_address: tx.seller_address,
               buyer_address: tx.buyer_address,
               quantity: tx.quantity,
+              expiration_time: tx.expiration_time,
               pc_type: tx.pc_type || "",
               pc_type_label: ({
                 HE: "同态加密",
@@ -266,10 +269,33 @@ export default {
       }
     },
 
+    getExpirationTimestamp(value) {
+      if (!value) return null;
+      const timestamp = new Date(String(value).replace(' ', 'T')).getTime();
+      return Number.isFinite(timestamp) ? timestamp : null;
+    },
+
+    isTransactionExpired(transaction) {
+      const timestamp = this.getExpirationTimestamp(transaction?.expiration_time);
+      return timestamp !== null && timestamp <= Date.now();
+    },
+
+    formatExpirationTime(value) {
+      const timestamp = this.getExpirationTimestamp(value);
+      if (timestamp === null) return '未设置';
+      return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
+    },
+
     async confirmTransaction(asset) {
+  let isPostChainStep = false;
   try {
     const isAgree = true;
     const pcType = this.normalizePcType(asset.pc_type);
+
+    if (this.isTransactionExpired(asset)) {
+      this.$message.error('交易已过期，不能确认');
+      return;
+    }
 
     if (!pcType) {
       this.$message.error('买家尚未选择资产交付方法');
@@ -286,6 +312,11 @@ export default {
     console.log("user_id", transactionInfo.owner_id);
     const qualityStr = transactionInfo.quality;
     let expiration = transactionInfo.expiration_time;
+    if (this.isTransactionExpired({ expiration_time: expiration })) {
+      this.$message.error('交易已过期，不能确认');
+      await this.fetchPendingAssets();
+      return;
+    }
     if (expiration) {
       expiration = new Date(expiration.replace(' ', 'T')).toISOString();
     }
@@ -362,7 +393,7 @@ export default {
     verify_payload: verifyPayload
   });
 
-  this.$message.success("数字合约策略校验小JSON已生成并保存");
+  this.$message.success("数字合约已保存");
 
 } catch (err) {
   console.error("保存数字合约失败:", err);
@@ -370,6 +401,7 @@ export default {
 }
 
     // --- Step 3: 处理所有链上交易（所有权和使用权）---
+    isPostChainStep = true;
 
     const qualityList = qualityStr.split(',').map(q => q.trim());
     let hasOwnership = qualityList.includes('持有权');
@@ -395,12 +427,6 @@ export default {
         }
       } catch (permError) {
         console.error(`购买权限 [${rightType}] 异常:`, permError);
-            const backendMessage =
-          permError?.response?.data?.message ||
-          permError?.response?.data?.error ||
-          permError?.message ||
-          '未知错误';
-        this.$message.error(`权限 [${rightType}] 交易失败: ${backendMessage}`);
       }
     }
 
@@ -411,7 +437,9 @@ export default {
 
   } catch (error) {
     console.error('❌ 确认交易顶层流程异常:', error);
-    this.$message.error('确认交易时发生未知错误，请查看控制台。');
+    if (!isPostChainStep) {
+      this.$message.error('确认交易时发生未知错误，请查看控制台。');
+    }
   }
 },
 
@@ -514,7 +542,6 @@ export default {
     }
   } catch (error) {
     console.error('❌ 资产转移流程异常:', error);
-    alert('资产转移失败，请稍后重试。');
     return false;
   }
 }
