@@ -49,6 +49,10 @@
         交易市场
       </router-link>
 
+      <router-link v-if="isSeller" to="/market/seller">
+        交易处理
+      </router-link>
+
       <router-link :to="deliveryPath">
         资产交付
       </router-link>
@@ -111,7 +115,7 @@ export default {
     : '/delivery/buyer';
 },
   marketPath() {
-    return this.isBuyer || this.isRegulator ? "/market" : "/market/seller";
+    return "/market";
   }
   },
   methods: {

@@ -16,8 +16,8 @@ import UserCenter from './views/UserCenter.vue'
 import AssetPictureView from './views/AssetPictureView.vue'
 import AssetDetail from './views/AssetDetail1.vue'
 //import DeliveryPage from './views/Delivery.vue'
-import DeliverySeller2 from './views/DeliverySeller.vue'
-import DeliveryBuyer from './views/DeliveryBuyer.vue'
+import DeliverySeller2 from './views/DeliverySeller2.vue'
+import DeliveryBuyer from './views/DeliveryBuyer2.vue'
 import DigitalContract from './views/DigitalContract.vue'
 import PenetrableSupervision from './views/PenetrableSupervision.vue'
 import ServiceManagement from './views/ServiceManagement.vue'
@@ -30,9 +30,9 @@ const routes = [
 { path: '/chain-registration', component: ChainRegistrationView, meta: { requiresAuth: true, roles: ['seller'] } },
 { path: '/asset-management2', component: AssetManagementView2, meta: { requiresAuth: true, roles: ['buyer','seller','auditor'] } },
 
-{ path: '/market', component: MarketView, meta: { requiresAuth: true, roles: ['buyer'] } },
-{ path: '/market/list', component: MarketList, meta: { requiresAuth: true, roles: ['buyer'] } },
-{ path: '/market/details', component: MarketDetails, meta: { requiresAuth: true, roles: ['buyer'] } },
+{ path: '/market', component: MarketView, meta: { requiresAuth: true, roles: ['buyer','seller'] } },
+{ path: '/market/list', component: MarketList, meta: { requiresAuth: true, roles: ['buyer','seller'] } },
+{ path: '/market/details', component: MarketDetails, meta: { requiresAuth: true, roles: ['buyer','seller'] } },
 
 { path: '/delivery/seller', name: 'DeliverySeller2', component: DeliverySeller2, meta: { requiresAuth: true, roles: ['seller'] } },
 { path: '/delivery/buyer', name: 'DeliveryBuyer', component: DeliveryBuyer, meta: { requiresAuth: true, roles: ['buyer'] } },

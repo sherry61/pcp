@@ -45,42 +45,24 @@
 
          <!-- <el-table-column prop="statusText" label="交付状态" width="120" /> -->
 
-          <el-table-column label="操作" width="320">
-            <template v-slot="scope">
-              <!-- ✅ 申请交付：永远显示（可下载也保留） -->
-              <el-button
-  size="mini"
-  type="primary"
-  :loading="scope.row.requesting"
-  :disabled="scope.row.requestStatus==='PENDING'"
-  @click="openRequestDialog(scope.row)"
->
-  {{scope.row.requestStatus==='PENDING'
-      ? '已申请'
-      : '申请交付'}}
+          <el-table-column label="操作" width="520">
+<template v-slot="scope">
+<div class="operation-buttons">
+<el-button size="mini" type="warning" @click="openKeyInput(scope.row)">
+获取权重密钥
 </el-button>
-
-              <!-- ✅ 下载：只有可下载才可点 -->
-              <el-button
-                size="mini"
-                type="success"
-                :loading="scope.row.downloading"
-                :disabled="!scope.row.canDownload || scope.row.downloading"
-                @click="downloadAsset(scope.row)"
-              >
-                下载结果
-              </el-button>
-
-              <!--<el-button
-                size="mini"
-                @click="refreshDownloadList"
-                :disabled="isLoading"
-                style="margin-left: 8px"
-              >
-                刷新
-              </el-button>-->
-            </template>
-          </el-table-column>
+<el-button size="mini" type="primary" @click="chooseWeightFile(scope.row)">
+上传加密权重
+</el-button>
+<el-button size="mini" type="primary" :loading="scope.row.requesting" :disabled="scope.row.requestStatus==='PENDING'" @click="openRequestDialog(scope.row)">
+{{scope.row.requestStatus==='PENDING'?'已申请':'申请交付'}}
+</el-button>
+<el-button size="mini" type="success" :loading="scope.row.downloading" :disabled="!scope.row.canDownload||scope.row.downloading" @click="downloadAsset(scope.row)">
+下载结果
+</el-button>
+</div>
+</template>
+</el-table-column>
         </el-table>
 
 
@@ -280,6 +262,67 @@
             </span>
           </template>
         </el-dialog>
+
+        <el-dialog title="获取权重密钥" v-model="weightKeyDialog" width="500px">
+
+<el-input
+ type="textarea"
+ :rows="8"
+ v-model="weightKeyForm.publicKey"
+ placeholder="请输入EC公钥"
+/>
+
+
+<template #footer>
+
+<el-button
+ @click="weightKeyDialog=false">
+取消
+</el-button>
+
+
+<el-button
+ type="primary"
+ @click="getWeightKey">
+确认
+</el-button>
+
+</template>
+
+
+</el-dialog>
+
+<el-dialog
+title="输入IV"
+v-model="ivDialog"
+width="400px"
+>
+
+
+<el-input
+v-model="weightIv"
+placeholder="请输入SM4-CBC IV"
+/>
+
+
+<template #footer>
+
+<el-button
+@click="ivDialog=false">
+取消
+</el-button>
+
+
+<el-button
+type="primary"
+@click="uploadWeightFile">
+确认
+</el-button>
+
+</template>
+
+</el-dialog>
+
       </div>
     </div>
   </div>
@@ -313,6 +356,20 @@ export default {
 
       contractInfo: { visible: false, data: null },
       deliveryModal: { open: false, asset: null },
+      weightKeyDialog:false,
+
+weightKeyForm:{
+ transactionId:'',
+ publicKey:''
+},
+
+
+ivDialog:false,
+
+pendingWeightUpload:null,
+
+weightIv:'',
+
 
 
       requestForm: {
@@ -343,6 +400,435 @@ export default {
   },
 
   methods: {
+
+    openKeyInput(row){
+
+ this.weightKeyForm.transactionId =
+ row.transaction_id;
+
+ this.weightKeyForm.publicKey='';
+
+ this.weightKeyDialog=true;
+
+},
+normalizeEcPublicKey(input) {
+  let key = String(input || '').trim();
+
+  // 如果粘贴内容外面带了一层双引号，尝试按 JSON 字符串解析
+  if (key.startsWith('"') && key.endsWith('"')) {
+    try {
+      key = JSON.parse(key);
+    } catch (e) {
+      // 解析失败就按普通字符串继续处理
+    }
+  }
+
+  // 统一真实换行符
+  key = key
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n');
+
+  // 把 \n、\\n、\\\n 等多个反斜杠+n，都转换成真正换行
+  key = key.replace(/\\+n/g, '\n');
+
+  // 处理可能出现的 \r、\\r
+  key = key.replace(/\\+r/g, '');
+
+  // 清理每行多余空格和空行
+  key = key
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0)
+    .join('\n');
+
+  return key.trim();
+},
+
+async getWeightKey() {
+  try {
+
+    // 先规范化 EC 公钥
+    const normalizedPublicKey = this.normalizeEcPublicKey(
+      this.weightKeyForm.publicKey
+    );
+
+    if (!normalizedPublicKey) {
+      this.$message.error('请输入EC公钥');
+      return;
+    }
+
+    // 简单检查 PEM 格式
+    if (
+      !normalizedPublicKey.includes('-----BEGIN PUBLIC KEY-----') ||
+      !normalizedPublicKey.includes('-----END PUBLIC KEY-----')
+    ) {
+      this.$message.error('EC公钥格式不正确');
+      return;
+    }
+
+    const res = await axios.post(
+      'http://10.112.47.214:3000/api/delivery/key/data',
+      {
+        transactionId: this.weightKeyForm.transactionId,
+        ownerType: 'buyer',
+
+        // 这里不要再直接传 this.weightKeyForm.publicKey
+        ecPublicKey: normalizedPublicKey
+      }
+    );
+
+    if (!res.data.success) {
+      throw new Error(res.data.message);
+    }
+
+    this.downloadKeyFile(
+      res.data.envelope,
+      'weight-key-buyer.json'
+    );
+
+    this.$message.success('权重密钥获取成功，请下载');
+
+    this.weightKeyDialog = false;
+
+  } catch (e) {
+
+    this.$message.error(
+      e.response?.data?.message ||
+      e.message ||
+      '获取失败'
+    );
+
+  }
+},
+
+downloadKeyFile(data,fileName){
+const blob=new Blob([JSON.stringify(data,null,2)],{
+type:'application/json'
+});
+const url=URL.createObjectURL(blob);
+const a=document.createElement('a');
+a.href=url;
+a.download=fileName;
+a.click();
+URL.revokeObjectURL(url);
+},
+
+/*chooseWeightFile(row){
+const input=document.createElement('input');
+input.type='file';
+input.accept='.json';
+input.onchange=e=>{
+const file=e.target.files[0];
+if(!file)return;
+this.pendingWeightUpload={
+row,
+file
+};
+this.weightIv='';
+this.ivDialog=true;
+};
+input.click();
+},*/
+chooseWeightFile(row) {
+
+  const input = document.createElement('input');
+
+  input.type = 'file';
+
+  // 和卖家一样，只接受 BIN 文件
+  input.accept = '.bin,application/octet-stream';
+
+
+  input.onchange = (event) => {
+
+    const file = event.target.files[0];
+
+    if (!file) {
+      return;
+    }
+
+
+    // 检查扩展名
+    if (!file.name.toLowerCase().endsWith('.bin')) {
+
+      this.$message.error(
+        '请选择BIN格式的加密权重文件'
+      );
+
+      return;
+    }
+
+
+    const reader = new FileReader();
+
+
+    reader.onload = () => {
+
+      try {
+
+        // =========================
+        // BIN -> ArrayBuffer
+        // =========================
+
+        const arrayBuffer = reader.result;
+
+        const bytes = new Uint8Array(arrayBuffer);
+
+
+        // =========================
+        // ArrayBuffer -> Base64
+        // 与卖家逻辑保持一致
+        // =========================
+
+        const chunkSize = 0x8000;
+
+        let binary = '';
+
+
+        for (
+          let i = 0;
+          i < bytes.length;
+          i += chunkSize
+        ) {
+
+          const chunk = bytes.subarray(
+            i,
+            Math.min(
+              i + chunkSize,
+              bytes.length
+            )
+          );
+
+
+          binary += String.fromCharCode.apply(
+            null,
+            chunk
+          );
+
+        }
+
+
+        const ciphertext = btoa(binary);
+
+
+        if (!ciphertext) {
+
+          throw new Error(
+            'BIN文件内容为空'
+          );
+
+        }
+
+
+        // 保存待上传数据
+        this.pendingWeightUpload = {
+
+          row,
+
+          fileName: file.name,
+
+          ciphertext
+
+        };
+
+
+        // 清空 IV
+        this.weightIv = '';
+
+
+        // 打开 IV 输入框
+        this.ivDialog = true;
+
+
+      } catch (e) {
+
+        console.error(
+          '读取BIN权重文件失败:',
+          e
+        );
+
+        this.$message.error(
+          '读取BIN加密权重文件失败'
+        );
+
+      }
+
+    };
+
+
+    reader.onerror = () => {
+
+      this.$message.error(
+        '读取BIN加密权重文件失败'
+      );
+
+    };
+
+
+    // 关键：二进制文件必须这样读取
+    reader.readAsArrayBuffer(file);
+
+  };
+
+
+  input.click();
+
+},
+
+/*async uploadWeightFile(){
+  if(!this.weightIv){
+    this.$message.error('请输入IV');
+    return;
+  }
+  const reader=new FileReader();
+  reader.onload=async()=>{
+    const data=JSON.parse(reader.result);
+    try{
+      const res=await axios.post('http://10.112.47.214:3000/api/delivery/file/upload',{
+      transactionId:this.pendingWeightUpload.row.transaction_id,
+      fileName:'weight.csv',
+      fileType:'weight',
+      iv:this.weightIv,
+      ciphertext:data.ciphertext
+      });
+    if(!res.data.success){
+      throw new Error(res.data.message);
+    }
+    this.$message.success('加密权重上传成功');
+    this.ivDialog=false;
+    }catch(e){
+      this.$message.error(e.message);
+    }
+  };
+  reader.readAsText(this.pendingWeightUpload.file);
+},*/
+
+async uploadWeightFile() {
+
+  // =========================
+  // 1. 检查 IV
+  // =========================
+
+  const iv = (this.weightIv || '').trim();
+
+
+  if (!iv) {
+
+    this.$message.error(
+      '请输入IV'
+    );
+
+    return;
+
+  }
+
+
+  // =========================
+  // 2. 检查是否已经选择文件
+  // =========================
+
+  if (
+    !this.pendingWeightUpload ||
+    !this.pendingWeightUpload.row ||
+    !this.pendingWeightUpload.ciphertext
+  ) {
+
+    this.$message.error(
+      '未选择加密权重文件'
+    );
+
+    return;
+
+  }
+
+
+  try {
+
+    // =========================
+    // 3. 上传
+    // 与卖家 uploadDataFile 方式一致
+    // =========================
+
+    const res = await axios.post(
+
+      'http://10.112.47.214:3000/api/delivery/file/upload',
+
+      {
+
+        transactionId:
+          this.pendingWeightUpload.row.transaction_id,
+
+
+        // 使用用户实际选择的 BIN 文件名
+        fileName:
+          this.pendingWeightUpload.fileName ||
+          'weight.bin',
+
+
+        // 权重文件类型
+        fileType: 'weight',
+
+
+        // 用户输入的 IV
+        iv,
+
+
+        // BIN 转成的 Base64
+        ciphertext:
+          this.pendingWeightUpload.ciphertext
+
+      }
+
+    );
+
+
+    // =========================
+    // 4. 判断上传结果
+    // =========================
+
+    if (!res.data.success) {
+
+      throw new Error(
+        res.data.message
+      );
+
+    }
+
+
+    this.$message.success(
+      '加密权重上传成功'
+    );
+
+
+    // 关闭 IV 弹窗
+    this.ivDialog = false;
+
+
+    // 清理
+    this.pendingWeightUpload = null;
+
+    this.weightIv = '';
+
+
+  } catch (e) {
+
+    console.error(
+      '上传加密权重失败:',
+      e
+    );
+
+
+    this.$message.error(
+
+      e.response?.data?.message ||
+      e.message ||
+      '上传失败'
+
+    );
+
+  }
+
+},
 
 
      // ====== 交付状态文案（沿用你的）======
@@ -1439,6 +1925,18 @@ async submitRequestDelivery(form) {
 </script>
 
 <style scoped>
+
+.operation-buttons{
+display:flex;
+align-items:center;
+gap:6px;
+white-space:nowrap;
+}
+.operation-buttons .el-button{
+margin-left:0;
+padding:6px 10px;
+}
+
 /* ✅ scoped 下 :root 不一定生效，建议变量挂到容器上 */
 .delivery {
   --header-height: 60px;

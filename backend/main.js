@@ -3531,6 +3531,44 @@ async function getDeliveryJob(transactionId) {
   return results[0] || null;
 }
 
+app.get('/api/delivery/status/:transactionId',async(req,res)=>{
+const {transactionId}=req.params;
+try{
+const job=await getDeliveryJob(transactionId);
+if(!job){
+return res.json({
+success:true,
+exists:false,
+transactionId
+});
+}
+return res.json({
+success:true,
+exists:true,
+transactionId,
+job:{
+status:job.status,
+step:job.step,
+vmId:job.vm_id,
+vmStatus:job.vm_status,
+key1Status:job.key1_status,
+contractStatus:job.contract_status,
+sellerKeyStatus:job.seller_key_status,
+buyerKeyStatus:job.buyer_key_status,
+dataFileStatus:job.data_file_status,
+weightFileStatus:job.weight_file_status,
+resultStatus:job.result_status
+}
+});
+}catch(err){
+console.error('[delivery-status] error:',err);
+return res.status(500).json({
+success:false,
+message:err.message||'查询交付状态失败'
+});
+}
+});
+
 function assertCsvResponse(response, actionName) {
   const data = response?.data;
 
@@ -3553,7 +3591,7 @@ function assertCsvResponse(response, actionName) {
   return data;
 }
 
-function generateEcKeyPairPem() {
+function generateEcEcKeyPairPem() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ec', {
     namedCurve: 'prime256v1'
   });
@@ -3640,7 +3678,7 @@ async function requestEncryptedSm4Key({
   const data = assertCsvResponse(
     response,
     '获取并封装SM4密钥'
-  );
+  );2
 }
 
 app.post('/api/delivery/key/contract', async (req, res) => {
@@ -3710,13 +3748,12 @@ app.post('/api/delivery/key/contract', async (req, res) => {
     });
 
     return res.json({
-      success: true,
-      message: '合约密钥获取成功',
-      transactionId,
-      vmId: job.vm_id,
-      keyPurpose: 'CONTRACT',
-      envelope
-    });
+ success:true,
+ message:'合约密钥获取成功',
+ transactionId,
+ keyType:'contract',
+ envelope
+});
   } catch (err) {
     console.error('[contract-key] error:', err);
 
@@ -3732,6 +3769,106 @@ app.post('/api/delivery/key/contract', async (req, res) => {
       message: err.message || '合约密钥获取失败'
     });
   }
+});
+
+
+app.post('/api/delivery/key/result', async (req, res) => {
+
+  const {
+    transactionId,
+    buyerEcPublicKey
+  } = req.body;
+
+  if (
+    !transactionId ||
+    !buyerEcPublicKey
+  ) {
+    return res.status(400).json({
+      success:false,
+      message:'缺少 transactionId 或 buyerEcPublicKey'
+    });
+  }
+
+  try {
+
+    const job = await getDeliveryJob(transactionId);
+
+    if (!job || !job.vm_id) {
+      return res.status(404).json({
+        success:false,
+        message:'未找到有效虚机任务'
+      });
+    }
+
+
+    await updateJob(transactionId,{
+      key3_status:'NEGOTIATING',
+      step:'RESULT_KEY_NEGOTIATING',
+      last_error:null
+    });
+
+
+    const resultEnvelope =
+      await requestEncryptedSm4Key({
+
+        vmId:job.vm_id,
+
+        fileType:'result',
+
+        ecPublicKeyPem:
+          buyerEcPublicKey
+
+      });
+
+
+    await updateJob(transactionId,{
+
+      key3_status:'READY',
+
+      result_key_envelope:
+        JSON.stringify(resultEnvelope),
+
+      step:'WAITING_RESULT'
+
+    });
+
+
+    return res.json({
+ success:true,
+ message:'结果密钥生成成功',
+ transactionId,
+ keyType:'result',
+ envelope
+});
+
+
+  } catch(err){
+
+    console.error(
+      '[result-key] error:',
+      err
+    );
+
+
+    await updateJob(transactionId,{
+      key3_status:'FAILED',
+      step:'RESULT_KEY_FAILED',
+      last_error:err.message
+    }).catch(()=>{});
+
+
+    return res.status(500).json({
+
+      success:false,
+
+      message:
+        err.message ||
+        '结果密钥获取失败'
+
+    });
+
+  }
+
 });
 
 async function verifyEncryptedContractRemote({
@@ -3867,122 +4004,119 @@ app.post('/api/delivery/contract/verify', async (req, res) => {
   }
 });
 
-app.post('/api/delivery/key/data', async (req, res) => {
+
+app.post('/api/delivery/key/data', async (req,res)=>{
   const {
     transactionId,
-    buyerEcPublicKey,
-    sellerEcPublicKey
-  } = req.body;
-
-  if (
+    ownerType,
+    ecPublicKey
+  }=req.body;
+  if(
     !transactionId ||
-    !buyerEcPublicKey ||
-    !sellerEcPublicKey
-  ) {
+    !ownerType ||
+    !ecPublicKey
+  ){
     return res.status(400).json({
-      success: false,
-      message:
-        '缺少 transactionId、buyerEcPublicKey 或 sellerEcPublicKey'
+      success:false,
+      message:'缺少必要参数'
     });
   }
-
-  try {
-    const job = await getDeliveryJob(transactionId);
-
-    if (!job || !job.vm_id) {
+  try{
+    const job=await getDeliveryJob(transactionId);
+    if(!job || !job.vm_id){
       return res.status(404).json({
-        success: false,
-        message: '未找到有效虚机任务'
+        success:false,
+        message:'未找到有效虚机任务'
       });
     }
-
-    if (job.contract_status !== 'PASSED') {
-      return res.status(409).json({
-        success: false,
-        message: '数字合约尚未校验通过'
-      });
-    }
-
-    await updateJob(transactionId, {
-      key2_status: 'NEGOTIATING',
-      step: 'DATA_KEY_NEGOTIATING',
-      last_error: null
-    });
-
-    const coordinatorKeyPair =
-      generateEcKeyPairPem();
-
-    const vmEnvelope =
+    const envelope =
       await requestEncryptedSm4Key({
-        vmId: job.vm_id,
-        ecPublicKeyPem:
-          coordinatorKeyPair.publicKeyPem
+        vmId:job.vm_id,
+        fileType:'data',
+        ecPublicKeyPem:ecPublicKey
       });
-
-    const sm4Key =
-      await unwrapSm4Envelope(
-        vmEnvelope,
-        coordinatorKeyPair.privateKeyPem
-      );
-
-    if (
-      !Buffer.isBuffer(sm4Key) ||
-      sm4Key.length !== 16
-    ) {
-      throw new Error(
-        '解封得到的SM4密钥长度不是16字节'
-      );
+    if(ownerType==='seller'){
+      await updateJob(transactionId,{
+        seller_data_key_envelope:
+          JSON.stringify(envelope),
+        seller_key_status:'READY',
+        key2_status:'READY'
+      });
     }
-
-    const buyerEnvelope =
-      encryptSm4ForParticipant(
-        sm4Key,
-        buyerEcPublicKey
-      );
-
-    const sellerEnvelope =
-      encryptSm4ForParticipant(
-        sm4Key,
-        sellerEcPublicKey
-      );
-
-    await updateJob(transactionId, {
-      key2_status: 'READY',
-
-      data_key_envelope: JSON.stringify({
-        buyerEnvelope,
-        sellerEnvelope
-      }),
-
-      step: 'WAITING_ENCRYPTED_FILES'
-    });
-
-    sm4Key.fill(0);
-
+    if(ownerType==='buyer'){
+      await updateJob(transactionId,{
+        buyer_data_key_envelope:
+          JSON.stringify(envelope),
+        buyer_key_status:'READY',
+        key2_status:'READY'
+      });
+    }
     return res.json({
-      success: true,
-      message: '数据计算密钥生成成功',
-      transactionId,
-      vmId: job.vm_id,
-
-      buyerEnvelope,
-      sellerEnvelope
-    });
-  } catch (err) {
-    console.error('[data-key] error:', err);
-
-    await updateJob(transactionId, {
-      key2_status: 'FAILED',
-      step: 'DATA_KEY_FAILED',
-      last_error: err.message
-    }).catch(() => {});
-
+ success:true,
+ message:'数据密钥生成成功',
+ transactionId,
+ keyType:'data',
+ ownerType,
+ envelope
+});
+  }catch(err){
+    console.error('[data-key] error:',err);
     return res.status(500).json({
-      success: false,
-      message: err.message || '数据计算密钥获取失败'
+      success:false,
+      message:err.message
     });
   }
 });
+
+
+
+app.get('/api/delivery/key/download/:transactionId/:keyType', async(req,res)=>{
+  const {
+    transactionId,
+    keyType
+  }=req.params;
+  try{
+    const job=await getDeliveryJob(transactionId);
+    if(!job){
+      return res.status(404).json({
+        success:false,
+        message:'未找到交付任务'
+      });
+    }
+    let envelope=null;
+    if(keyType==='contract'){
+      envelope=job.contract_key_envelope;
+    }else if(keyType==='seller_data'){
+      envelope=job.seller_data_key_envelope;
+    }else if(keyType==='buyer_data'){
+      envelope=job.buyer_data_key_envelope;
+    }else{
+      return res.status(400).json({
+        success:false,
+        message:'未知密钥类型'
+      });
+    }
+    if(!envelope){
+      return res.status(404).json({
+        success:false,
+        message:'密钥尚未生成'
+      });
+    }
+    return res.json({
+      success:true,
+      transactionId,
+      keyType,
+      envelope:JSON.parse(envelope)
+    });
+  }catch(err){
+    console.error('[download-key] error:',err);
+    return res.status(500).json({
+      success:false,
+      message:err.message||'密钥下载失败'
+    });
+  }
+});
+
 
 async function uploadEncryptedFileRemote({
   vmId,
@@ -4262,89 +4396,102 @@ app.post('/api/delivery/file/upload', async (req, res) => {
     });
   }
 });
+async function getEncryptedResultRemote(vmId){
+  const response = await axios.post(
+    `${CSV_ENGINE_BASE_URL}/api/get-result`,
+    {
+      vmId:String(vmId)
+    },
+    {
+      headers:{
+        'Content-Type':'application/json'
+      },
+      timeout:120000,
+      validateStatus:()=>true
+    }
+  );
+  const data=response.data;
+  console.log('[get-result响应]');
+  console.log(data);
+  if(
+    !data ||
+    data.code !== 200
+  ){
+    throw new Error(
+      `获取加密结果失败:${JSON.stringify(data)}`
+    );
+  }
+  return data;
+}
 
-app.post('/api/delivery/result', async (req, res) => {
-  const { transactionId } = req.body;
-
-  if (!transactionId) {
+app.post('/api/delivery/result', async (req,res)=>{
+  const {
+    transactionId
+  }=req.body;
+  if(!transactionId){
     return res.status(400).json({
-      success: false,
-      message: '缺少 transactionId'
+      success:false,
+      message:'缺少 transactionId'
     });
   }
-
-  try {
-    const job = await getDeliveryJob(transactionId);
-
-    if (!job || !job.vm_id) {
+  try{
+    const job=await getDeliveryJob(transactionId);
+    if(!job || !job.vm_id){
       return res.status(404).json({
-        success: false,
-        message: '未找到有效虚机任务'
+        success:false,
+        message:'未找到有效虚机任务'
       });
     }
-
-    if (
-      !['READY', 'FETCHING', 'DONE'].includes(
-        job.result_status
-      )
-    ) {
-      return res.status(409).json({
-        success: false,
-        message: '计算结果尚未生成'
-      });
-    }
-
-    await updateJob(transactionId, {
-      result_status: 'FETCHING',
-      step: 'RESULT_FETCHING',
-      last_error: null
+    await updateJob(transactionId,{
+      result_status:'FETCHING',
+      step:'RESULT_FETCHING',
+      last_error:null
     });
-
     const remoteResult =
-      await getEncryptedResultRemote(job.vm_id);
-
-    const encryptedResult =
-      remoteResult.data || remoteResult;
-
-    if (
+      await getEncryptedResultRemote(
+        job.vm_id
+      );
+    const encryptedResult={
+      iv:remoteResult.iv,
+      ciphertext:remoteResult.ciphertext,
+      seq:remoteResult.seq
+    };
+    if(
       !encryptedResult.iv ||
       !encryptedResult.ciphertext
-    ) {
+    ){
       throw new Error(
-        `结果接口缺少iv或ciphertext：${JSON.stringify(remoteResult)}`
+        `结果接口缺少iv或ciphertext:${JSON.stringify(remoteResult)}`
       );
     }
-
-    await updateJob(transactionId, {
-      result_status: 'ENCRYPTED_RESULT_READY',
-
+    await updateJob(transactionId,{
+      result_status:'ENCRYPTED_RESULT_READY',
       encrypted_result:
         JSON.stringify(encryptedResult),
-
-      step: 'WAITING_BUYER_RESULT_DECRYPT'
+      step:'WAITING_BUYER_RESULT_DECRYPT'
     });
-
     return res.json({
-      success: true,
-      message: '加密计算结果获取成功',
+      success:true,
+      message:'加密计算结果获取成功',
       transactionId,
-      vmId: job.vm_id,
-
-      // 买家使用K2自行解密
+      vmId:job.vm_id,
       encryptedResult
     });
-  } catch (err) {
-    console.error('[get-result] error:', err);
-
-    await updateJob(transactionId, {
-      result_status: 'FAILED',
-      step: 'RESULT_FETCH_FAILED',
-      last_error: err.message
-    }).catch(() => {});
-
+  }catch(err){
+    console.error(
+      '[get-result] error:',
+      err
+    );
+    await updateJob(transactionId,{
+      result_status:'FAILED',
+      step:'RESULT_FETCH_FAILED',
+      last_error:err.message
+    }).catch(()=>{});
     return res.status(500).json({
-      success: false,
-      message: err.message || '获取计算结果失败'
+      success:false,
+      message:
+        err.message ||
+        '获取计算结果失败'
     });
   }
 });
@@ -4882,7 +5029,18 @@ app.post('/api/delivery/secure-confirm', async (req, res) => {
     }
 
 
-
+/*if(job.vm_id&&String(job.vm_status).toLowerCase()==='running'&&job.status!=='COMPLETED'){
+return res.json({
+success:true,
+message:'虚机已存在，继续当前交付流程',
+transactionId,
+vmId:job.vm_id,
+status:job.status,
+step:job.step,
+vmStatus:job.vm_status,
+resume:true
+});
+}*/
     /*
      * =====================
      * 1. 创建虚机

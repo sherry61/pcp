@@ -52,6 +52,9 @@
                         <button class="contract-btn view" @click="viewContract(asset)">
                           查看
                         </button>
+                        <button class="contract-btn download" @click="downloadContract(asset)">
+                          下载
+                        </button>
                         <!--<button
                           class="contract-btn verify"
                           @click="verifyContract(asset)"
@@ -272,6 +275,123 @@ asset.vmStatus==='running'
         </div>
 
         <!-- 交付详情弹窗（沿用你原来） -->
+        <div v-if="deliveryFlow.visible" class="modal" @click.self="deliveryFlow.visible=false">
+<div class="modal-content flow-modal">
+<h3>安全交付流程</h3>
+<div class="flow-container">
+<div v-for="step in deliveryFlow.steps" :key="step.id" class="flow-step">
+<div class="step-circle" :class="step.status">
+{{step.id}}
+</div>
+<div class="step-name">
+{{step.name}}
+</div>
+<button
+v-if="step.id===2"
+class="flow-btn"
+@click="openKeyInput('contract')"
+>
+获取合约密钥
+</button>
+<button
+v-if="step.id===3"
+class="flow-btn"
+@click="uploadContract(deliveryFlow.asset)"
+>
+上传加密合约
+</button>
+<button
+v-if="step.id===4"
+class="flow-btn"
+@click="openKeyInput('data')"
+>
+获取文件密钥
+</button>
+<button
+v-if="step.id===5"
+@click="chooseAndUploadDataFile(deliveryFlow.asset)"
+>
+上传加密文件
+</button>
+</div>
+</div>
+<div class="button-container">
+<button class="confirm-button" @click="deliveryFlow.visible=false">
+关闭
+</button>
+</div>
+</div>
+</div>
+<div v-if="deliveryFlow.keyInput.visible" class="modal">
+<div class="modal-content">
+<h3>
+输入EC公钥
+</h3>
+
+<textarea
+v-model="deliveryFlow.keyInput.value"
+rows="8"
+style="width:100%"
+placeholder="请输入EC Public Key">
+</textarea>
+
+<div class="button-container">
+
+<button
+class="confirm-button"
+@click="confirmKeyInput">
+确认
+</button>
+
+<button
+class="cancel-button"
+@click="deliveryFlow.keyInput.visible=false">
+取消
+</button>
+
+</div>
+
+</div>
+</div>
+
+<div v-if="deliveryFlow.ivInput.visible" class="modal">
+
+<div class="modal-content">
+
+<h3>
+输入IV
+</h3>
+
+
+<input
+v-model="deliveryFlow.ivInput.value"
+style="width:100%"
+placeholder="请输入SM4-CBC IV"
+/>
+
+
+<div class="button-container">
+
+<button
+class="confirm-button"
+@click="confirmIvInput">
+确认
+</button>
+
+
+<button
+class="cancel-button"
+@click="deliveryFlow.ivInput.visible=false">
+取消
+</button>
+
+</div>
+
+
+</div>
+
+</div>
+
         <div v-if="deliveryModal.open" class="modal" @click.self="deliveryModal.open = false">
           <div class="modal-content">
             <h3>交付详情</h3>
@@ -335,9 +455,532 @@ export default {
 
       // 如果你卖家侧也有 vmId 逻辑，沿用你原来 activeVmId
       activeVmId: '1',
+      deliveryFlow:{
+visible:false,
+asset:null,
+keyInput:{
+  visible:false,
+  type:'',
+  value:''
+ },
+ ivInput:{
+  visible:false,
+  value:''
+ },
+steps:[
+{
+id:1,
+name:'虚拟机创建与启动',
+status:'pending'
+},
+{
+id:2,
+name:'获取合约密钥',
+status:'pending'
+},
+{
+id:3,
+name:'上传加密合约',
+status:'pending'
+},
+{
+id:4,
+name:'获取文件密钥',
+status:'pending'
+},
+{
+id:5,
+name:'上传加密文件',
+status:'pending'
+}
+]
+}
     }
   },
   methods: {
+
+    openDeliveryFlow(asset){
+ this.deliveryFlow.asset=asset;
+ this.deliveryFlow.visible=true;
+ this.deliveryFlow.currentStep=1;
+ this.deliveryFlow.steps=[
+  {
+   id:1,
+   name:'虚拟机创建与启动',
+   status:'success'
+  },
+  {
+   id:2,
+   name:'获取合约密钥',
+   status:'pending'
+  },
+  {
+   id:3,
+   name:'上传加密合约',
+   status:'pending'
+  },
+  {
+   id:4,
+   name:'获取文件密钥',
+   status:'pending'
+  },
+  {
+   id:5,
+   name:'上传加密数据文件',
+   status:'pending'
+  }
+ ];
+},
+
+downloadKeyFile(data,fileName){
+ const blob=new Blob(
+  [
+   JSON.stringify(
+    data,
+    null,
+    2
+   )
+  ],
+  {
+   type:'application/json'
+  }
+ );
+ const url=URL.createObjectURL(blob);
+ const a=document.createElement('a');
+ a.href=url;
+ a.download=fileName;
+ a.click();
+ URL.revokeObjectURL(url);
+},
+
+async getContractKey(asset,publicKey){
+ this.deliveryFlow.steps[1].status='running';
+
+ try{
+
+  const response=await axios.post(
+   'http://10.112.47.214:3000/api/delivery/key/contract',
+   {
+    transactionId:
+      asset.transaction_id,
+
+    fileTypes:'data',
+
+    sellerEcPublicKey: publicKey
+   }
+  );
+
+
+  if(!response.data.success){
+   throw new Error(
+    response.data.message
+   );
+  }
+
+
+  this.downloadKeyFile(
+   response.data.envelope,
+   'contract-key.json'
+  );
+
+
+  this.deliveryFlow.steps[1].status='success';
+
+
+  this.$message.success(
+   '合约密钥获取成功，请下载'
+  );
+
+
+ }catch(e){
+
+  console.error(e);
+
+  this.deliveryFlow.steps[1].status='failed';
+
+  this.$message.error(
+   e.response?.data?.message ||
+   e.message
+  );
+
+ }
+},
+
+/*async uploadContract(asset){
+
+ this.deliveryFlow.steps[2].status='running';
+
+ try{
+
+  //这里后续接文件选择上传
+  //上传成功之后调用合约验证
+
+
+  this.deliveryFlow.steps[2].status='success';
+
+
+  this.$message.success(
+   '加密合约上传成功'
+  );
+
+
+ }catch(e){
+
+  this.deliveryFlow.steps[2].status='failed';
+
+  this.$message.error(
+   e.message
+  );
+
+ }
+
+},*/
+
+async getDataKey(asset,publicKey){
+
+ this.deliveryFlow.steps[3].status='running';
+
+
+ try{
+
+  const response=
+   await axios.post(
+   'http://10.112.47.214:3000/api/delivery/key/data',
+   {
+    transactionId:asset.transaction_id,
+    ownerType:'seller',
+    ecPublicKey: publicKey
+   });
+
+
+  if(!response.data.success){
+
+   throw new Error(
+    response.data.message
+   );
+
+  }
+
+
+  this.downloadKeyFile(
+   response.data.envelope,
+   'data-key-seller.json'
+  );
+
+
+  this.deliveryFlow.steps[3].status='success';
+
+
+  this.$message.success(
+   '文件密钥获取成功，请下载'
+  );
+
+
+ }catch(e){
+
+  this.deliveryFlow.steps[3].status='failed';
+
+  this.$message.error(
+   e.response?.data?.message ||
+   e.message
+  );
+
+ }
+
+},
+
+/*async uploadDataFile(asset,encryptedFile){
+ this.deliveryFlow.steps[4].status='running';
+ try{
+  const response=await axios.post(
+   'http://10.112.47.214:3000/api/delivery/file/upload',
+   {
+    transactionId:asset.transaction_id,
+    fileName:'data.csv',
+    fileType:'data',
+    iv:encryptedFile.iv,
+    ciphertext:encryptedFile.ciphertext
+   }
+  );
+  if(!response.data.success){
+   throw new Error(response.data.message);
+  }
+  this.deliveryFlow.steps[4].status='success';
+  this.$message.success('加密数据文件上传成功');
+ }catch(e){
+  this.deliveryFlow.steps[4].status='failed';
+  this.$message.error(
+   e.response?.data?.message||e.message
+  );
+ }
+},
+
+
+async chooseAndUploadDataFile(asset){
+
+ const encryptedFile=
+ await this.selectEncryptedFile();
+
+
+ if(!encryptedFile){
+  return;
+ }
+
+
+ this.deliveryFlow.ivInput.value='';
+
+ this.deliveryFlow.ivInput.visible=true;
+
+
+ this.deliveryFlow.pendingUpload={
+  asset,
+  encryptedFile
+ };
+
+},
+
+
+async confirmIvInput(){
+
+ const iv=
+ this.deliveryFlow.ivInput.value;
+
+
+ if(!iv){
+
+  this.$message.error(
+   '请输入IV'
+  );
+
+  return;
+
+ }
+
+
+ this.deliveryFlow.ivInput.visible=false;
+
+
+ const data=
+ this.deliveryFlow.pendingUpload;
+
+
+ await this.uploadDataFile(
+  data.asset,
+  {
+   iv,
+   ciphertext:
+   data.encryptedFile.ciphertext
+  }
+ );
+
+
+},
+
+selectEncryptedFile(){
+ return new Promise((resolve)=>{
+  const input=document.createElement('input');
+  input.type='file';
+  input.accept='.json';
+  input.onchange=(event)=>{
+   const file=event.target.files[0];
+   if(!file){
+    resolve(null);
+    return;
+   }
+   const reader=new FileReader();
+   reader.onload=()=>{
+    const data=JSON.parse(reader.result);
+    resolve(data);
+   };
+   reader.readAsText(file);
+  };
+  input.click();
+ });
+},
+
+
+
+openKeyInput(type){
+
+ this.deliveryFlow.keyInput.type=type;
+
+ this.deliveryFlow.keyInput.value='';
+
+ this.deliveryFlow.keyInput.visible=true;
+
+},
+
+async confirmKeyInput(){
+const rawKey=this.deliveryFlow.keyInput.value;
+if(!rawKey||!rawKey.trim()){
+this.$message.error('请输入EC公钥');
+return;
+}
+const key=rawKey.replace(/\\n/g,'\n').replace(/\r\n/g,'\n').trim()+'\n';
+if(!key.includes('-----BEGIN PUBLIC KEY-----')||!key.includes('-----END PUBLIC KEY-----')){
+this.$message.error('EC公钥格式错误，请输入PEM格式公钥');
+return;
+}
+this.deliveryFlow.keyInput.visible=false;
+if(this.deliveryFlow.keyInput.type==='contract'){
+await this.getContractKey(this.deliveryFlow.asset,key);
+}
+if(this.deliveryFlow.keyInput.type==='data'){
+await this.getDataKey(this.deliveryFlow.asset,key);
+}
+},*/
+
+
+async uploadDataFile(asset,encryptedFile){
+this.deliveryFlow.steps[4].status='running';
+try{
+const response=await axios.post(
+'http://10.112.47.214:3000/api/delivery/file/upload',
+{
+transactionId:asset.transaction_id,
+fileName:encryptedFile.fileName||'data.bin',
+fileType:'data',
+iv:encryptedFile.iv,
+ciphertext:encryptedFile.ciphertext
+}
+);
+if(!response.data.success){
+throw new Error(response.data.message);
+}
+this.deliveryFlow.steps[4].status='success';
+this.$message.success('加密数据文件上传成功');
+}catch(e){
+this.deliveryFlow.steps[4].status='failed';
+this.$message.error(
+e.response?.data?.message||e.message
+);
+}
+},
+async chooseAndUploadDataFile(asset){
+const encryptedFile=await this.selectEncryptedFile();
+if(!encryptedFile){
+return;
+}
+this.deliveryFlow.ivInput.value='';
+this.deliveryFlow.ivInput.visible=true;
+this.deliveryFlow.pendingUpload={
+asset,
+encryptedFile
+};
+},
+async confirmIvInput(){
+const iv=(this.deliveryFlow.ivInput.value||'').trim();
+if(!iv){
+this.$message.error('请输入IV');
+return;
+}
+const data=this.deliveryFlow.pendingUpload;
+if(!data||!data.asset||!data.encryptedFile){
+this.$message.error('未选择加密文件');
+return;
+}
+this.deliveryFlow.ivInput.visible=false;
+await this.uploadDataFile(
+data.asset,
+{
+iv,
+ciphertext:data.encryptedFile.ciphertext,
+fileName:data.encryptedFile.fileName
+}
+);
+},
+selectEncryptedFile(){
+return new Promise((resolve)=>{
+const input=document.createElement('input');
+input.type='file';
+input.accept='.bin,application/octet-stream';
+input.onchange=(event)=>{
+const file=event.target.files[0];
+if(!file){
+resolve(null);
+return;
+}
+if(!file.name.toLowerCase().endsWith('.bin')){
+this.$message.error('请选择BIN格式的加密文件');
+resolve(null);
+return;
+}
+const reader=new FileReader();
+reader.onload=()=>{
+try{
+const arrayBuffer=reader.result;
+const bytes=new Uint8Array(arrayBuffer);
+const chunkSize=0x8000;
+let binary='';
+for(let i=0;i<bytes.length;i+=chunkSize){
+const chunk=bytes.subarray(i,Math.min(i+chunkSize,bytes.length));
+binary+=String.fromCharCode.apply(null,chunk);
+}
+const ciphertext=btoa(binary);
+if(!ciphertext){
+throw new Error('BIN文件内容为空');
+}
+resolve({
+fileName:file.name,
+ciphertext
+});
+}catch(e){
+console.error('读取BIN文件失败:',e);
+this.$message.error('读取BIN加密文件失败');
+resolve(null);
+}
+};
+reader.onerror=()=>{
+this.$message.error('读取BIN加密文件失败');
+resolve(null);
+};
+reader.readAsArrayBuffer(file);
+};
+input.click();
+});
+},
+openKeyInput(type){
+this.deliveryFlow.keyInput.type=type;
+this.deliveryFlow.keyInput.value='';
+this.deliveryFlow.keyInput.visible=true;
+},
+normalizeEcPublicKey(rawKey){
+let key=String(rawKey||'');
+key=key.replace(/\r\n/g,'\n');
+key=key.replace(/\r/g,'\n');
+key=key.replace(/\\n/g,'\n');
+key=key.replace(/\/\/n/g,'\n');
+key=key.replace(/\/n/g,'\n');
+key=key.trim();
+return key+'\n';
+},
+async confirmKeyInput(){
+const rawKey=this.deliveryFlow.keyInput.value;
+if(!rawKey||!rawKey.trim()){
+this.$message.error('请输入EC公钥');
+return;
+}
+const key=this.normalizeEcPublicKey(rawKey);
+if(!key.includes('-----BEGIN PUBLIC KEY-----')||!key.includes('-----END PUBLIC KEY-----')){
+this.$message.error('EC公钥格式错误，请输入PEM格式公钥');
+return;
+}
+console.log('[EC公钥规范化结果]');
+console.log(key);
+this.deliveryFlow.keyInput.visible=false;
+if(this.deliveryFlow.keyInput.type==='contract'){
+await this.getContractKey(
+this.deliveryFlow.asset,
+key
+);
+}
+if(this.deliveryFlow.keyInput.type==='data'){
+await this.getDataKey(
+this.deliveryFlow.asset,
+key
+);
+}
+},
     // ====== 交付状态文案（沿用你的）======
     getDeliveryStatusText(asset) {
       if (!asset) return '未交付';
@@ -441,6 +1084,33 @@ export default {
         this.$message?.error('查看合约失败');
       }
     },
+
+    async downloadContract(asset){
+try{
+const contractObj=await this.generateContractInfo(asset);
+if(!contractObj){
+throw new Error('生成数字合约失败');
+}
+const blob=new Blob(
+[
+JSON.stringify(contractObj,null,2)
+],
+{
+type:'application/json'
+}
+);
+const url=URL.createObjectURL(blob);
+const a=document.createElement('a');
+a.href=url;
+a.download=`contract-${asset.transaction_id}.json`;
+a.click();
+URL.revokeObjectURL(url);
+this.$message.success('数字合约下载成功');
+}catch(e){
+console.error('下载数字合约失败:',e);
+this.$message.error(e.message||'下载失败');
+}
+},
 
     closeContractInfo() {
       this.contractInfo.visible = false;
@@ -805,13 +1475,7 @@ response.data.status;
 this.$message.success(
 '确认交付成功，虚机已启动'
 );
-
-
-
-/*
-刷新卖家列表
-重新查询申请状态
-*/
+this.openDeliveryFlow(asset);
 
 await this.fetchRequestedAssets();
 
@@ -845,6 +1509,8 @@ asset.confirmingDelivery=false;
 
 
 },
+
+
 
     // ====== 核心：拉卖家交易列表（沿用你原来 fetchRequestedAssets 的思路）======
     async fetchRequestedAssets() {
@@ -990,6 +1656,57 @@ asset.confirmingDelivery=false;
   background: #1f2329;
 }
 
+.flow-modal{
+width:900px;
+}
+.flow-container{
+display:flex;
+justify-content:center;
+align-items:center;
+gap:35px;
+overflow-x:auto;
+}
+.flow-step{
+display:flex;
+flex-direction:column;
+align-items:center;
+gap:15px;
+position:relative;
+}
+.step-circle{
+width:50px;
+height:50px;
+border-radius:50%;
+display:flex;
+align-items:center;
+justify-content:center;
+background:#ddd;
+font-size:20px;
+}
+.step-circle.success{
+background:#52c41a;
+color:white;
+}
+.step-circle.running{
+background:#1890ff;
+color:white;
+}
+.step-circle.failed{
+background:#ff4d4f;
+color:white;
+}
+.step-name{
+font-size:14px;
+}
+.flow-btn{
+padding:8px 15px;
+background:#1890ff;
+border:none;
+color:white;
+border-radius:5px;
+cursor:pointer;
+}
+
 /* ========== 页面卡片容器（复用 delivery） ========== */
 .asset-upload-container {
   background: #fff;
@@ -1082,6 +1799,12 @@ asset.confirmingDelivery=false;
   background:#e6f7ff;
   color:#1890ff;
   border:1px solid #91d5ff;
+}
+
+.contract-btn.download {
+background:#f6ffed;
+color:#52c41a;
+border:1px solid #b7eb8f;
 }
 
 .contract-btn.verify {
