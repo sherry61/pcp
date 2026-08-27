@@ -11,7 +11,9 @@ const TEE_DEFAULTS = Object.freeze({
   gatewayPort: Number(process.env.TEE_GATEWAY_PORT || 18080),
   token: process.env.TEE_VM_API_TOKEN || '',
   timeoutMs: Number(process.env.TEE_REQUEST_TIMEOUT_MS || 120000),
-  readyTimeoutMs: Number(process.env.TEE_READY_TIMEOUT_MS || 180000),
+  // VM boot plus in-guest service deployment can take several minutes on
+  // the remote Hygon host; keep the HTTP flow asynchronous and allow 10 min.
+  readyTimeoutMs: Number(process.env.TEE_READY_TIMEOUT_MS || 600000),
   readyPollMs: Number(process.env.TEE_READY_POLL_MS || 2000)
 });
 
