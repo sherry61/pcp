@@ -18,7 +18,7 @@ const { spawn,exec } = require('child_process');
 const FormData = require('form-data');
 const { registerFlRoutes, registerHeRoutes, registerPreRoutes } = require('./pcp');
 const { registerMpcRoutes } = require('./mpc');
-const { registerTeeRoutes } = require('./tee');
+const { registerTeeRoutes, createTeeClient } = require('./tee');
 
 
 // ====== 基础实例与常量（确保在后面使用之前就定义好）======
@@ -908,7 +908,11 @@ registerMpcRoutes({
 registerTeeRoutes({
   app,
   upload,
-  dbQuery
+  dbQuery,
+  // The existing VM integration already has the service credential. Prefer an
+  // explicitly configured TEE token, but reuse it so TEE create/start works
+  // in current deployments without a second manual secret configuration.
+  teeClient: createTeeClient({ token: process.env.TEE_VM_API_TOKEN || VM_TOKEN })
 });
 
 

@@ -55,7 +55,7 @@
                   >
                     {{ getSellerHeActionLabel(row) }}
                   </el-button>
-                  <el-button v-if="isTeeRow(row)" size="small" type="primary" :loading="row.teeSubmitting" @click="openTeeSellerDialog(row)">TEE交付</el-button>
+                  <el-button v-if="isTeeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.teeSubmitting" :disabled="isDeliveryExpired(row)" @click="openTeeSellerDialog(row)">执行交付</el-button>
                   <el-button
                     v-if="isFlRow(row)"
                     size="small"
@@ -312,14 +312,13 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="teeDialog.visible" title="TEE 固定加权交付" width="560px">
+        <el-dialog v-model="teeDialog.visible" title="执行交付" width="620px">
           <div v-if="teeDialog.row" class="dialog-body">
             <div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDialog.row.transaction_id }}</span></div>
-            <div class="dialog-field"><span class="dialog-label">数据文件 data.csv</span><input type="file" accept=".csv,text/csv" @change="teeDialog.dataFile = $event.target.files[0]" /></div>
-            <div v-if="teeDialog.dataFile" class="file-name">{{ teeDialog.dataFile.name }}</div>
-            <div class="dialog-hint">虚拟机启动及服务部署可能需要约 5 分钟。</div>
+            <div class="dialog-field"><span class="dialog-label">数据文件</span><div class="file-action-group"><input ref="teeDataCsvInput" class="hidden-file-input" type="file" accept=".csv,text/csv" @change="onTeeDataFileChange" /><el-button size="small" plain @click="openFileSelector('teeDataCsvInput')">选择文件</el-button></div></div>
+            <div v-if="teeDialog.dataFile" class="file-name inline-file-name">{{ teeDialog.dataFile.name }}</div>
           </div>
-          <template #footer><el-button @click="teeDialog.visible=false">取消</el-button><el-button type="primary" :loading="teeDialog.submitting" @click="submitTeeSellerData">上传并启动 TEE</el-button></template>
+          <template #footer><el-button @click="teeDialog.visible=false">取消</el-button><el-button type="primary" :loading="teeDialog.submitting" :disabled="isDeliveryExpired(teeDialog.row)" @click="submitTeeSellerData">执行交付</el-button></template>
         </el-dialog>
 
         <div v-if="contractInfo.visible" class="modal" @click.self="closeContractInfo">
@@ -685,6 +684,7 @@ export default {
     },
     isTeeRow(row) { return this.normalizePcType(row?.pc_type) === 'TEE' },
     openTeeSellerDialog(row) { this.teeDialog = { visible: true, row, dataFile: null, submitting: false } },
+    onTeeDataFileChange(event) { this.teeDialog.dataFile = event.target.files?.[0] || null; event.target.value = '' },
     async submitTeeSellerData() {
       const row = this.teeDialog.row
       if (!row || !this.teeDialog.dataFile) return this.$message.error('请选择 data.csv')
@@ -768,7 +768,7 @@ export default {
         const currentStatus = String(this.getCurrentStatus(rowOrStatus) || '').toUpperCase()
         const labelMap = {
           WAIT_BUYER: '待买方操作',
-          WAIT_SELLER: '待卖方交付',
+          WAIT_SELLER: '待卖方操作',
           PROCESSING: currentStatus === 'PAMING' ? '审计中' : '计算中',
           COMPLETED: '已完成',
           FAILED: '失败'

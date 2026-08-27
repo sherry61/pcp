@@ -947,7 +947,7 @@ export default {
       const currentStatus = String(this.getCurrentStatus(row) || '').toUpperCase()
       const labelMap = {
         WAIT_BUYER: '待买方操作',
-        WAIT_SELLER: '待卖方交付',
+        WAIT_SELLER: '待卖方操作',
         PROCESSING: currentStatus === 'PAMING' ? '审计中' : '计算中',
         COMPLETED: '已完成',
         FAILED: '失败'
