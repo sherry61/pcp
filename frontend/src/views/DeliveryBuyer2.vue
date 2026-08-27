@@ -656,6 +656,9 @@ export default {
     },
     isTeeRow(row) { return this.normalizePcType(row?.pc_type) === 'TEE' },
     getTeeActionLabel(row) { if (row.teeResultReady) return '计算完成'; if (row.teeContractSubmitting) return '校验中'; if (row.teeSubmitting) return '上传中'; if (!row.teeRequested) return '请求交付'; if (row.teeStep === 'WAITING_WEIGHT') return '上传权重'; return '等待卖方交付' },
+    getTeePhaseLabel(row) {
+      return ({ VM_CREATING: '虚机创建中', VM_STARTING: '虚机启动中', VM_RUNNING: '服务部署中' })[String(row?.teeStep || '').toUpperCase()] || ''
+    },
     async openTeeAction(row) {
       if (!row.teeRequested) {
         row.teeSubmitting = true
@@ -944,6 +947,7 @@ export default {
     },
 
     getCurrentStatusText(row) {
+      if (this.isTeeRow(row)) return this.getTeePhaseLabel(row) || (this.getBuyerDeliveryStatus(row) === 'WAIT_BUYER' ? '待买方操作' : this.getBuyerDeliveryStatus(row) === 'WAIT_SELLER' ? '待卖方操作' : this.getBuyerDeliveryStatus(row) === 'COMPLETED' ? '已完成' : this.getBuyerDeliveryStatus(row) === 'FAILED' ? '失败' : '计算中')
       const currentStatus = String(this.getCurrentStatus(row) || '').toUpperCase()
       const labelMap = {
         WAIT_BUYER: '待买方操作',

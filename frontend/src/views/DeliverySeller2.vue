@@ -613,14 +613,26 @@ export default {
 
     async syncSellerPageStatus() {
       await Promise.all(this.pagedRequestedAssets.map((row) => (
-        this.isHeRow(row)
+        this.isTeeRow(row)
+          ? this.refreshTeeStatus(row)
+          : (this.isHeRow(row)
           ? this.refreshHeStatus(row, false)
           : (this.isFlRow(row)
             ? this.refreshFlStatus(row, false)
             : (this.isPreRow(row)
               ? this.refreshPreStatus(row, false)
-              : this.refreshMpcStatus(row, false)))
+              : this.refreshMpcStatus(row, false))))
       )))
+    },
+
+    async refreshTeeStatus(row) {
+      try {
+        const response = await teeApi.status(row.transaction_id)
+        row.teeStep = response.step || response.status || ''
+        row.teeStatus = ''
+      } catch (error) {
+        row.teeStep = ''
+      }
     },
 
     async handleSellerPageChange(page) {
@@ -771,6 +783,7 @@ export default {
 
     getStatusText(rowOrStatus) {
       if (typeof rowOrStatus === 'object' && rowOrStatus !== null) {
+        if (this.isTeeRow(rowOrStatus)) return ({ VM_CREATING: '虚机创建中', VM_STARTING: '虚机启动中', VM_RUNNING: '服务部署中' })[String(rowOrStatus.teeStep || '').toUpperCase()] || ({ WAIT_BUYER: '待买方操作', WAIT_SELLER: '待卖方操作', COMPLETED: '已完成', FAILED: '失败' })[this.getSellerDeliveryStatus(rowOrStatus)] || '计算中'
         const businessStatus = this.getSellerDeliveryStatus(rowOrStatus)
         const currentStatus = String(this.getCurrentStatus(rowOrStatus) || '').toUpperCase()
         const labelMap = {
