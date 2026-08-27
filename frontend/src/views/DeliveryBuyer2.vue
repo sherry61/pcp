@@ -118,6 +118,7 @@
                     下载结果
                   </el-button>
                   <el-button v-if="isTeeRow(row)" size="small" type="primary" :loading="row.teeSubmitting" @click="openTeeDialog(row)">TEE上传权重</el-button>
+                  <el-button v-if="isTeeRow(row)" size="small" type="warning" :loading="row.teeContractSubmitting" @click="verifyTeeContract(row)">校验合约</el-button>
                   <el-button
                     v-if="isMpcRow(row)"
                     size="small"
@@ -615,6 +616,7 @@ export default {
                   processingPre: false,
                   processingMpc: false,
                   viewingMpcResult: false
+                  ,teeSubmitting: false, teeContractSubmitting: false, teeContractVerified: false, teeResultReady: false
                 })
               })
           } catch (error) {
@@ -653,10 +655,24 @@ export default {
       return this.normalizePcType(row?.pc_type) === 'MPC'
     },
     isTeeRow(row) { return this.normalizePcType(row?.pc_type) === 'TEE' },
+    async verifyTeeContract(row) {
+      row.teeContractSubmitting = true
+      try {
+        const info = await this.generateContractInfo(row)
+        if (!info) throw new Error('无法生成数字合约')
+        const kp = await generateEcKeyPair(); const pem = await publicKeyPem(kp.publicKey)
+        const key = await teeApi.receiveKey({ transactionId: String(row.transaction_id), ecPublicKey: pem, fileType: 'contract', role: 'buyer', name: 'contract.json' })
+        const sm4 = await decryptEnvelope(key.envelope || key, kp.privateKey); const iv = b64(crypto.getRandomValues(new Uint8Array(16)))
+        const encrypted = encryptSm4(new TextEncoder().encode(JSON.stringify(info)), b64(sm4), iv)
+        await teeApi.verifyContract({ transactionId: String(row.transaction_id), iv, ciphertext: encrypted.ciphertext, fileHash: row.file_hash || row.asset_id, expirationTime: info.constraints?.expiration_time, deliveried_cnt: info.constraints?.quantity || 0 })
+        row.teeContractVerified = true; row.teeStatus = '等待卖方数据'; this.$message.success('TEE 合约校验通过')
+      } catch (e) { this.$message.error(e.response?.data?.message || e.message || '合约校验失败') } finally { row.teeContractSubmitting = false }
+    },
     openTeeDialog(row) { this.teeDialog = { visible: true, row, file: null, submitting: false } },
     async submitTeeWeight() {
       const row = this.teeDialog.row
       if (!row || !this.teeDialog.file) return this.$message.error('请选择 weight.csv')
+      if (!row.teeContractVerified) return this.$message.error('请先完成合约校验')
       this.teeDialog.submitting = true
       try {
         const tx = String(row.transaction_id); const kp = await generateEcKeyPair(); const pem = await publicKeyPem(kp.publicKey)
