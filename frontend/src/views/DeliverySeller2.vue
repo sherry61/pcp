@@ -707,10 +707,15 @@ export default {
         try { task = await teeApi.status(tx) } catch (error) { throw new Error('请先等待买方发起 TEE 交付申请') }
         const step = String(task.step || '')
         if (step !== 'WAITING_DATA') {
-          await teeApi.confirm(tx)
-          row.teeStatus = '计算中'
+          // VM provisioning is deliberately fire-and-forget. The backend owns
+          // the long-running setup; this click must finish immediately.
+          teeApi.confirm(tx).catch((error) => {
+            console.warn('[TEE] 后台准备失败:', error?.response?.data || error?.message || error)
+          })
+          row.teeStep = 'VM_CREATING'
+          row.teeStatus = ''
           this.teeDialog.visible = false
-          this.$message.success('TEE 环境正在后台准备，请稍后刷新页面再执行交付')
+          this.$message.success('TEE 环境已开始后台准备，请稍后刷新状态')
           return
         }
         const kp = await generateEcKeyPair(); const pem = await publicKeyPem(kp.publicKey)
