@@ -117,8 +117,7 @@
                   >
                     下载结果
                   </el-button>
-                  <el-button v-if="isTeeRow(row)" size="small" type="primary" :loading="row.teeSubmitting" @click="openTeeDialog(row)">TEE上传权重</el-button>
-                  <el-button v-if="isTeeRow(row)" size="small" type="warning" :loading="row.teeContractSubmitting" @click="verifyTeeContract(row)">校验合约</el-button>
+                  <el-button v-if="isTeeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.teeSubmitting || row.teeContractSubmitting" :disabled="isDeliveryExpired(row) || row.teeResultReady" @click="openTeeAction(row)">{{ getTeeActionLabel(row) }}</el-button>
                   <el-button
                     v-if="isMpcRow(row)"
                     size="small"
@@ -597,6 +596,7 @@ export default {
                   pc_type: this.normalizePcType(item.pc_type),
                   buyer_address: item.buyer_address,
                   seller_address: item.seller_address,
+                  asset_id: item.asset_id,
                   quantity: item.quantity,
                   expiration_time: item.expiration_time,
                   flRecord: null,
@@ -616,7 +616,7 @@ export default {
                   processingPre: false,
                   processingMpc: false,
                   viewingMpcResult: false
-                  ,teeSubmitting: false, teeContractSubmitting: false, teeContractVerified: false, teeResultReady: false
+                  ,teeSubmitting: false, teeContractSubmitting: false, teeContractVerified: false, teeResultReady: false, teeRequested: false
                 })
               })
           } catch (error) {
@@ -655,6 +655,20 @@ export default {
       return this.normalizePcType(row?.pc_type) === 'MPC'
     },
     isTeeRow(row) { return this.normalizePcType(row?.pc_type) === 'TEE' },
+    getTeeActionLabel(row) { if (row.teeResultReady) return '计算完成'; if (row.teeContractSubmitting) return '校验中'; if (row.teeSubmitting) return '上传中'; if (!row.teeRequested) return '请求交付'; if (row.teeStep === 'WAITING_WEIGHT') return '上传权重'; return '等待卖方交付' },
+    async openTeeAction(row) {
+      if (!row.teeRequested) {
+        row.teeSubmitting = true
+        try {
+          await teeApi.request({ transactionId: String(row.transaction_id), buyerAddress: row.buyer_address, sellerAddress: row.seller_address, assetId: row.asset_id, vmCpu: 8, vmMemoryMb: 4096 })
+          row.teeRequested = true; row.teeStatus = '待卖方交付'; row.teeStep = 'REQUESTED'; this.$message.success('TEE 交付申请已提交，等待卖方处理')
+        } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE 交付申请失败') } finally { row.teeSubmitting = false }
+        return
+      }
+      if (row.teeStep !== 'WAITING_WEIGHT') return
+      if (!row.teeContractVerified) { await this.verifyTeeContract(row); if (!row.teeContractVerified) return }
+      this.openTeeDialog(row)
+    },
     async verifyTeeContract(row) {
       row.teeContractSubmitting = true
       try {
@@ -685,6 +699,7 @@ export default {
     },
 
     getDeliveryMethodLabel(row) {
+      if (this.isTeeRow(row)) return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_TEE)
       if (this.isPreRow(row)) {
         return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_PRE)
       }
@@ -753,7 +768,7 @@ export default {
     },
 
     async refreshTeeStatus(row) {
-      try { const r = await teeApi.status(row.transaction_id); const s = r.step || r.status; row.teeStatus = s === 'RESULT_READY' ? '结果已生成' : (s === 'WAITING_WEIGHT' ? '等待权重' : (s === 'VM_RUNNING' ? 'TEE运行中' : s)); row.teeResultReady = s === 'RESULT_READY' || r.resultStatus === 'READY' } catch (e) { /* task may not exist yet */ }
+      try { const r = await teeApi.status(row.transaction_id); const s = r.step || r.status; row.teeRequested = true; row.teeStep = s; row.teeStatus = ''; row.teeResultReady = s === 'RESULT_READY' || r.resultStatus === 'READY' } catch (e) { row.teeRequested = false; row.teeStep = ''; row.teeStatus = '' }
     },
 
     async handleBuyerPageChange(page) {
@@ -842,6 +857,13 @@ export default {
     },
 
     getBuyerDeliveryStatus(row) {
+      if (this.isTeeRow(row)) {
+        if (!row.teeRequested || row.teeStep === 'WAITING_WEIGHT') return 'WAIT_BUYER'
+        if (row.teeResultReady || row.teeStep === 'RESULT_READY') return 'COMPLETED'
+        if (row.teeStep === 'REQUESTED' || row.teeStep === 'VM_CREATING' || row.teeStep === 'VM_STARTING') return 'WAIT_SELLER'
+        if (row.teeStep === 'FAILED') return 'FAILED'
+        return 'PROCESSING'
+      }
       if (this.isMpcRow(row)) {
         const currentStatus = String(this.getCurrentStatus(row) || '').toLowerCase()
 
