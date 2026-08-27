@@ -705,6 +705,7 @@ export default {
     },
 
     getDeliveryMethodLabel(row) {
+      if (this.isTeeRow(row)) return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_TEE)
       if (this.isPreRow(row)) {
         return heConfig.getDeliveryMethodLabel(heConfig.DELIVERY_METHOD_PRE)
       }
