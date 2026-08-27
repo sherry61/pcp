@@ -1,5 +1,6 @@
 const fs = require('fs');
 const fsp = fs.promises;
+const os = require('os');
 const path = require('path');
 const axios = require('axios');
 const FormData = require('form-data');
@@ -183,71 +184,89 @@ async function runPreDecryptHelper({ encryptedZipBuffer, privateScalarHex }) {
     throw error;
   }
 
-  const payload = JSON.stringify({
-    privateScalarHex: String(privateScalarHex || ''),
-    encryptedZipBase64: Buffer.from(encryptedZipBuffer || Buffer.alloc(0)).toString('base64')
-  });
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'pre-decrypt-'));
+  const encryptedZipPath = path.join(tempDir, 'encrypted-result.zip');
+  const plainZipPath = path.join(tempDir, 'plain-result.zip');
 
-  const stdoutText = await new Promise((resolve, reject) => {
-    execFile(
-      pythonPath,
-      [helperScriptPath],
-      {
-        cwd: path.resolve(__dirname, '../..'),
-        env: {
-          ...process.env,
-          PCC_PRE_ROOT: process.env.PCC_PRE_ROOT || '/home/super/tr/pcc'
+  try {
+    await fsp.writeFile(encryptedZipPath, encryptedZipBuffer || Buffer.alloc(0));
+    const payload = JSON.stringify({
+      privateScalarHex: String(privateScalarHex || ''),
+      encryptedZipPath,
+      plainZipPath
+    });
+
+    const stdoutText = await new Promise((resolve, reject) => {
+      execFile(
+        pythonPath,
+        [helperScriptPath],
+        {
+          cwd: path.resolve(__dirname, '../..'),
+          env: {
+            ...process.env,
+            PCC_PRE_ROOT: process.env.PCC_PRE_ROOT || '/home/super/tr/pcc'
+          },
+          // stdout 只承载结果元数据，解密 ZIP 通过临时文件传递。
+          maxBuffer: 1024 * 1024
         },
-        maxBuffer: 64 * 1024 * 1024
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          error.stdout = stdout;
-          error.stderr = stderr;
-          reject(error);
-          return;
+        (error, stdout, stderr) => {
+          if (error) {
+            error.stdout = stdout;
+            error.stderr = stderr;
+            reject(error);
+            return;
+          }
+          resolve(String(stdout || ''));
         }
-        resolve(String(stdout || ''));
+      ).stdin.end(payload);
+    }).catch((error) => {
+      let helperMessage = '';
+      try {
+        const parsed = JSON.parse(String(error?.stdout || '').trim() || '{}');
+        helperMessage = parsed?.message || '';
+      } catch (parseError) {
+        helperMessage = '';
       }
-    ).stdin.end(payload);
-  }).catch((error) => {
-    let helperMessage = '';
+
+      const routeError = new Error(
+        helperMessage ||
+        String(error?.stderr || '').trim() ||
+        error.message ||
+        'PRE 解密 helper 执行失败'
+      );
+      routeError.statusCode = 500;
+      throw routeError;
+    });
+
+    let parsed;
     try {
-      const parsed = JSON.parse(String(error?.stdout || '').trim() || '{}');
-      helperMessage = parsed?.message || '';
-    } catch (parseError) {
-      helperMessage = '';
+      parsed = JSON.parse(stdoutText);
+    } catch (error) {
+      const routeError = new Error('PRE 解密 helper 返回内容非法');
+      routeError.statusCode = 500;
+      throw routeError;
     }
 
-    const routeError = new Error(
-      helperMessage ||
-      String(error?.stderr || '').trim() ||
-      error.message ||
-      'PRE 解密 helper 执行失败'
-    );
-    routeError.statusCode = 500;
-    throw routeError;
-  });
+    if (!parsed?.success) {
+      const routeError = new Error(parsed?.message || 'PRE 解密 helper 未返回结果');
+      routeError.statusCode = 500;
+      throw routeError;
+    }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(stdoutText);
-  } catch (error) {
-    const routeError = new Error('PRE 解密 helper 返回内容非法');
-    routeError.statusCode = 500;
-    throw routeError;
+    const zipBuffer = await fsp.readFile(plainZipPath);
+    if (zipBuffer.length === 0) {
+      const routeError = new Error('PRE 解密 helper 未生成解密压缩包');
+      routeError.statusCode = 500;
+      throw routeError;
+    }
+
+    return {
+      zipBuffer,
+      entryCount: Number(parsed.entryCount || 0)
+    };
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
   }
-
-  if (!parsed?.success || !parsed?.zipBase64) {
-    const routeError = new Error(parsed?.message || 'PRE 解密 helper 未返回结果');
-    routeError.statusCode = 500;
-    throw routeError;
-  }
-
-  return {
-    zipBuffer: Buffer.from(String(parsed.zipBase64), 'base64'),
-    entryCount: Number(parsed.entryCount || 0)
-  };
 }
 
 async function runPrePublishHelper({ transactionId, buyerPublicKey, sourceArchiveBuffer }) {
@@ -267,74 +286,92 @@ async function runPrePublishHelper({ transactionId, buyerPublicKey, sourceArchiv
     throw error;
   }
 
-  const payload = JSON.stringify({
-    transactionId: String(transactionId || ''),
-    buyerPublicKey,
-    sourceArchiveBase64: Buffer.from(sourceArchiveBuffer || Buffer.alloc(0)).toString('base64')
-  });
+  const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'pre-publish-'));
+  const sourceArchivePath = path.join(tempDir, 'source-archive.zip');
+  const sourceCipherZipPath = path.join(tempDir, 'source-cipher.zip');
 
-  const stdoutText = await new Promise((resolve, reject) => {
-    execFile(
-      pythonPath,
-      [helperScriptPath],
-      {
-        cwd: path.resolve(__dirname, '../..'),
-        env: {
-          ...process.env,
-          PCC_PRE_ROOT: process.env.PCC_PRE_ROOT || '/home/super/tr/pcc'
+  try {
+    await fsp.writeFile(sourceArchivePath, sourceArchiveBuffer || Buffer.alloc(0));
+    const payload = JSON.stringify({
+      transactionId: String(transactionId || ''),
+      buyerPublicKey,
+      sourceArchivePath,
+      sourceCipherZipPath
+    });
+
+    const stdoutText = await new Promise((resolve, reject) => {
+      execFile(
+        pythonPath,
+        [helperScriptPath],
+        {
+          cwd: path.resolve(__dirname, '../..'),
+          env: {
+            ...process.env,
+            PCC_PRE_ROOT: process.env.PCC_PRE_ROOT || '/home/super/tr/pcc'
+          },
+          // stdout 只承载密钥元数据，密文 ZIP 通过临时文件传递。
+          maxBuffer: 1024 * 1024
         },
-        maxBuffer: 64 * 1024 * 1024
-      },
-      (error, stdout, stderr) => {
-        if (error) {
-          error.stdout = stdout;
-          error.stderr = stderr;
-          reject(error);
-          return;
+        (error, stdout, stderr) => {
+          if (error) {
+            error.stdout = stdout;
+            error.stderr = stderr;
+            reject(error);
+            return;
+          }
+          resolve(String(stdout || ''));
         }
-        resolve(String(stdout || ''));
+      ).stdin.end(payload);
+    }).catch((error) => {
+      let helperMessage = '';
+      try {
+        const parsed = JSON.parse(String(error?.stdout || '').trim() || '{}');
+        helperMessage = parsed?.message || '';
+      } catch (parseError) {
+        helperMessage = '';
       }
-    ).stdin.end(payload);
-  }).catch((error) => {
-    let helperMessage = '';
+
+      const routeError = new Error(
+        helperMessage ||
+        String(error?.stderr || '').trim() ||
+        error.message ||
+        'PRE publish helper 执行失败'
+      );
+      routeError.statusCode = 500;
+      throw routeError;
+    });
+
+    let parsed;
     try {
-      const parsed = JSON.parse(String(error?.stdout || '').trim() || '{}');
-      helperMessage = parsed?.message || '';
-    } catch (parseError) {
-      helperMessage = '';
+      parsed = JSON.parse(stdoutText);
+    } catch (error) {
+      const routeError = new Error('PRE publish helper 返回内容非法');
+      routeError.statusCode = 500;
+      throw routeError;
     }
 
-    const routeError = new Error(
-      helperMessage ||
-      String(error?.stderr || '').trim() ||
-      error.message ||
-      'PRE publish helper 执行失败'
-    );
-    routeError.statusCode = 500;
-    throw routeError;
-  });
+    if (!parsed?.success || !parsed?.sourcePublicKey || !parsed?.reencryptionKey) {
+      const routeError = new Error(parsed?.message || 'PRE publish helper 未返回结果');
+      routeError.statusCode = 500;
+      throw routeError;
+    }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(stdoutText);
-  } catch (error) {
-    const routeError = new Error('PRE publish helper 返回内容非法');
-    routeError.statusCode = 500;
-    throw routeError;
+    const sourceCipherZipBuffer = await fsp.readFile(sourceCipherZipPath);
+    if (sourceCipherZipBuffer.length === 0) {
+      const routeError = new Error('PRE publish helper 未生成源密文压缩包');
+      routeError.statusCode = 500;
+      throw routeError;
+    }
+
+    return {
+      sourcePublicKey: parsed.sourcePublicKey,
+      reencryptionKey: parsed.reencryptionKey,
+      sourceCipherZipBuffer,
+      entryCount: Number(parsed.entryCount || 0)
+    };
+  } finally {
+    await fsp.rm(tempDir, { recursive: true, force: true });
   }
-
-  if (!parsed?.success || !parsed?.sourcePublicKey || !parsed?.reencryptionKey || !parsed?.sourceCipherZipBase64) {
-    const routeError = new Error(parsed?.message || 'PRE publish helper 未返回结果');
-    routeError.statusCode = 500;
-    throw routeError;
-  }
-
-  return {
-    sourcePublicKey: parsed.sourcePublicKey,
-    reencryptionKey: parsed.reencryptionKey,
-    sourceCipherZipBuffer: Buffer.from(String(parsed.sourceCipherZipBase64), 'base64'),
-    entryCount: Number(parsed.entryCount || 0)
-  };
 }
 
 function normalizePcType(value) {

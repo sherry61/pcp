@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import base64
 import io
 import json
 import os
@@ -60,9 +59,10 @@ def main() -> None:
     if not private_scalar_hex:
         _fail("缺少 privateScalarHex")
 
-    encrypted_zip_b64 = str(payload.get("encryptedZipBase64") or "").strip()
-    if not encrypted_zip_b64:
-        _fail("缺少 encryptedZipBase64")
+    encrypted_zip_path = str(payload.get("encryptedZipPath") or "").strip()
+    plain_zip_path = str(payload.get("plainZipPath") or "").strip()
+    if not encrypted_zip_path or not plain_zip_path:
+        _fail("缺少 PRE 临时文件路径")
 
     try:
         private_scalar = int(private_scalar_hex, 16)
@@ -70,9 +70,10 @@ def main() -> None:
         _fail(f"privateScalarHex 非法: {exc}")
 
     try:
-        encrypted_zip = base64.b64decode(encrypted_zip_b64, validate=True)
+        with open(encrypted_zip_path, "rb") as encrypted_file:
+            encrypted_zip = encrypted_file.read()
     except Exception as exc:  # noqa: BLE001
-        _fail(f"encryptedZipBase64 非法: {exc}")
+        _fail(f"无法读取 PRE 加密压缩包: {exc}")
 
     encrypted_entries = _normalize_entries(encrypted_zip)
     plain_entries: dict[str, bytes] = {}
@@ -83,10 +84,15 @@ def main() -> None:
         _fail(f"PRE 同源解密失败: {exc}")
 
     plain_zip = _build_plain_zip(plain_entries)
+    try:
+        with open(plain_zip_path, "wb") as output_file:
+            output_file.write(plain_zip)
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"无法写入 PRE 解密压缩包: {exc}")
+
     json.dump(
         {
             "success": True,
-            "zipBase64": base64.b64encode(plain_zip).decode("ascii"),
             "entryCount": len(plain_entries),
         },
         sys.stdout,

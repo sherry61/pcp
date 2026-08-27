@@ -259,7 +259,7 @@ export default {
         { id: 3, event: 'Sale', price: '63 rmb', seller: 'user3', buyer: 'user4' },
         { id: 4, event: 'Transfer', price: '0 rmb', seller: 'user3', buyer: 'user4' }
       ],
-      userBalance: 2000, // 用户余额
+      userBalance: 500000, // 演示账户可用余额（RMB）
       showPurchaseModal: false, // 控制购买弹窗
       showConfirmModal: false,//控制申请成功弹窗
       insufficientBalance: false,

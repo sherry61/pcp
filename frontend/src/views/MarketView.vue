@@ -248,11 +248,11 @@
             <h2>确认购买资产</h2>
             <div class="asset-info">
               <h3>{{ selectedAsset.asset_name }}</h3>
-              <p><strong>价格:</strong> {{ selectedAsset.price || 100 }} ETH</p>
+              <p><strong>价格:</strong> {{ selectedAsset.price || 100 }} RMB</p>
             </div>
             <div class="payment-info">
-              <p><strong>您的余额:</strong> {{ userBalance }} ETH</p>
-              <p><strong>需要支付:</strong> {{ selectedAsset.price || 100 }} ETH</p>
+              <p><strong>您的余额:</strong> {{ userBalance }} RMB</p>
+              <p><strong>需要支付:</strong> {{ selectedAsset.price || 100 }} RMB</p>
               <p v-if="insufficientBalance" style="color: red;">余额不足，无法完成购买。</p>
             </div>
             <div class="modal-buttons">
@@ -689,7 +689,7 @@ toBalance: '0',
       totalAssets: 0,
       selectedAsset: null,
       showPurchaseModal: false,
-      userBalance: 500,
+      userBalance: 500000, // 演示账户可用余额（RMB）
       purchaseSuccess: false,
       showCartModal: false,
       activeTab: 'requested', // 默认显示已申请的资产

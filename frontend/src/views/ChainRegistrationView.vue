@@ -122,21 +122,25 @@
               </div>
             </div>
             <div class="form-row">
-              <div class="form-group">
-                <label for="pc-type">
-                  <span class="required-asterisk">*</span>
-                  资产交付方法
-                </label>
-                <select id="pc-type" v-model="form.pcType" required>
-                  <option value="">请选择资产交付方法</option>
-                  <option value="HE">同态加密</option>
-                  <option value="PRE">代理重加密</option>
-                  <option value="FL">联邦学习</option>
-                  <option value="MPC">多方安全计算</option>
-                  <option value="TEE">可信执行环境</option>
-                </select>
-              </div>
-            </div>
+<div class="form-group">
+<label for="pc-type">
+<span class="required-asterisk">*</span>
+资产交付方法
+</label>
+<el-select v-model="form.pcType" placeholder="请选择资产交付方法" style="width:100%">
+<el-option v-for="item in deliveryMethods" :key="item.value" :label="item.label" :value="item.value">
+<div class="delivery-method-option">
+<el-tooltip :content="item.description" placement="right-start" :show-after="300">
+<div class="delivery-method-trigger">
+<span>{{ item.label }}</span>
+</div>
+</el-tooltip>
+<span class="delivery-method-code">{{ item.value }}</span>
+</div>
+</el-option>
+</el-select>
+</div>
+</div>
 <!-- 资产领域：放到分类分级上面 -->
 <div class="form-row">
   <div class="form-group">
@@ -693,6 +697,33 @@ export default {
     return {
        classifyLoading: false,     // 分类按钮 loading
   gradingLoading: false,      // 分级按钮 loading
+  deliveryMethods:[
+{
+value:'HE',
+label:'同态加密',
+description:'数据在加密状态下完成计算，无需解密原始数据，适用于需要保护数据内容同时进行计算处理的场景'
+},
+{
+value:'PRE',
+label:'代理重加密',
+description:'通过代理重加密机制将密文的访问权限安全转换给指定买方，代理无法获得明文数据'
+},
+{
+value:'FL',
+label:'联邦学习',
+description:'数据保留在本地，各参与方通过交换模型参数或梯度完成联合训练，避免原始数据直接流通'
+},
+{
+value:'MPC',
+label:'多方安全计算',
+description:'多个参与方在不泄露各自原始数据的情况下共同完成计算，并获得约定的计算结果'
+},
+{
+value:'TEE',
+label:'可信执行环境',
+description:'数据被传入受硬件保护的可信执行环境中进行隔离计算，仅允许输出经过授权的计算结果'
+}
+],
   classificationMethods: [
   { label: '类型划分法', value: 'type' },
   { label: '收益法', value: 'income' },
@@ -3176,6 +3207,24 @@ formData.append('trade_location', tradeLocation);
 </script>
 
 <style scoped>
+.delivery-method-option{
+display:flex;
+align-items:center;
+justify-content:space-between;
+width:100%;
+}
+.delivery-method-trigger{
+display:flex;
+align-items:center;
+width:300px;
+height:34px;
+cursor:help;
+}
+.delivery-method-code{
+margin-left:20px;
+font-size:12px;
+color:#999;
+}
 /* ===== 估值弹窗按钮 ===== */
 
 .button-container {

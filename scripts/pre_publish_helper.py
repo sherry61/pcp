@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import base64
 import io
 import json
 import os
@@ -64,14 +63,16 @@ def main() -> None:
     if not isinstance(buyer_public_key, dict):
         _fail("缺少 buyerPublicKey")
 
-    source_archive_b64 = str(payload.get("sourceArchiveBase64") or "").strip()
-    if not source_archive_b64:
-        _fail("缺少 sourceArchiveBase64")
+    source_archive_path = str(payload.get("sourceArchivePath") or "").strip()
+    source_cipher_zip_path = str(payload.get("sourceCipherZipPath") or "").strip()
+    if not source_archive_path or not source_cipher_zip_path:
+        _fail("缺少 PRE 临时文件路径")
 
     try:
-        source_archive = base64.b64decode(source_archive_b64, validate=True)
+        with open(source_archive_path, "rb") as source_file:
+            source_archive = source_file.read()
     except Exception as exc:  # noqa: BLE001
-        _fail(f"sourceArchiveBase64 非法: {exc}")
+        _fail(f"无法读取原始压缩包: {exc}")
 
     source_key_id = f"pre-seller-{transaction_id}"
     source_private_scalar = None
@@ -98,12 +99,17 @@ def main() -> None:
         _fail(f"PRE 源密文构造失败: {exc}")
 
     source_cipher_zip = _build_zip(cipher_entries)
+    try:
+        with open(source_cipher_zip_path, "wb") as output_file:
+            output_file.write(source_cipher_zip)
+    except Exception as exc:  # noqa: BLE001
+        _fail(f"无法写入源密文压缩包: {exc}")
+
     json.dump(
         {
             "success": True,
             "sourcePublicKey": source_public_key,
             "reencryptionKey": reencryption_key,
-            "sourceCipherZipBase64": base64.b64encode(source_cipher_zip).decode("ascii"),
             "entryCount": len(cipher_entries),
         },
         sys.stdout,
