@@ -117,6 +117,7 @@
                   >
                     下载结果
                   </el-button>
+                  <el-button v-if="isTeeRow(row)" size="small" type="primary" :loading="row.teeSubmitting" @click="openTeeDialog(row)">TEE上传权重</el-button>
                   <el-button
                     v-if="isMpcRow(row)"
                     size="small"
@@ -288,6 +289,11 @@
           </template>
         </el-dialog>
 
+        <el-dialog v-model="teeDialog.visible" title="TEE 上传固定权重" width="520px">
+          <div v-if="teeDialog.row" class="dialog-body"><div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDialog.row.transaction_id }}</span></div><input type="file" accept=".csv,text/csv" @change="teeDialog.file = $event.target.files[0]" /><div v-if="teeDialog.file" class="file-name">{{ teeDialog.file.name }}</div></div>
+          <template #footer><el-button @click="teeDialog.visible=false">取消</el-button><el-button type="primary" :loading="teeDialog.submitting" @click="submitTeeWeight">上传权重</el-button></template>
+        </el-dialog>
+
         <el-dialog v-model="mpcDialog.visible" title="请求交付" width="520px">
           <div v-if="mpcDialog.row" class="dialog-body">
             <div class="dialog-row">
@@ -411,6 +417,8 @@ import flCrypto from '@/utils/flCrypto'
 import heCrypto from '@/utils/heCrypto'
 import heCsv from '@/utils/heCsv'
 import preCrypto from '@/utils/preCrypto'
+import teeApi from '@/utils/teeApi'
+import { generateEcKeyPair, publicKeyPem, decryptEnvelope, encryptSm4, b64 } from '@/utils/teeCrypto'
 
 const API_BASE = 'http://10.112.47.214:3000'
 
@@ -471,7 +479,8 @@ export default {
         row: null,
         result: null
       },
-      statusPollTimer: null
+      statusPollTimer: null,
+      teeDialog: { visible: false, row: null, file: null, submitting: false }
     }
   },
   async created() {
@@ -643,6 +652,21 @@ export default {
     isMpcRow(row) {
       return this.normalizePcType(row?.pc_type) === 'MPC'
     },
+    isTeeRow(row) { return this.normalizePcType(row?.pc_type) === 'TEE' },
+    openTeeDialog(row) { this.teeDialog = { visible: true, row, file: null, submitting: false } },
+    async submitTeeWeight() {
+      const row = this.teeDialog.row
+      if (!row || !this.teeDialog.file) return this.$message.error('请选择 weight.csv')
+      this.teeDialog.submitting = true
+      try {
+        const tx = String(row.transaction_id); const kp = await generateEcKeyPair(); const pem = await publicKeyPem(kp.publicKey)
+        const key = await teeApi.receiveKey({ transactionId: tx, ecPublicKey: pem, fileType: 'weight', role: 'buyer', name: 'weight.csv' })
+        const sm4 = await decryptEnvelope(key.envelope || key, kp.privateKey); const iv = b64(crypto.getRandomValues(new Uint8Array(16)))
+        const encrypted = encryptSm4(new Uint8Array(await this.teeDialog.file.arrayBuffer()), b64(sm4), iv)
+        row.teeWeightKey = { key: b64(sm4), iv }; const result = await teeApi.receiveFile({ transactionId: tx, fileType: 'weight', name: 'weight.csv', iv, ciphertext: encrypted.ciphertext, role: 'buyer' })
+        row.teeStatus = result.result?.computed ? '结果已生成' : '计算中'; row.teeResultReady = Boolean(result.result?.computed); this.teeDialog.visible = false; this.$message.success('权重已提交')
+      } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE权重上传失败') } finally { this.teeDialog.submitting = false }
+    },
 
     getDeliveryMethodLabel(row) {
       if (this.isPreRow(row)) {
@@ -700,14 +724,20 @@ export default {
 
     async syncBuyerPageStatus() {
       await Promise.all(this.pagedResultList.map((row) => (
-        this.isHeRow(row)
+        this.isTeeRow(row)
+          ? this.refreshTeeStatus(row)
+          : (this.isHeRow(row)
           ? this.refreshHeStatus(row, false)
           : (this.isFlRow(row)
             ? this.refreshFlStatus(row, false)
             : (this.isPreRow(row)
               ? this.refreshPreStatus(row, false)
-              : this.refreshMpcStatus(row, false)))
+              : this.refreshMpcStatus(row, false))))
       )))
+    },
+
+    async refreshTeeStatus(row) {
+      try { const r = await teeApi.status(row.transaction_id); const s = r.step || r.status; row.teeStatus = s === 'RESULT_READY' ? '结果已生成' : (s === 'WAITING_WEIGHT' ? '等待权重' : (s === 'VM_RUNNING' ? 'TEE运行中' : s)); row.teeResultReady = s === 'RESULT_READY' || r.resultStatus === 'READY' } catch (e) { /* task may not exist yet */ }
     },
 
     async handleBuyerPageChange(page) {
