@@ -3,6 +3,7 @@ const { TEE_DELIVERY_METHOD } = require('./constants');
 
 function registerTeeRoutes({ app, dbQuery, teeClient = createTeeClient() }) {
   if (!app || typeof dbQuery !== 'function') throw new Error('registerTeeRoutes requires app and dbQuery');
+  const vmSetupInFlight = new Set();
 
   const getJob = async (transactionId) => {
     const rows = await dbQuery('SELECT * FROM delivery_secure_jobs WHERE transaction_id = ? LIMIT 1', [String(transactionId)]);
@@ -24,24 +25,34 @@ function registerTeeRoutes({ app, dbQuery, teeClient = createTeeClient() }) {
     } catch (error) { fail(res, error, 'TEE 交付申请失败'); }
   });
 
-  app.post('/api/privacy/tee/confirm', async (req, res) => {
-    const { transactionId } = req.body || {};
-    if (!transactionId) return res.status(400).json({ success: false, message: '缺少 transactionId' });
+  const startVmInBackground = async (transactionId, job) => {
+    if (vmSetupInFlight.has(String(transactionId))) return;
+    vmSetupInFlight.add(String(transactionId));
     try {
-      const job = await getJob(transactionId);
-      if (!job) return res.status(404).json({ success: false, message: '未找到 TEE 交付任务' });
-      if (job.vm_id && String(job.vm_status).toLowerCase() === 'running') return res.json({ success: true, transactionId, vmId: job.vm_id, step: job.step, resumed: true });
-      await updateJob(transactionId, { status: 'RUNNING', step: 'VM_CREATING', last_error: null });
       const created = await teeClient.createVm({ cpu: job.vm_cpu || 8, memoryMb: job.vm_memory_mb || 4096 });
       const vmId = created.vmId || created.vm_id;
       if (!vmId) throw new Error('TEE VM create response missing vmId');
       await updateJob(transactionId, { vm_id: vmId, vm_status: created.status || 'created', step: 'VM_STARTING' });
       const started = await teeClient.startVm(vmId);
       await updateJob(transactionId, { vm_status: started.status || 'running', step: 'VM_RUNNING', status: 'VM_RUNNING' });
-      const ready = await teeClient.waitForServices();
+      await teeClient.waitForServices();
       await updateJob(transactionId, { step: 'WAITING_DATA', status: 'VM_RUNNING' });
-      res.json({ success: true, transactionId: String(transactionId), vmId, status: 'VM_RUNNING', services: ready, create: created, start: started });
-    } catch (error) { await updateJob(transactionId, { status: 'FAILED', step: 'FAILED', last_error: error.message }).catch(() => {}); fail(res, error, 'TEE 虚拟机启动失败'); }
+    } catch (error) {
+      await updateJob(transactionId, { status: 'FAILED', step: 'FAILED', last_error: error.message }).catch(() => {});
+    } finally { vmSetupInFlight.delete(String(transactionId)); }
+  };
+
+  app.post('/api/privacy/tee/confirm', async (req, res) => {
+    const { transactionId } = req.body || {};
+    if (!transactionId) return res.status(400).json({ success: false, message: '缺少 transactionId' });
+    try {
+      const job = await getJob(transactionId);
+      if (!job) return res.status(404).json({ success: false, message: '未找到 TEE 交付任务' });
+      if (['VM_CREATING', 'VM_STARTING', 'VM_RUNNING', 'WAITING_DATA'].includes(String(job.step))) return res.status(202).json({ success: true, transactionId, vmId: job.vm_id, step: job.step, accepted: true, resumed: true });
+      await updateJob(transactionId, { status: 'RUNNING', step: 'VM_CREATING', last_error: null });
+      void startVmInBackground(transactionId, job);
+      res.status(202).json({ success: true, transactionId: String(transactionId), step: 'VM_CREATING', accepted: true });
+    } catch (error) { fail(res, error, 'TEE 虚拟机启动失败'); }
   });
 
   app.get('/api/privacy/tee/status', async (req, res) => {

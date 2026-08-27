@@ -691,9 +691,16 @@ export default {
       this.teeDialog.submitting = true
       try {
         const tx = String(row.transaction_id)
-        const req = await teeApi.request({ transactionId: tx, buyerAddress: row.buyer_address, sellerAddress: row.seller_address, assetId: row.file_hash, vmCpu: 8, vmMemoryMb: 4096 })
-        if (!req.success) throw new Error(req.message || 'TEE申请失败')
-        await teeApi.confirm(tx)
+        let task
+        try { task = await teeApi.status(tx) } catch (error) { throw new Error('请先等待买方发起 TEE 交付申请') }
+        const step = String(task.step || '')
+        if (step !== 'WAITING_DATA') {
+          await teeApi.confirm(tx)
+          row.teeStatus = '计算中'
+          this.teeDialog.visible = false
+          this.$message.success('TEE 环境正在后台准备，请稍后刷新页面再执行交付')
+          return
+        }
         const kp = await generateEcKeyPair(); const pem = await publicKeyPem(kp.publicKey)
         const key = await teeApi.receiveKey({ transactionId: tx, ecPublicKey: pem, fileType: 'data', role: 'seller', name: 'data.csv' })
         const sm4 = await decryptEnvelope(key.envelope, kp.privateKey)
