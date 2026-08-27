@@ -55,6 +55,7 @@
                   >
                     {{ getSellerHeActionLabel(row) }}
                   </el-button>
+                  <el-button v-if="isTeeRow(row)" size="small" type="primary" :loading="row.teeSubmitting" @click="openTeeSellerDialog(row)">TEE交付</el-button>
                   <el-button
                     v-if="isFlRow(row)"
                     size="small"
@@ -311,6 +312,16 @@
           </template>
         </el-dialog>
 
+        <el-dialog v-model="teeDialog.visible" title="TEE 固定加权交付" width="560px">
+          <div v-if="teeDialog.row" class="dialog-body">
+            <div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDialog.row.transaction_id }}</span></div>
+            <div class="dialog-field"><span class="dialog-label">数据文件 data.csv</span><input type="file" accept=".csv,text/csv" @change="teeDialog.dataFile = $event.target.files[0]" /></div>
+            <div v-if="teeDialog.dataFile" class="file-name">{{ teeDialog.dataFile.name }}</div>
+            <div class="dialog-hint">虚拟机启动及服务部署可能需要约 5 分钟。</div>
+          </div>
+          <template #footer><el-button @click="teeDialog.visible=false">取消</el-button><el-button type="primary" :loading="teeDialog.submitting" @click="submitTeeSellerData">上传并启动 TEE</el-button></template>
+        </el-dialog>
+
         <div v-if="contractInfo.visible" class="modal" @click.self="closeContractInfo">
           <div class="modal-content wide-modal">
             <h3>数字合约</h3>
@@ -378,6 +389,8 @@ import heCrypto from '@/utils/heCrypto'
 import heCsv from '@/utils/heCsv'
 import flCrypto from '@/utils/flCrypto'
 import preCrypto from '@/utils/preCrypto'
+import teeApi from '@/utils/teeApi'
+import { generateEcKeyPair, publicKeyPem, decryptEnvelope, encryptSm4, b64 } from '@/utils/teeCrypto'
 
 const API_BASE = 'http://10.112.47.214:3000'
 
@@ -442,7 +455,8 @@ export default {
 
     contractVerifyMsg: '',
 
-    contractVerifyTime: ''
+    contractVerifyTime: '',
+    teeDialog: { visible: false, row: null, dataFile: null, submitting: false }
     }
   },
   computed: {
@@ -668,6 +682,26 @@ export default {
 
     isMpcRow(row) {
       return this.normalizePcType(row?.pc_type) === 'MPC'
+    },
+    isTeeRow(row) { return this.normalizePcType(row?.pc_type) === 'TEE' },
+    openTeeSellerDialog(row) { this.teeDialog = { visible: true, row, dataFile: null, submitting: false } },
+    async submitTeeSellerData() {
+      const row = this.teeDialog.row
+      if (!row || !this.teeDialog.dataFile) return this.$message.error('请选择 data.csv')
+      this.teeDialog.submitting = true
+      try {
+        const tx = String(row.transaction_id)
+        const req = await teeApi.request({ transactionId: tx, buyerAddress: row.buyer_address, sellerAddress: row.seller_address, assetId: row.file_hash, vmCpu: 8, vmMemoryMb: 4096 })
+        if (!req.success) throw new Error(req.message || 'TEE申请失败')
+        await teeApi.confirm(tx)
+        const kp = await generateEcKeyPair(); const pem = await publicKeyPem(kp.publicKey)
+        const key = await teeApi.receiveKey({ transactionId: tx, ecPublicKey: pem, fileType: 'data', role: 'seller', name: 'data.csv' })
+        const sm4 = await decryptEnvelope(key.envelope, kp.privateKey)
+        const iv = b64(crypto.getRandomValues(new Uint8Array(16)))
+        const encrypted = encryptSm4(new Uint8Array(await this.teeDialog.dataFile.arrayBuffer()), b64(sm4), iv)
+        await teeApi.receiveFile({ transactionId: tx, fileType: 'data', name: 'data.csv', iv, ciphertext: encrypted.ciphertext, role: 'seller' })
+        row.teeStatus = '等待买家权重'; this.$message.success('TEE 数据已提交，请等待买家上传权重'); this.teeDialog.visible = false
+      } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE交付失败') } finally { this.teeDialog.submitting = false }
     },
 
     getDeliveryMethodLabel(row) {

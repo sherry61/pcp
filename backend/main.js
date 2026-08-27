@@ -18,6 +18,7 @@ const { spawn,exec } = require('child_process');
 const FormData = require('form-data');
 const { registerFlRoutes, registerHeRoutes, registerPreRoutes } = require('./pcp');
 const { registerMpcRoutes } = require('./mpc');
+const { registerTeeRoutes } = require('./tee');
 
 
 // ====== 基础实例与常量（确保在后面使用之前就定义好）======
@@ -899,6 +900,12 @@ registerFlRoutes({
 });
 
 registerMpcRoutes({
+  app,
+  upload,
+  dbQuery
+});
+
+registerTeeRoutes({
   app,
   upload,
   dbQuery

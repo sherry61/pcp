@@ -330,6 +330,7 @@ type="primary"
 
 <script>
 import axios from 'axios';
+import teeApi from '@/utils/teeApi';
 
 /* ✅ 只改框架：引入 Header/Sidebar，不改你任何方法逻辑 */
 import AppHeader from '@/components/AppHeader.vue';
@@ -1250,6 +1251,7 @@ await Promise.all(
             asset_id: tx.asset_id,
 
             asset_name: `${tx.asset_id}`,
+            pc_type: tx.pc_type,
 
             seller_address: tx.seller_address,
 
@@ -1789,7 +1791,9 @@ async submitRequestDelivery(form) {
 
   try {
 
-    const response = await axios.post(
+    const response = String(this.currentRowRef?.pc_type || '').toUpperCase() === 'TEE'
+      ? { data: await teeApi.request({ transactionId: String(form.transaction_id), buyerAddress: form.buyer_address, sellerAddress: form.seller_address, assetId: this.currentRowRef.asset_id, vmCpu: 8, vmMemoryMb: 4096 }) }
+      : await axios.post(
       'http://10.112.47.214:3000/api/delivery/request-secure',
       {
         transactionId: String(form.transaction_id),
