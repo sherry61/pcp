@@ -86,15 +86,15 @@
     <div class="radio-group">
       <div class="radio-item">
         <input type="radio" id="SHA2_256" value="SHA2_256" v-model="form.algorithm" required />
-        <label for="SHA2_256" class="radio-label">SHA2_256</label>
-      </div>
-      <div class="radio-item">
-        <input type="radio" id="SHA3_256" value="SHA3_256" v-model="form.algorithm" />
-        <label for="SHA3_256" class="radio-label">SHA3_256</label>
+        <el-tooltip content="使用标准哈希算法生成文件摘要，速度快、兼容性好，适合大多数存证场景。" placement="top" :show-after="300">
+          <label for="SHA2_256" class="radio-label">哈希算法</label>
+        </el-tooltip>
       </div>
       <div class="radio-item">
         <input type="radio" id="fingerprint" value="FINGERPRINT" v-model="form.algorithm" />
-        <label for="fingerprint" class="radio-label">数字指纹</label>
+        <el-tooltip content="根据文件内容生成唯一数字指纹，用于校验文件是否被篡改。" placement="top" :show-after="300">
+          <label for="fingerprint" class="radio-label">数字指纹</label>
+        </el-tooltip>
       </div>
     </div>
   </div>
@@ -185,20 +185,6 @@
   </div>
 </div>
 
-<div class="form-row auction-config-row">
-  <div class="form-group">
-    <label for="trade-mode">交易方式</label>
-    <select id="trade-mode" v-model="form.tradeMode">
-      <option value="fixed">固定价</option>
-      <option value="auction">拍卖</option>
-    </select>
-  </div>
-  <div v-if="form.tradeMode === 'auction'" class="form-group">
-    <label for="auction-end-time">拍卖截止时间</label>
-    <input id="auction-end-time" type="datetime-local" step="1" :min="minimumAuctionEndTime()" v-model="form.auctionEndTime" required />
-  </div>
-</div>
-
 <!-- 分类分级：先方法，再结果 -->
 <div class="form-row">
   <div class="form-group">
@@ -244,7 +230,20 @@
   </div>
 </div>
 
-          
+<div class="form-row auction-config-row">
+  <div class="form-group">
+    <label for="trade-mode">定价模式</label>
+    <select id="trade-mode" v-model="form.tradeMode">
+      <option value="fixed">固定价</option>
+      <option value="auction">拍卖</option>
+    </select>
+  </div>
+  <div v-if="form.tradeMode === 'auction'" class="form-group">
+    <label for="auction-end-time">拍卖截止时间</label>
+    <input id="auction-end-time" type="datetime-local" step="1" :min="minimumAuctionEndTime()" v-model="form.auctionEndTime" required />
+  </div>
+</div>
+
 <!-- 资产估值 -->
 <div class="form-row">
   <div class="form-group">
@@ -321,10 +320,11 @@
   class="custom-cascader">
 </el-cascader>-->
 
-              <!-- 资产的使用地点随登记信息持久化。 -->
+              <!-- 暂时隐藏资产交易地点设置，保留代码以便后续恢复。
               <label class="full-width-label left-align">资产交易地点设置</label>
               <el-cascader v-model="selectedRegionOptions" :options="regionData" :props="cascaderProps"
                 @change="handleRegionChange" placeholder="请选择资产交易地点" clearable />
+              -->
             </div>
 
 
@@ -2129,8 +2129,8 @@ async generateOmniPrint() {
 
 getIdentifierMethodLabel(method) {
   const methodMap = {
-    SHA2_256: 'SHA2_256',
-    SHA3_256: 'SHA3_256',
+    SHA2_256: '哈希算法',
+    SHA3_256: '哈希算法',
     FINGERPRINT: '数字指纹'
   };
 
