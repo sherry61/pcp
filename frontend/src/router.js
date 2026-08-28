@@ -23,6 +23,7 @@ import PenetrableSupervision from './views/PenetrableSupervision.vue'
 import ServiceManagement from './views/ServiceManagement.vue'
 import MarketSeller from './views/MarketSeller1.vue'
 import TransactionSupervision from './views/TransactionSupervision.vue'
+import AuctionProcessing from './views/AuctionProcessingView.vue'
 
 const routes = [
   { path: '/home', name: 'Home', component: HomeView, meta: { requiresAuth: true, roles: ['admin','buyer','seller','auditor'] } },
@@ -38,6 +39,7 @@ const routes = [
 { path: '/delivery/buyer', name: 'DeliveryBuyer', component: DeliveryBuyer, meta: { requiresAuth: true, roles: ['buyer'] } },
 
 { path: '/market/seller', name: 'MarketSeller', component: MarketSeller, meta: { requiresAuth: true, roles: ['seller'] } },
+{ path: '/auction/processing', name: 'AuctionProcessing', component: AuctionProcessing, meta: { requiresAuth: true, roles: ['buyer'] } },
 
 { path: '/user-center', component:UserCenter, meta: { requiresAuth: true, roles: ['buyer','seller','auditor'] } },
 
@@ -115,7 +117,7 @@ router.beforeEach((to, from, next) => {
   const loginRole = localStorage.getItem('login_role');
   let role = localStorage.getItem('user_role');
   if (!role) {
-    role = 'seller';
+    role = 'buyer';
     localStorage.setItem('user_role', role);
   }
   const token = localStorage.getItem('token');

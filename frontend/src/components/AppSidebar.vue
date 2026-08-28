@@ -53,6 +53,10 @@
         交易处理
       </router-link>
 
+      <router-link v-if="isBuyer" to="/auction/processing">
+        交易处理
+      </router-link>
+
       <router-link :to="deliveryPath">
         资产交付
       </router-link>
@@ -77,6 +81,8 @@ export default {
       isAdminVisible: false, // 控制是否显示管理员链接，初始为 false
       deliveryOpen: false,
       roleTick: 0, // ✅ 新增
+      username: '',
+      userId: '',
     };
   },
   computed: {
@@ -84,7 +90,7 @@ export default {
     
   userRole() {
     this.roleTick; // ✅ 关键：触发重新计算
-    return localStorage.getItem('user_role') || 'seller';
+    return localStorage.getItem('user_role') || 'buyer';
   },
   loginRole() {
     this.roleTick;
@@ -97,7 +103,7 @@ export default {
     return this.userRole === 'buyer';
   },
   isAuditor() {
-  return this.userRole === 'auditor';
+  return this.loginRole === 'auditor' || this.userRole === 'auditor';
 },
   isAdministrator() {
     return this.loginRole === 'admin';
@@ -130,7 +136,11 @@ export default {
       const token = localStorage.getItem('token');
       if (token) {
         const payload = this.parseJwt(token);
-        this.username = decodeURIComponent(payload.username);
+        this.username = payload.username ? String(payload.username) : '';
+        if (!this.username) {
+          this.loading = false;
+          return;
+        }
         this.setUsername(this.username);
         console.log('当前登录用户名:', this.username);
 
@@ -211,15 +221,20 @@ export default {
 
 <style scoped>
 .sidebar {
-  width: 10vw;
+  width: 220px;
+  flex: 0 0 220px;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+  box-sizing: border-box;
   background: #333;
   color: #fff;
   height: 100%;
-  max-height: 100vh;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   padding: 20px;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .sidebar a {
@@ -233,7 +248,6 @@ export default {
 .sidebar a:hover {
   background: #444;
 }
-
 
 .menu-group { margin: 5px 0; }
 

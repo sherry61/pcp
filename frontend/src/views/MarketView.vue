@@ -129,8 +129,14 @@
       </div>
 
       <div class="asset-row-right">
+        <div v-if="asset.trade_mode === 'auction'" class="auction-summary">
+          <span class="auction-badge">拍卖</span>
+          <span>当前价 {{ asset.auction_current_price || asset.auction_start_price || asset.price || 0 }} 元</span>
+          <span>{{ asset.auction_bid_count || 0 }} 次出价</span>
+          <span>{{ formatAuctionDeadline(asset.auction_end_time) }}</span>
+        </div>
         <div class="asset-row-price">
-          {{ asset.price || 100 }}
+          {{ asset.trade_mode === 'auction' ? (asset.auction_current_price || asset.auction_start_price || asset.price || 0) : (asset.price || 100) }}
           <span class="asset-row-price-unit">元</span>
         </div>
         <button
@@ -193,8 +199,14 @@
       </div>
 
       <div class="asset-row-right">
+        <div v-if="asset.trade_mode === 'auction'" class="auction-summary">
+          <span class="auction-badge">拍卖</span>
+          <span>当前价 {{ asset.auction_current_price || asset.auction_start_price || asset.price || 0 }} 元</span>
+          <span>{{ asset.auction_bid_count || 0 }} 次出价</span>
+          <span>{{ formatAuctionDeadline(asset.auction_end_time) }}</span>
+        </div>
         <div class="asset-row-price">
-          {{ asset.price || 100 }}
+          {{ asset.trade_mode === 'auction' ? (asset.auction_current_price || asset.auction_start_price || asset.price || 0) : (asset.price || 100) }}
           <span class="asset-row-price-unit">元</span>
         </div>
         <button
@@ -752,6 +764,12 @@ if (this.role === 'buyer') {
     },
   },
   methods: {
+    formatAuctionDeadline(value) {
+      if (!value) return '截止时间未设置';
+      const date = new Date(String(value).replace(' ', 'T'));
+      if (Number.isNaN(date.getTime())) return '截止时间无效';
+      return `截止 ${date.toLocaleString('zh-CN', { hour12: false })}`;
+    },
     async submitBridge() {
     if (!this.selectedCrossAsset) {
       this.$message?.warning?.('请先在左侧选择一个资产');
@@ -2281,7 +2299,8 @@ async fetchAssets() {
 
 .market {
   width: 100%;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   background: #f0f2f5; /* 更柔和的背景色 */
   display: flex;
   flex-direction: column;
@@ -2291,15 +2310,21 @@ async fetchAssets() {
 .main-content {
   display: flex;
   flex: 1;
+  min-height: 0;
   background: #F5F6FA;
-  overflow-y: auto;
+  overflow: hidden;
 }
 
 .content {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
+  width: 0;
+  box-sizing: border-box;
+  overflow-y: auto;
   padding: 20px;
   background: #F5F6FA;
-  max-width: 1450px;
+  max-width: none;
 }
 
 .title {
@@ -2796,6 +2821,25 @@ button:hover {
   font-weight: 400;
   margin-left: 4px;
   color: #6c7b95;
+}
+
+.auction-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 8px;
+  color: #7a4b00;
+  font-size: 12px;
+  text-align: right;
+}
+
+.auction-badge {
+  align-self: flex-end;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: #f59e0b;
+  color: #fff;
+  font-weight: 600;
 }
 
 .asset-row-detail-btn {

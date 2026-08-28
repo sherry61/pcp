@@ -185,6 +185,20 @@
   </div>
 </div>
 
+<div class="form-row auction-config-row">
+  <div class="form-group">
+    <label for="trade-mode">交易方式</label>
+    <select id="trade-mode" v-model="form.tradeMode">
+      <option value="fixed">固定价</option>
+      <option value="auction">拍卖</option>
+    </select>
+  </div>
+  <div v-if="form.tradeMode === 'auction'" class="form-group">
+    <label for="auction-end-time">拍卖截止时间</label>
+    <input id="auction-end-time" type="datetime-local" step="1" :min="minimumAuctionEndTime()" v-model="form.auctionEndTime" required />
+  </div>
+</div>
+
 <!-- 分类分级：先方法，再结果 -->
 <div class="form-row">
   <div class="form-group">
@@ -242,9 +256,10 @@
       id="asset-price"
       v-model.number="form.price"
       min="0"
-      step="0.01"
+      :step="form.tradeMode === 'auction' ? 1 : 0.01"
       placeholder="可手动填写，也可点击估值计算"
     />
+    <div v-if="form.tradeMode === 'auction'" class="field-hint">拍卖模式下资产估值将作为起拍价，必须为正整数。</div>
   </div>
 
   <div class="form-group classify-inline-group">
@@ -779,7 +794,9 @@ analysisResultText: '',
 fingerprint: '',
 fingerprintBits: '',
 fingerprintLoading: false,
-price: null,
+        price: null,
+        tradeMode: 'fixed',
+        auctionEndTime: '',
       },
 
       
@@ -1204,6 +1221,11 @@ gradeRationale: '',
   },
 
   methods: {
+    minimumAuctionEndTime() {
+      const d = new Date(Date.now() + 60 * 1000);
+      const pad = value => String(value).padStart(2, '0');
+      return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    },
     getMethodLabel(methodKey) {
       const mapping = {
         cost: '成本法',
@@ -2522,6 +2544,26 @@ getCatalogPublishMessage() {
     },
 
 async openConfirmation() {
+  if (this.form.tradeMode === 'auction') {
+    const startPrice = Number(this.form.price);
+    if (!Number.isInteger(startPrice) || startPrice <= 0) {
+      this.showError = true;
+      this.errorMessage = '拍卖起拍价必须为正整数，请修改资产估值。';
+      return;
+    }
+    if (!this.form.auctionEndTime) {
+      this.showError = true;
+      this.errorMessage = '请选择拍卖截止时间。';
+      return;
+    }
+    const endTime = new Date(String(this.form.auctionEndTime).replace(' ', 'T'));
+    if (Number.isNaN(endTime.getTime()) || endTime.getTime() <= Date.now() + 60 * 1000) {
+      this.showError = true;
+      this.errorMessage = '拍卖截止时间必须至少晚于当前时间 1 分钟。';
+      return;
+    }
+  }
+
   const isDynamicCertSet = await this.setDynamicCert();
 
   if (!isDynamicCertSet) {
@@ -2969,6 +3011,9 @@ async gradeAssetLevel() {
       formData.append('is_proxied', this.form.isProxied ? '1' : '0');
       formData.append('number', this.form.quantity);
       formData.append('price', this.form.price || 0);
+      formData.append('trade_mode', this.form.tradeMode);
+      formData.append('auction_start_price', this.form.tradeMode === 'auction' ? (this.form.price || 0) : '');
+      formData.append('auction_end_time', this.form.tradeMode === 'auction' ? this.form.auctionEndTime : '');
       formData.append('can_sell_asset', this.form.isSellBody ? '1':'0');
       formData.append('can_sell_process', this.form.isSellProcessRight ? '1':'0');
       formData.append('can_sell_view', this.form.isSellReadRight ? '1':'0');
@@ -3014,7 +3059,7 @@ formData.append('trade_location', tradeLocation);
         if (error.response && error.response.status === 409) {
           this.errorMessage = '传入重复文件，保存数据失败';
         } else {
-          this.errorMessage = `保存失败：${error.message}`;
+          this.errorMessage = `保存失败：${error.response?.data?.message || error.response?.data?.error || error.message}`;
         }
 
         // 返回错误响应数据
@@ -3449,6 +3494,12 @@ body {
   border-radius: 6px;
   background: #fff;
   box-sizing: border-box;
+}
+
+.field-hint {
+  margin-top: 5px;
+  color: #92400e;
+  font-size: 12px;
 }
 
 .form-group input,

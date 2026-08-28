@@ -1790,12 +1790,22 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
         is_proxied, number, price,
         can_sell_asset, can_sell_view, can_sell_process, allow_resale,
         trade_location, trade_start_ts, trade_end_ts,
+        trade_mode, auction_start_price, auction_end_time,
         allow_authorize, allow_supervision, model_selection, pc_type
     } = req.body;
 
     const picture = req.file;
     const resolvedAssetType = assetType || '一般数据';
     const resolvedAssetCategory = asset_category || '其他数据';
+
+    const normalizedTradeMode = trade_mode === 'auction' ? 'auction' : 'fixed';
+    if (normalizedTradeMode === 'auction') {
+        const startPrice = Number(auction_start_price || price);
+        const endTime = new Date(String(auction_end_time || '').replace(' ', 'T'));
+        if (!Number.isInteger(startPrice) || startPrice <= 0 || Number.isNaN(endTime.getTime()) || endTime.getTime() <= Date.now() + 60 * 1000) {
+            return res.status(400).json({ message: '拍卖起拍价必须为正整数，截止时间至少晚于当前时间1分钟' });
+        }
+    }
 
     console.log('接收到的请求体:', req.body);
     console.log('上传的图片:', picture);
@@ -1843,8 +1853,9 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
                 picture, is_proxied, number, price,
                 can_sell_asset, can_sell_view, can_sell_process, allow_resale,
                 trade_location, trade_start_ts, trade_end_ts,
+                trade_mode, auction_start_price, auction_end_time,
                 allow_authorize, allow_supervision, model_type, pc_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
 
         const values = [
@@ -1874,6 +1885,9 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
             trade_location || null,
             trade_start_ts || null,
             trade_end_ts || null,
+            normalizedTradeMode,
+            normalizedTradeMode === 'auction' ? Number(auction_start_price || price || 0) : null,
+            normalizedTradeMode === 'auction' ? auction_end_time : null,
             allow_authorize || 0,
             allow_supervision || 0,
             model_selection || null,
@@ -2069,6 +2083,115 @@ app.get('/api/resalable-assets', (req, res) => {
 });
 
 // 获取所有资产以及可用的领域列表
+// ===== 拍卖（mock）接口 =====
+app.get('/api/auction/:assetId', (req, res) => {
+  db.query(`SELECT file_hash, user_id, owner_address, trade_mode, auction_start_price, auction_end_time,
+                   auction_current_price, auction_bid_count, auction_status
+            FROM asset_registrations WHERE file_hash = ? LIMIT 1`, [req.params.assetId], (err, rows) => {
+    if (err) return res.status(500).json({ error: '查询拍卖失败' });
+    if (!rows.length || rows[0].trade_mode !== 'auction') return res.status(404).json({ error: '拍卖不存在' });
+    res.json(rows[0]);
+  });
+});
+
+app.post('/api/auction/:assetId/bid', (req, res) => {
+  const assetId = String(req.params.assetId || '');
+  const bidderId = String(req.body?.bidder_user_id || req.body?.user_id || '');
+  const bidPrice = Number(req.body?.bid_price);
+  if (!bidderId || !Number.isInteger(bidPrice) || bidPrice <= 0) return res.status(400).json({ error: '出价必须为正整数' });
+  db.query(`SELECT file_hash, user_id, trade_mode, auction_start_price, auction_end_time,
+                   auction_current_price, auction_bid_count, auction_status
+            FROM asset_registrations WHERE file_hash = ? LIMIT 1`, [assetId], (err, rows) => {
+    if (err) return res.status(500).json({ error: '查询资产失败' });
+    const a = rows[0];
+    if (!a || a.trade_mode !== 'auction') return res.status(404).json({ error: '拍卖不存在' });
+    if (String(a.user_id) === bidderId) return res.status(403).json({ error: '不能竞拍自己的资产' });
+    if (a.auction_status && a.auction_status !== 'OPEN') return res.status(409).json({ error: '拍卖已结束' });
+    if (!a.auction_end_time || new Date(a.auction_end_time).getTime() <= Date.now()) return res.status(409).json({ error: '拍卖已截止' });
+    const current = Number(a.auction_current_price || a.auction_start_price || 0);
+    if (bidPrice < current + 1) return res.status(409).json({ error: `出价必须至少为 ${current + 1} 元` });
+    db.query('INSERT INTO auction_bids (asset_file_hash, bidder_user_id, bid_price) VALUES (?, ?, ?)', [assetId, bidderId, bidPrice], (insertErr) => {
+      if (insertErr) return res.status(500).json({ error: '记录出价失败' });
+      db.query(`UPDATE asset_registrations SET auction_current_price = ?, auction_bid_count = auction_bid_count + 1, auction_status = 'OPEN' WHERE file_hash = ? AND (auction_current_price IS NULL OR auction_current_price < ?)`, [bidPrice, assetId, bidPrice], (updateErr) => {
+        if (updateErr) return res.status(500).json({ error: '更新最高价失败' });
+        res.status(201).json({ message: '出价成功', current_price: bidPrice });
+      });
+    });
+  });
+});
+
+app.get('/api/auction/:assetId/bids', (req, res) => {
+  db.query('SELECT bidder_user_id, bid_price, bid_time FROM auction_bids WHERE asset_file_hash = ? ORDER BY bid_time ASC', [req.params.assetId], (err, rows) => {
+    if (err) return res.status(500).json({ error: '查询出价记录失败' });
+    res.json(rows || []);
+  });
+});
+
+app.post('/api/auction/:assetId/settle', (req, res) => {
+  const assetId = String(req.params.assetId || '');
+  db.query(`SELECT file_hash, trade_mode, auction_end_time, auction_status
+            FROM asset_registrations WHERE file_hash = ? LIMIT 1`, [assetId], (err, rows) => {
+    if (err) return res.status(500).json({ error: '查询拍卖失败' });
+    const auction = rows[0];
+    if (!auction || auction.trade_mode !== 'auction') return res.status(404).json({ error: '拍卖不存在' });
+    if (auction.auction_status && auction.auction_status !== 'OPEN') return res.json({ status: auction.auction_status });
+    if (auction.auction_end_time && new Date(auction.auction_end_time).getTime() > Date.now()) {
+      return res.status(409).json({ error: '拍卖尚未截止' });
+    }
+    db.query(`SELECT bidder_user_id, bid_price, bid_time FROM auction_bids
+              WHERE asset_file_hash = ? ORDER BY bid_price DESC, bid_time ASC LIMIT 1`, [assetId], (bidErr, bids) => {
+      if (bidErr) return res.status(500).json({ error: '查询最高出价失败' });
+      const winner = bids[0] || null;
+      const status = winner ? 'CLOSED' : 'UNSOLD';
+      // 结束后立即从交易市场下架；获拍人后续通过交易处理页提交权益申请。
+      db.query('UPDATE asset_registrations SET auction_status = ?, txperm = 0 WHERE file_hash = ?', [status, assetId], (updateErr) => {
+        if (updateErr) return res.status(500).json({ error: '更新拍卖状态失败' });
+        res.json({ status, winner });
+      });
+    });
+  });
+});
+
+// 买方的获拍清单：只返回已结束且该买方为最高出价者的资产。
+app.get('/api/auction/won/:bidderUserId', (req, res) => {
+  const bidderUserId = String(req.params.bidderUserId || '');
+  // 页面打开时自动结算所有已到期拍卖，不再要求先点击资产详情。
+  db.query(`UPDATE asset_registrations a
+            LEFT JOIN (SELECT DISTINCT asset_file_hash FROM auction_bids) b
+              ON CAST(b.asset_file_hash AS BINARY) = CAST(a.file_hash AS BINARY)
+            SET a.auction_status = CASE WHEN b.asset_file_hash IS NULL THEN 'UNSOLD' ELSE 'CLOSED' END,
+                a.txperm = 0
+            WHERE a.trade_mode = 'auction' AND (a.auction_status IS NULL OR a.auction_status = 'OPEN')
+              AND a.auction_end_time IS NOT NULL AND a.auction_end_time <= NOW()`, (settleErr) => {
+    if (settleErr) console.error('自动结算到期拍卖失败:', settleErr);
+    const query = `
+    SELECT a.file_hash, a.asset_name, a.description, a.picture, a.owner_address,
+           a.auction_current_price, a.auction_end_time, b.bid_price, b.bid_time
+           ,b.bidder_user_id
+    FROM asset_registrations a
+    INNER JOIN auction_bids b ON CAST(b.asset_file_hash AS BINARY) = CAST(a.file_hash AS BINARY)
+    WHERE a.trade_mode = 'auction' AND a.auction_status = 'CLOSED'
+    ORDER BY a.auction_end_time DESC`;
+    db.query(query, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: '查询获拍资产失败' });
+    // 同一资产按全体买方的金额最高、时间最早选出唯一赢家。
+    const winners = new Map();
+    (rows || []).forEach(asset => {
+      const previous = winners.get(asset.file_hash);
+      if (!previous || Number(asset.bid_price) > Number(previous.bid_price) ||
+          (Number(asset.bid_price) === Number(previous.bid_price) && new Date(asset.bid_time) < new Date(previous.bid_time))) {
+        winners.set(asset.file_hash, asset);
+      }
+    });
+    const assets = Array.from(winners.values()).filter(asset => String(asset.bidder_user_id) === bidderUserId).map(asset => ({
+      ...asset,
+      picture: asset.picture && Buffer.isBuffer(asset.picture) ? asset.picture.toString('base64') : null
+    }));
+    res.json(assets);
+  });
+  });
+});
+
 // 获取可交易的资产，根据传递的 industry 参数来进行过滤
 app.get('/api/available-assets', (req, res) => {
   const { industry_raw_name, asset_category, asset_type } = req.query;
@@ -2093,9 +2216,12 @@ app.get('/api/available-assets', (req, res) => {
       current_owner_address,
       agent_addr,
       is_proxied,
-      price
+      price,
+      trade_mode, auction_start_price, auction_end_time,
+      auction_current_price, auction_bid_count, auction_status
     FROM asset_registrations
     WHERE txperm = 3
+      AND (trade_mode <> 'auction' OR ((auction_status IS NULL OR auction_status = 'OPEN') AND auction_end_time > NOW()))
   `;
 
   const queryParams = [];
@@ -2303,7 +2429,13 @@ app.get('/api/asset/:id', (req, res) => {
       view_right_owner,
       process_right_owner,
       model_type,
-      pc_type
+      pc_type,
+      trade_mode,
+      auction_start_price,
+      auction_end_time,
+      auction_current_price,
+      auction_bid_count,
+      auction_status
     FROM asset_registrations
     WHERE file_hash = ?
     LIMIT 1
@@ -2740,7 +2872,15 @@ app.post('/api/save-transaction', (req, res) => {
             console.error('插入交易数据失败:', err);
             return res.status(500).json({ error: '服务器内部错误' });
         }
-        res.status(201).json({ message: '交易已成功创建', transactionId: results.insertId });
+        const transactionId = results.insertId;
+        // 拍卖获胜者提交权益申请后，移出“待处理获拍”列表，但保留交易历史。
+        db.query(`UPDATE asset_registrations
+                  SET auction_status = 'APPLIED', txperm = 0
+                  WHERE file_hash = ? AND trade_mode = 'auction' AND auction_status = 'CLOSED'`,
+          [asset_id], (auctionErr) => {
+            if (auctionErr) console.error('更新拍卖申请状态失败:', auctionErr);
+            res.status(201).json({ message: '交易已成功创建', transactionId });
+          });
     });
 });
 

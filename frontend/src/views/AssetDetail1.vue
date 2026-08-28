@@ -60,9 +60,20 @@
         <span class="price-value">{{ asset.price || 1200 }} RMB</span>
       </div>
 
+      <div v-if="asset.trade_mode === 'auction'" class="auction-panel">
+        <div class="auction-line"><span>拍卖当前价</span><strong>{{ auctionCurrentPrice }} 元</strong></div>
+        <div class="auction-line"><span>出价次数</span><span>{{ auctionBidCount }}</span></div>
+        <div class="auction-line"><span>截止时间</span><span>{{ formatAuctionDeadline(asset.auction_end_time) }}</span></div>
+        <div v-if="auctionClosed" class="auction-result">{{ auctionStatus === 'CLOSED' ? '拍卖已结束，已锁定最高出价' : '拍卖已流拍' }}</div>
+        <div v-else class="auction-bid-form">
+          <input v-model.number="bidPrice" type="number" min="1" step="1" :placeholder="`至少 ${Number(auctionCurrentPrice || 0) + 1} 元`" />
+          <button class="buy-button" @click="submitBid" :disabled="bidSubmitting">{{ bidSubmitting ? '提交中…' : '立即出价' }}</button>
+        </div>
+      </div>
+
       <div class="action-buttons">
         <button class="share-button">分享</button>
-        <button class="buy-button" @click="openPurchaseModal">申请购买</button>
+        <button v-if="asset.trade_mode !== 'auction' || $route.query.auctionWinner === '1'" class="buy-button" @click="openPurchaseModal">{{ $route.query.auctionWinner === '1' ? '提交交易申请' : '申请购买' }}</button>
         <button class="follow-button">收藏</button>
       </div>
     </div>
@@ -373,7 +384,9 @@ export default {
   allow_supervision: 0,
   trade_location: '',
   trade_start_ts: '',
-  trade_end_ts: ''
+      trade_end_ts: '',
+      trade_mode: 'fixed', auction_start_price: null, auction_end_time: null,
+      auction_current_price: null, auction_bid_count: 0, auction_status: null
       },
       // 权限列表，可动态扩展
       permissions: [],
@@ -401,6 +414,9 @@ export default {
   selectedModelHash: '',     // 选中的模型 file_hash
   loadingModels: false,
       selectedPcType: '',
+      bidPrice: null,
+      bidSubmitting: false,
+      auctionTimer: null,
     };
   },
   computed: {
@@ -424,6 +440,20 @@ export default {
     
   showExpirationInput() {
     return this.selectedPermissions.some(p => p !== '持有权');
+  },
+
+  auctionCurrentPrice() {
+    return Number(this.asset.auction_current_price || this.asset.auction_start_price || this.asset.price || 0);
+  },
+  auctionBidCount() {
+    return Number(this.asset.auction_bid_count || 0);
+  },
+  auctionStatus() {
+    const end = this.asset.auction_end_time ? new Date(String(this.asset.auction_end_time).replace(' ', 'T')).getTime() : 0;
+    return this.asset.auction_status || (end && end <= Date.now() ? 'CLOSED' : 'OPEN');
+  },
+  auctionClosed() {
+    return ['CLOSED', 'UNSOLD'].includes(this.auctionStatus);
   },
 
   minimumExpirationTime() {
@@ -459,6 +489,10 @@ export default {
         const assetId = this.$route.params.id;
         console.log('资产ID:', assetId);
         await this.fetchAssetDetails(assetId);
+        if (this.asset.trade_mode === 'auction') {
+          await this.fetchAuction();
+          this.auctionTimer = window.setInterval(() => this.fetchAuction(), 5000);
+        }
 
       await this.fetchDefaultTradeCertInfo();
        
@@ -474,6 +508,38 @@ export default {
 },
 
   methods: {
+
+    formatAuctionDeadline(value) {
+      if (!value) return '未设置';
+      const date = new Date(String(value).replace(' ', 'T'));
+      return Number.isNaN(date.getTime()) ? '时间无效' : date.toLocaleString('zh-CN', { hour12: false });
+    },
+    async fetchAuction() {
+      try {
+        const { data } = await axios.get(`http://10.112.47.214:3000/api/auction/${this.asset.file_hash}`);
+        this.asset = { ...this.asset, ...data };
+        if (!this.bidPrice) this.bidPrice = Number(data.auction_current_price || data.auction_start_price || data.price || 0) + 1;
+        const end = data.auction_end_time ? new Date(String(data.auction_end_time).replace(' ', 'T')).getTime() : 0;
+        if (end && end <= Date.now() && (!data.auction_status || data.auction_status === 'OPEN')) {
+          await axios.post(`http://10.112.47.214:3000/api/auction/${this.asset.file_hash}/settle`);
+          const settled = await axios.get(`http://10.112.47.214:3000/api/auction/${this.asset.file_hash}`);
+          this.asset = { ...this.asset, ...settled.data };
+        }
+      } catch (error) { console.error('获取拍卖状态失败:', error); }
+    },
+    async submitBid() {
+      if (this.bidSubmitting || !this.asset.file_hash) return;
+      const price = Number(this.bidPrice);
+      const minimum = Number(this.auctionCurrentPrice || 0) + 1;
+      if (!Number.isInteger(price) || price < minimum) { alert(`出价必须至少为 ${minimum} 元`); return; }
+      this.bidSubmitting = true;
+      try {
+        await axios.post(`http://10.112.47.214:3000/api/auction/${this.asset.file_hash}/bid`, { bidder_user_id: this.userId, bid_price: price });
+        alert('出价成功');
+        await this.fetchAuction();
+      } catch (error) { alert(error.response?.data?.error || '出价失败'); }
+      finally { this.bidSubmitting = false; }
+    },
 
     async fetchDefaultTradeCertInfo() {
   if (!this.userId) {
@@ -894,6 +960,9 @@ if (!certAddr) {
      }).join(''));
     return JSON.parse(jsonPayload);
     }
+  },
+  beforeUnmount() {
+    if (this.auctionTimer) window.clearInterval(this.auctionTimer);
   }
 };
 </script>
@@ -1033,6 +1102,20 @@ body {
   font-size: 30px;
   font-weight: 700;
 }
+
+.auction-panel {
+  margin: 16px 0;
+  padding: 14px 16px;
+  max-width: 520px;
+  background: #fff8e8;
+  border: 1px solid #f2d38a;
+  border-radius: 8px;
+}
+.auction-line { display: flex; justify-content: space-between; gap: 16px; margin: 6px 0; color: #5b6675; }
+.auction-line strong { color: #c46b00; font-size: 22px; }
+.auction-bid-form { display: flex; gap: 10px; margin-top: 12px; }
+.auction-bid-form input { flex: 1; min-width: 0; padding: 10px; border: 1px solid #d8c28a; border-radius: 6px; font-size: 16px; }
+.auction-result { margin-top: 10px; color: #7a4d00; font-weight: 600; }
 
 .action-buttons {
   display: flex;

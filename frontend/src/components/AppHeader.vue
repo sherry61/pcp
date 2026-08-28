@@ -53,7 +53,7 @@ export default {
   data() {
     return {
       // ✅ 默认 buyer；如果你希望默认 seller 也可以改这里
-      role: localStorage.getItem('user_role') || 'seller'
+      role: localStorage.getItem('user_role') || 'buyer'
     };
   },
    computed: {
