@@ -267,6 +267,14 @@
               <div class="form-control">{{ getPcTypeLabel(selectedPcType || asset.pc_type) }}</div>
             </div>
 
+            <!-- 交易地点暂仅用于前端申请信息展示，不提交后端或上链。 -->
+            <div class="form-row">
+              <label for="purchase-trade-location">交易地点：</label>
+              <el-cascader id="purchase-trade-location" v-model="purchaseTradeLocation"
+                :options="regionData" :props="regionCascaderProps" class="form-control"
+                placeholder="请选择省、市" clearable />
+            </div>
+
 
 
 
@@ -343,6 +351,7 @@ import AppHeader from '@/components/AppHeader.vue';
 import AppSidebar from '@/components/AppSidebar.vue';
 import Chart from 'chart.js/auto';
 import axios from 'axios';
+import { provinceAndCityData } from 'element-china-area-data';
 
 export default {
   name: 'AssetDetail',
@@ -394,6 +403,9 @@ export default {
       selectedPermissions: [],
       //selectedPermissions:'',
       purchaseQuantity: 1, // 默认购买数量为1
+      purchaseTradeLocation: [], // 仅前端申请页面使用，不提交后端
+      regionData: provinceAndCityData,
+      regionCascaderProps: { expandTrigger: 'hover', checkStrictly: false, emitPath: true },
       errorMessage: '',      // 错误提示信息
       transactionHistory: [
         { id: 1, event: 'Sale', price: '48 rmb', seller: 'user1', buyer: 'user2' },
@@ -726,6 +738,7 @@ async openPurchaseModal() {
   this.selectedPcType = String(this.asset.pc_type || '').trim().toUpperCase();
   this.expirationTime = '';
   this.purchaseQuantity = 1;
+  this.purchaseTradeLocation = this.asset.trade_location ? String(this.asset.trade_location).split('-') : [];
   this.errorMessage = '';
 
   // 优先读 permissions；没有的话再读平铺字段
