@@ -2263,7 +2263,7 @@ app.get('/api/available-assets', (req, res) => {
 
   app.get('/api/get-asset2', (req, res) => {
     // 查询最新的一条数据，按id排序
-    const query = 'SELECT asset_name, asset_type, email, address, description, algorithm, custom_algorithm, file_hash, industry, txperm, user_id, owner_address, is_proxied, number, can_sell_asset, can_sell_view, can_sell_process FROM asset_registrations';
+    const query = 'SELECT asset_name, asset_type, email, address, description, algorithm, custom_algorithm, file_hash, industry, txperm, user_id, owner_address, agent_addr, is_proxied, number, can_sell_asset, can_sell_view, can_sell_process FROM asset_registrations';
     
     db.query(query, (err, results) => {
         if (err) {

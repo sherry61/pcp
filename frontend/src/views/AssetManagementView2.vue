@@ -109,7 +109,9 @@
   </button>
 </td>
 <td v-if="isSeller">
-  <button :disabled="item.isProxied === 0" @click="handleAuthorization(item)" class="edit-button">代理托管</button>
+  <button type="button" @click.stop.prevent="handleAuthorization(item)" class="edit-button">
+    {{ item.isProxied === 1 || item.isProxied === '1' ? '修改代理托管' : '代理托管' }}
+  </button>
 </td>
 
   </tr>
@@ -1698,10 +1700,11 @@ isIndivisible(industry) {
 
 
     handleAuthorization(item) {
-      if (item.isProxied === 1) {
-        this.selectedAsset = item;  // 保存当前资产信息
-        this.showAuthorizationModal = true; // 显示授权弹窗
-      }
+      if (!item) return;
+      this.selectedAsset = item;  // 保存当前资产信息
+      this.authorizationData.targetAddress = item.agentAddr || '';
+      this.authorizationData.authorizationQuantity = item.number || 1;
+      this.showAuthorizationModal = true; // 显示授权弹窗
     },
 
     // 关闭授权弹窗
@@ -1984,6 +1987,8 @@ updatePurchasedAssetsPagination() {
   async confirmAuthorization() {
     if (this.selectedAsset && this.authorizationData.targetAddress) {
       const asset = this.selectedAsset;
+      // 用户点击确认后立即收起输入弹窗，链上授权在后台继续执行。
+      this.closeAuthorizationModal();
       let owner;
 
       // 获取资产的拥有者
@@ -2018,10 +2023,16 @@ updatePurchasedAssetsPagination() {
       try {
         const response = await axios.post(apiUrl, payload);
 
-        if (response.status === 200 && response.data.code === 0) {
+        if (response.status === 200 && (response.data.code === 0 || response.data.code === '0')) {
           console.log('授权成功:', response);
+          await axios.post('http://10.112.47.214:3000/api/update-agent', {
+            file_hash: asset.fileHash,
+            agent_addr: this.authorizationData.targetAddress,
+            agent_count: authorizationQuantity
+          });
+          asset.agentAddr = this.authorizationData.targetAddress;
+          asset.isProxied = 1;
           this.showAuthorizationSuccessModal = true; // 显示授权成功弹窗
-          this.closeAuthorizationModal(); // 关闭授权弹窗
         } else {
           this.errorMessage = '授权失败，错误信息: ' + response.data.message;
         }
@@ -2157,6 +2168,7 @@ updatePurchasedAssetsPagination() {
             address: item.address,
             industry: item.industry,
             algorithm: item.algorithm,
+            agentAddr: item.agent_addr,
             userId: item.user_id,
             txperm: item.txperm,
             isProxied: item.is_proxied, // 这里加上 is_proxied 字段
