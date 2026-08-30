@@ -166,7 +166,7 @@
           可售经营权：{{ asset.can_sell_view ? '是' : '否' }}
         </p>
         <p class="tab-text">
-          可售加工使用权：{{ asset.can_sell_process ? '是' : '否' }}
+          可售使用权：{{ asset.can_sell_process ? '是' : '否' }}
         </p>
       </div>
 
@@ -708,7 +708,7 @@ export default {
   this.permissions = [
   { name: "所有权", canSell: !!this.asset.can_sell_asset },
   { name: "经营权", canSell: !!this.asset.can_sell_view },
-  { name: "加工使用权", canSell: !!this.asset.can_sell_process }
+  { name: "使用权", canSell: !!this.asset.can_sell_process }
 ];
    // ✅ 模型选择初始化
   this.selectedModelHash = '';
@@ -744,7 +744,7 @@ async openPurchaseModal() {
   this.permissions = [
     { name: '持有权', canSell: canSellAsset },
     { name: '经营权', canSell: canSellView },
-    { name: '加工使用权', canSell: canSellProcess }
+    { name: '使用权', canSell: canSellProcess }
   ];
 
   // 模型选择初始化

@@ -302,7 +302,7 @@
                 <el-checkbox v-model="form.isSellReadRight">允许出售经营权</el-checkbox>
               </div>
               <div class="form-group">
-                <el-checkbox v-model="form.isSellProcessRight">允许出售加工使用权</el-checkbox>
+                <el-checkbox v-model="form.isSellProcessRight">允许出售使用权</el-checkbox>
               </div>
              
             </div>
