@@ -55,7 +55,7 @@
                   >
                     {{ getSellerHeActionLabel(row) }}
                   </el-button>
-                  <el-button v-if="isTeeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.teeSubmitting" :disabled="isDeliveryExpired(row)" @click="openTeeSellerDialog(row)">执行交付</el-button>
+                  <span v-if="isTeeRow(row)" class="tee-seller-hint">买方请求后自动交付</span>
                   <el-button
                     v-if="isFlRow(row)"
                     size="small"
@@ -110,7 +110,7 @@
               layout="prev, pager, next"
               :current-page="pagination.page"
               :page-size="pagination.pageSize"
-              :total="requestedAssets.length"
+              :total="pagination.total"
               @current-change="handleSellerPageChange"
             />
           </div>
@@ -403,7 +403,8 @@ export default {
       requestedAssets: [],
       pagination: {
         page: 1,
-        pageSize: 10
+        pageSize: 10,
+        total: 0
       },
       isLoadingTransactions: false,
       contractInfo: { visible: false, data: null },
@@ -466,8 +467,7 @@ export default {
       ]
     },
     pagedRequestedAssets() {
-      const start = (this.pagination.page - 1) * this.pagination.pageSize
-      return this.requestedAssets.slice(start, start + this.pagination.pageSize)
+      return this.requestedAssets
     }
   },
   async mounted() {
@@ -544,17 +544,14 @@ export default {
       this.isLoadingTransactions = true
       try {
         const addresses = await this.getSellerAddresses()
-        const rows = []
-
-        for (const address of addresses) {
+        const addressResults = await Promise.all(addresses.map(async (address) => {
           try {
-            const response = await axios.get(`${API_BASE}/api/seller-transaction-status/${address}`)
+            const response = await axios.get(`${API_BASE}/api/seller-transaction-status/${address}`, { params: { page: this.pagination.page, pageSize: this.pagination.pageSize } })
             const transactions = Array.isArray(response.data.transactions) ? response.data.transactions : []
 
-            transactions
+            const rows = transactions
               .filter((item) => item.status === '已确认' && this.normalizePcType(item.pc_type))
-              .forEach((item) => {
-                rows.push({
+              .map((item) => ({
                   transaction_id: item.transaction_id,
                   pc_type: this.normalizePcType(item.pc_type),
                   file_hash: item.asset_id,
@@ -578,16 +575,16 @@ export default {
                   flBottomModelDownloaded: false,
                   downloadingFlBottom: false,
                   downloadingFlGradient: false
-                })
-              })
-          } catch (error) {
-            console.error(`加载卖家交易失败: ${address}`, error)
-          }
-        }
+                }))
+            return { rows, total: response.data.pagination?.total || rows.length }
+          } catch (error) { console.error(`加载卖家交易失败: ${address}`, error); return { rows: [], total: 0 } }
+        }))
+        const rows = addressResults.flatMap((item) => item.rows)
 
         this.requestedAssets = rows.sort((left, right) => this.compareTransactionIdDesc(left, right))
+        this.pagination.total = addressResults.reduce((sum, item) => sum + Number(item.total || 0), 0)
         this.ensureSellerPageInRange()
-        await this.syncSellerPageStatus()
+        void this.syncSellerPageStatus()
       } finally {
         this.isLoadingTransactions = false
       }
@@ -607,7 +604,7 @@ export default {
     },
 
     ensureSellerPageInRange() {
-      const totalPages = Math.max(1, Math.ceil(this.requestedAssets.length / this.pagination.pageSize))
+      const totalPages = Math.max(1, Math.ceil(this.pagination.total / this.pagination.pageSize))
       this.pagination.page = Math.min(Math.max(this.pagination.page, 1), totalPages)
     },
 
@@ -630,6 +627,10 @@ export default {
         const response = await teeApi.status(row.transaction_id)
         row.teeStep = response.step || response.status || ''
         row.teeStatus = ''
+        if (row.teeStep === 'WAITING_DATA' && row.teePendingFile && !row.teeDataUploading) {
+          row.teeDataUploading = true
+          try { await this.uploadTeeData(row, row.teePendingFile) } catch (error) { this.$message.error(error.response?.data?.message || error.message || 'TEE 数据上传失败') } finally { row.teeDataUploading = false }
+        }
       } catch (error) {
         row.teeStep = ''
       }
@@ -637,7 +638,7 @@ export default {
 
     async handleSellerPageChange(page) {
       this.pagination.page = page
-      await this.syncSellerPageStatus()
+      await this.fetchRequestedAssets()
     },
 
     startStatusPolling() {
@@ -665,13 +666,15 @@ export default {
       }
 
       await Promise.all(rows.map((row) => (
-        this.isHeRow(row)
+        this.isTeeRow(row)
+          ? this.refreshTeeStatus(row)
+          : (this.isHeRow(row)
           ? this.refreshHeStatus(row, false)
           : (this.isFlRow(row)
             ? this.refreshFlStatus(row, false)
             : (this.isPreRow(row)
               ? this.refreshPreStatus(row, false)
-              : this.refreshMpcStatus(row, false)))
+              : this.refreshMpcStatus(row, false))))
       )))
     },
 
@@ -706,7 +709,13 @@ export default {
         let task
         try { task = await teeApi.status(tx) } catch (error) { throw new Error('请先等待买方发起 TEE 交付申请') }
         const step = String(task.step || '')
-        if (step !== 'WAITING_DATA') {
+        if (!['WAITING_DATA', 'DATA_KEY_FAILED', 'DATA_UPLOAD_FAILED'].includes(step)) {
+          if (task.vmId || task.vm_id) {
+            row.teeStep = step
+            this.teeDialog.visible = false
+            this.$message.info('当前 TEE 任务仍在处理中，请等待环境准备完成')
+            return
+          }
           // VM provisioning is deliberately fire-and-forget. The backend owns
           // the long-running setup; this click must finish immediately.
           teeApi.confirm(tx).catch((error) => {
@@ -718,14 +727,19 @@ export default {
           this.$message.success('TEE 环境已开始后台准备，请稍后刷新状态')
           return
         }
+        await this.uploadTeeData(row, this.teeDialog.dataFile)
+        this.teeDialog.visible = false
+      } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE交付失败') } finally { this.teeDialog.submitting = false }
+    },
+    async uploadTeeData(row, file) {
+        const tx = String(row.transaction_id)
         const kp = await generateEcKeyPair(); const pem = await publicKeyPem(kp.publicKey)
         const key = await teeApi.receiveKey({ transactionId: tx, ecPublicKey: pem, fileType: 'data', role: 'seller', name: 'data.csv' })
         const sm4 = await decryptEnvelope(key.envelope, kp.privateKey)
         const iv = b64(crypto.getRandomValues(new Uint8Array(16)))
-        const encrypted = encryptSm4(new Uint8Array(await this.teeDialog.dataFile.arrayBuffer()), b64(sm4), iv)
+        const encrypted = encryptSm4(new Uint8Array(await file.arrayBuffer()), b64(sm4), iv)
         await teeApi.receiveFile({ transactionId: tx, fileType: 'data', name: 'data.csv', iv, ciphertext: encrypted.ciphertext, role: 'seller' })
-        row.teeStatus = '等待买家权重'; this.$message.success('TEE 数据已提交，请等待买家上传权重'); this.teeDialog.visible = false
-      } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE交付失败') } finally { this.teeDialog.submitting = false }
+        row.teeStep = 'WAITING_WEIGHT'; row.teeStatus = '等待买方上传权重'; this.$message.success('TEE 数据已提交，等待买方上传权重')
     },
 
     getDeliveryMethodLabel(row) {
@@ -788,7 +802,7 @@ export default {
 
     getStatusText(rowOrStatus) {
       if (typeof rowOrStatus === 'object' && rowOrStatus !== null) {
-        if (this.isTeeRow(rowOrStatus)) return ({ VM_CREATING: '虚机创建中', VM_STARTING: '虚机启动中', VM_RUNNING: '服务部署中' })[String(rowOrStatus.teeStep || '').toUpperCase()] || ({ WAIT_BUYER: '待买方操作', WAIT_SELLER: '待卖方操作', COMPLETED: '已完成', FAILED: '失败' })[this.getSellerDeliveryStatus(rowOrStatus)] || '计算中'
+        if (this.isTeeRow(rowOrStatus)) { const step = String(rowOrStatus.teeStep || '').toUpperCase(); if (step === 'VM_CREATING' || step === 'REQUESTED') return '虚机创建中'; if (step === 'VM_STARTING') return '虚机启动中'; if (['SERVICE_DEPLOYING', 'VM_RUNNING', 'DATA_KEY_NEGOTIATING', 'DATA_UPLOADING', 'WEIGHT_KEY_NEGOTIATING', 'WEIGHT_UPLOADING', 'WAITING_DATA', 'WAITING_WEIGHT', 'CONTRACT_VERIFYING', 'CONTRACT_VERIFIED'].includes(step)) return '环境配置中'; if (step === 'COMPUTING') return '计算中'; if (['RESULT_READY', 'COMPLETED'].includes(step)) return '完成'; if (step.endsWith('_FAILED') || step === 'FAILED') return '失败'; return '环境配置中' }
         const businessStatus = this.getSellerDeliveryStatus(rowOrStatus)
         const currentStatus = String(this.getCurrentStatus(rowOrStatus) || '').toUpperCase()
         const labelMap = {
@@ -821,6 +835,16 @@ export default {
     },
 
     getSellerDeliveryStatus(row) {
+      if (this.isTeeRow(row)) {
+        const step = String(row?.teeStep || '').toUpperCase()
+        if (!step) return 'WAIT_BUYER'
+        if (['COMPUTING', 'RESULT_READY', 'COMPLETED'].includes(step)) return step === 'COMPUTING' ? 'PROCESSING' : 'COMPLETED'
+        // The new TEE flow is fully server-side after the buyer requests
+        // delivery. The seller has no upload or execution action.
+        if (['REQUESTED', 'VM_CREATING', 'VM_CREATED', 'VM_STARTING', 'SERVICE_DEPLOYING', 'VM_RUNNING', 'WAITING_DATA', 'DATA_KEY_NEGOTIATING', 'DATA_KEY_FAILED', 'DATA_UPLOADING', 'DATA_UPLOAD_FAILED', 'WAITING_WEIGHT', 'WEIGHT_KEY_NEGOTIATING', 'WEIGHT_KEY_FAILED', 'WEIGHT_UPLOADING'].includes(step)) return 'PROCESSING'
+        if (step === 'FAILED') return 'FAILED'
+        return 'PROCESSING'
+      }
       if (this.isMpcRow(row)) {
         const currentStatus = String(this.getCurrentStatus(row) || '').toLowerCase()
 

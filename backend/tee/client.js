@@ -51,7 +51,7 @@ function createTeeClient(options = {}) {
       throw error;
     },
     async receiveKey(payload) {
-      const response = await json.post(joinUrl(cfg.host, cfg.keyPort, '/api/receive-key'), payload, { headers: { 'Content-Type': 'application/json' } });
+      const response = await json.post(joinUrl(cfg.host, cfg.gatewayPort, '/api/receive-key'), payload, { headers: { 'Content-Type': 'application/json' } });
       return expect(response, 'TEE receive-key');
     },
     async receiveHostKey(ecPublicKey) {
@@ -59,15 +59,15 @@ function createTeeClient(options = {}) {
       return expect(response, 'TEE host receive-key');
     },
     async verifyContract(payload) {
-      const response = await json.post(joinUrl(cfg.host, cfg.jsonPort, '/api/receive-json'), payload, { headers: { 'Content-Type': 'application/json' } });
+      const response = await json.post(joinUrl(cfg.host, cfg.gatewayPort, '/api/receive-json'), payload, { headers: { 'Content-Type': 'application/json' } });
       return expect(response, 'TEE receive-json');
     },
     async receiveFile(payload) {
-      const response = await json.post(joinUrl(cfg.host, cfg.filePort, '/api/receive-file'), payload, { headers: { 'Content-Type': 'application/json' }, maxContentLength: Infinity, maxBodyLength: Infinity });
+      const response = await json.post(joinUrl(cfg.host, cfg.gatewayPort, '/api/receive-file'), payload, { headers: { 'Content-Type': 'application/json' }, maxContentLength: Infinity, maxBodyLength: Infinity });
       return expect(response, 'TEE receive-file');
     },
     async getResult(vmId) {
-      const response = await json.post(joinUrl(cfg.host, cfg.resultPort, '/api/get-result'), { vmId: String(vmId) }, { headers: { 'Content-Type': 'application/json' } });
+      const response = await json.post(joinUrl(cfg.host, cfg.gatewayPort, '/api/get-result'), { vmId: String(vmId) }, { headers: { 'Content-Type': 'application/json' } });
       return expect(response, 'TEE get-result');
     }
   };

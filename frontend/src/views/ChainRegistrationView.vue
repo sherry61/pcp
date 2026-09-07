@@ -141,6 +141,18 @@
 </el-select>
 </div>
 </div>
+<div v-if="form.pcType === 'TEE'" class="form-row">
+  <div class="form-group">
+    <label>TEE data 文件</label>
+    <input type="file" accept=".csv,text/csv" @change="form.teeDataFile = $event.target.files?.[0] || null" />
+    <small v-if="form.teeDataFile">{{ form.teeDataFile.name }}</small>
+  </div>
+  <div class="form-group">
+    <label>TEE weight 文件</label>
+    <input type="file" accept=".csv,text/csv" @change="form.teeWeightFile = $event.target.files?.[0] || null" />
+    <small v-if="form.teeWeightFile">{{ form.teeWeightFile.name }}</small>
+  </div>
+</div>
 <!-- 资产领域：放到分类分级上面 -->
 <div class="form-row">
   <div class="form-group">
@@ -701,6 +713,7 @@ import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import axios from 'axios'
 import { provinceAndCityData } from 'element-china-area-data'
+import teeApi from '@/utils/teeApi'
 
 export default {
   name: 'ChainRegistrationView',
@@ -789,6 +802,8 @@ gradingMethods: [
         allow_resale: 0,  // 初始为不允许二次交易
         modelSelection: '',
         pcType: '',
+        teeDataFile: null,
+        teeWeightFile: null,
         analysisMethod: '',
 analysisResultText: '',
 fingerprint: '',
@@ -3020,6 +3035,10 @@ async gradeAssetLevel() {
       formData.append('allow_resale', this.form.allow_resale); // 将 allow_resale 传递到后端
       formData.append('model_selection', this.form.modelSelection);
       formData.append('pc_type', this.form.pcType);
+      if (String(this.form.pcType || '').toUpperCase() === 'TEE' && (!this.form.teeDataFile || !this.form.teeWeightFile)) {
+        this.errorMessage = 'TEE 资产必须同时选择 data.csv 和 weight.csv';
+        return { status: 400, data: { message: this.errorMessage } };
+      }
       // 交易地点
 const tradeLocation =
   this.selectedRegionOptions && this.selectedRegionOptions.length === 2
@@ -3046,6 +3065,14 @@ formData.append('trade_location', tradeLocation);
 
         // 检查响应是否包含正确的返回数据
         if (response.status === 201 && response.data && response.data.message) {
+          if (String(this.form.pcType || '').toUpperCase() === 'TEE') {
+            if (!this.form.teeDataFile || !this.form.teeWeightFile) {
+              this.errorMessage = 'TEE 资产必须同时上传 data.csv 和 weight.csv';
+              return response;
+            }
+            // 交易和资产表使用 fileHash 作为 asset_id；insertId 仅是数据库内部自增主键。
+            await teeApi.uploadAssetMaterials(response.data.fileHash || response.data.assetId, this.certAddr, this.form.teeDataFile, this.form.teeWeightFile);
+          }
           this.errorMessage = '';
           return response; // 返回成功响应
         } else {

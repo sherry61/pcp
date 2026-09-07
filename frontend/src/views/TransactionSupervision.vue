@@ -7,20 +7,25 @@
         <section class="transaction-page">
           <header class="page-header">
             <div>
+              <!-- <p class="eyebrow">ChainMaker 交易监管</p> -->
               <h2>交易监管</h2>
-              <p>链上交易状态监管</p>
+              <span>展示当前接入数据源中的链上交易及其监管状态。</span>
             </div>
-            <el-button :loading="refreshing" @click="refreshAll()">刷新</el-button>
+            <el-button type="primary" :loading="refreshing" @click="refreshAll()">刷新页面</el-button>
           </header>
 
           <el-alert
-            v-if="!backendAvailable"
+            v-if="overviewLoaded && !backendAvailable"
             :title="availabilityMessage"
-            type="warning"
+            :type="overviewError ? 'error' : 'warning'"
             show-icon
             :closable="false"
             class="availability-alert"
-          />
+          >
+            <template v-if="overviewError" #default>
+              <el-button size="small" @click="loadOverview()">重试统计</el-button>
+            </template>
+          </el-alert>
 
           <section class="overview-toolbar" aria-label="统计日期设置">
             <div>
@@ -80,7 +85,7 @@
                 <el-select v-model="draftFilters.chain_status" clearable placeholder="全部">
                   <el-option label="成功" value="success" />
                   <el-option label="失败" value="failed" />
-                  <el-option label="待确认" value="pending" />
+                  <el-option label="未知" value="unknown" />
                 </el-select>
               </el-form-item>
               <el-form-item label="风险等级">
@@ -125,60 +130,64 @@
               v-loading="tableLoading"
               :data="transactions"
               stripe
-              height="520"
+              max-height="520"
               empty-text="暂无符合条件的交易"
             >
               <el-table-column label="交易时间" width="176">
-                <template #default="{ row }">{{ displayValue(row.datetime || formatTimestamp(row.timestamp)) }}</template>
+                <template #default="{ row }">{{ formatDateTime(row.datetime, row.timestamp) }}</template>
               </el-table-column>
-              <el-table-column label="交易哈希" min-width="190">
+              <el-table-column label="交易哈希" min-width="210">
                 <template #default="{ row }">
-                  <div class="copy-cell">
-                    <el-tooltip :content="row.tx_hash || '该历史记录未包含链上交易哈希'" placement="top">
-                      <span>{{ row.tx_hash ? middleEllipsis(row.tx_hash, 18) : '暂无链上哈希' }}</span>
-                    </el-tooltip>
-                    <el-button v-if="row.tx_hash" link type="primary" @click="copyText(row.tx_hash)">复制</el-button>
+                  <div class="hash-cell">
+                    <div class="copy-cell">
+                      <el-tooltip :content="row.tx_hash || '暂无链上哈希'" placement="top">
+                        <span>{{ row.tx_hash ? middleEllipsis(row.tx_hash, 22) : '暂无链上哈希' }}</span>
+                      </el-tooltip>
+                      <el-button v-if="row.tx_hash" link type="primary" @click="copyText(row.tx_hash)">复制</el-button>
+                    </div>
+                    <small v-if="!row.tx_hash">{{ fallbackIdentifierText(row) }}</small>
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="业务记录" min-width="160">
+              <el-table-column prop="block_number" label="区块高度" width="120">
+                <template #default="{ row }">{{ formatIntegerOrDash(row.block_number) }}</template>
+              </el-table-column>
+              <el-table-column prop="chain_id" label="链 ID" width="108">
+                <template #default="{ row }">{{ displayValue(row.chain_id) }}</template>
+              </el-table-column>
+              <el-table-column label="合约名称" min-width="150">
                 <template #default="{ row }">
-                  <el-tooltip :content="row.business_transaction_id || row.record_key" placement="top">
-                    <span>{{ middleEllipsis(row.business_transaction_id || row.record_key, 16) }}</span>
+                  <el-tooltip :content="displayValue(row.contract_name)" placement="top">
+                    <span class="overflow-text">{{ displayValue(row.contract_name) }}</span>
                   </el-tooltip>
                 </template>
               </el-table-column>
-              <el-table-column prop="token_id" label="Token ID" min-width="150">
-                <template #default="{ row }">{{ displayValue(row.token_id) }}</template>
+              <el-table-column label="合约方法" min-width="150">
+                <template #default="{ row }">
+                  <el-tooltip :content="displayValue(row.contract_method)" placement="top">
+                    <span class="overflow-text">{{ displayValue(row.contract_method) }}</span>
+                  </el-tooltip>
+                </template>
               </el-table-column>
-              <el-table-column prop="block_number" label="区块高度" width="120">
-                <template #default="{ row }">{{ displayValue(row.block_number) }}</template>
-              </el-table-column>
-              <el-table-column label="From" min-width="160">
+              <el-table-column label="发送地址" min-width="190">
                 <template #default="{ row }">
                   <div class="copy-cell">
-                    <el-tooltip :content="displayValue(row.from_address)" placement="top">
-                      <span>{{ middleEllipsis(row.from_address, 14) }}</span>
+                    <el-tooltip :content="displayValue(row.sender_address)" placement="top">
+                      <span>{{ middleEllipsis(row.sender_address, 18) }}</span>
                     </el-tooltip>
-                    <el-button v-if="row.from_address" link type="primary" @click="copyText(row.from_address)">复制</el-button>
+                    <el-button v-if="row.sender_address" link type="primary" @click="copyText(row.sender_address)">复制</el-button>
                   </div>
                 </template>
               </el-table-column>
-              <el-table-column label="To" min-width="160">
+              <el-table-column label="交易类型" min-width="154">
                 <template #default="{ row }">
-                  <div class="copy-cell">
-                    <el-tooltip :content="displayValue(row.to_address)" placement="top">
-                      <span>{{ middleEllipsis(row.to_address, 14) }}</span>
-                    </el-tooltip>
-                    <el-button v-if="row.to_address" link type="primary" @click="copyText(row.to_address)">复制</el-button>
-                  </div>
+                  <el-tooltip :content="displayValue(row.tx_type)" placement="top">
+                    <span class="overflow-text">{{ txTypeText(row.tx_type) }}</span>
+                  </el-tooltip>
                 </template>
               </el-table-column>
-              <el-table-column label="交易金额" width="138">
-                <template #default="{ row }">{{ formatAmount(row) }}</template>
-              </el-table-column>
-              <el-table-column label="手续费" width="124">
-                <template #default="{ row }">{{ formatFee(row) }}</template>
+              <el-table-column label="Gas 使用量" width="118" align="right">
+                <template #default="{ row }">{{ formatIntegerOrDash(row.gas_used) }}</template>
               </el-table-column>
               <el-table-column label="链上状态" width="105">
                 <template #default="{ row }">
@@ -205,19 +214,21 @@
             </el-table>
 
             <footer class="cursor-pagination">
-              <span>第 {{ pageNumber }} 页</span>
-              <el-select v-model="pageSize" class="page-size" @change="changePageSize">
-                <el-option v-for="size in [20, 50, 100, 200]" :key="size" :label="`${size} 条/页`" :value="size" />
-              </el-select>
-              <el-button :disabled="tableLoading || cursorHistory.length === 0" @click="previousPage">上一页</el-button>
-              <el-button :disabled="tableLoading || !hasMore" @click="nextPage">下一页</el-button>
+              <span class="pagination-summary">{{ paginationSummary }}</span>
+              <div class="pagination-actions">
+                <el-select v-model="pageSize" class="page-size" @change="changePageSize">
+                  <el-option v-for="size in [20, 50, 100, 200]" :key="size" :label="`${size} 条/页`" :value="size" />
+                </el-select>
+                <el-button :disabled="tableLoading || cursorHistory.length === 0" @click="previousPage">上一页</el-button>
+                <el-button :disabled="tableLoading || !hasMore" @click="nextPage">下一页</el-button>
+              </div>
             </footer>
           </section>
         </section>
       </main>
     </div>
 
-    <el-drawer v-model="detailVisible" size="58%" title="交易详情" :destroy-on-close="true" @closed="closeDetail">
+    <el-drawer v-model="detailVisible" size="min(960px, 96vw)" title="交易详情" :destroy-on-close="true" @closed="closeDetail">
       <div v-loading="detailLoading" class="detail-body">
         <el-alert v-if="detailError" :title="detailError" type="error" show-icon :closable="false">
           <template #default>
@@ -225,20 +236,69 @@
           </template>
         </el-alert>
         <template v-else>
+          <h3 class="detail-section-title">链上信息</h3>
+          <el-descriptions :column="2" border class="chain-descriptions">
+            <el-descriptions-item label="交易哈希" :span="2">
+              <span class="breakable-value">{{ detail.tx_hash || '暂无链上哈希' }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="链 ID">{{ displayValue(detail.chain_id) }}</el-descriptions-item>
+            <el-descriptions-item label="交易类型">{{ txTypeText(detail.tx_type) }}</el-descriptions-item>
+            <el-descriptions-item label="区块高度">{{ formatIntegerOrDash(detail.block_number) }}</el-descriptions-item>
+            <el-descriptions-item label="区块内序号">{{ formatIntegerOrDash(detail.transaction_index) }}</el-descriptions-item>
+            <el-descriptions-item label="区块哈希" :span="2">
+              <span class="breakable-value">{{ displayValue(detail.block_hash) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="交易时间">{{ formatDateTime(detail.datetime, detail.timestamp) }}</el-descriptions-item>
+            <el-descriptions-item label="Gas 使用量">{{ formatIntegerOrDash(detail.gas_used) }}</el-descriptions-item>
+            <el-descriptions-item label="合约名称">{{ displayValue(detail.contract_name) }}</el-descriptions-item>
+            <el-descriptions-item label="合约方法">{{ displayValue(detail.contract_method) }}</el-descriptions-item>
+            <el-descriptions-item label="发送组织">{{ displayValue(detail.sender_org_id) }}</el-descriptions-item>
+            <el-descriptions-item label="成员类型">{{ displayValue(detail.sender_member_type) }}</el-descriptions-item>
+            <el-descriptions-item label="发送地址" :span="2">
+              <span class="breakable-value">{{ displayValue(detail.sender_address) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="签名证书指纹" :span="2">
+              <span class="breakable-value">{{ displayValue(detail.signer_cert_fingerprint) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="链上结果码">{{ displayValue(detail.result_code) }}</el-descriptions-item>
+            <el-descriptions-item label="合约结果码">{{ displayValue(detail.contract_result_code) }}</el-descriptions-item>
+            <el-descriptions-item label="链上执行状态">{{ chainStatusText(detail.chain_status) }}</el-descriptions-item>
+            <el-descriptions-item label="业务执行结果">{{ businessSuccessText(detail.business_success) }}</el-descriptions-item>
+            <el-descriptions-item label="结果信息" :span="2">{{ displayValue(detail.result_message) }}</el-descriptions-item>
+            <el-descriptions-item v-if="hasValue(detail.error_message)" label="错误信息" :span="2">
+              {{ displayValue(detail.error_message) }}
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <h3 class="detail-section-title">数据源与业务字段</h3>
           <el-descriptions :column="2" border>
-            <el-descriptions-item label="交易哈希" :span="2">{{ detail.tx_hash || '暂无链上哈希' }}</el-descriptions-item>
+            <el-descriptions-item label="记录键" :span="2">
+              <span class="breakable-value">{{ displayValue(detail.record_key) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="数据源类型">{{ sourceKindText(detail.source_kind) }}</el-descriptions-item>
+            <el-descriptions-item label="批次">{{ displayValue(detail.batch_id) }}</el-descriptions-item>
             <el-descriptions-item label="业务交易编号">{{ displayValue(detail.business_transaction_id) }}</el-descriptions-item>
-            <el-descriptions-item label="业务记录键">{{ displayValue(detail.record_key) }}</el-descriptions-item>
             <el-descriptions-item label="Token ID">{{ displayValue(detail.token_id) }}</el-descriptions-item>
             <el-descriptions-item label="组织 / 服务端口">{{ organizationText(detail) }}</el-descriptions-item>
-            <el-descriptions-item label="区块高度">{{ displayValue(detail.block_number) }}</el-descriptions-item>
-            <el-descriptions-item label="交易时间">{{ displayValue(detail.datetime || formatTimestamp(detail.timestamp)) }}</el-descriptions-item>
-            <el-descriptions-item label="From" :span="2">{{ displayValue(detail.from_address) }}</el-descriptions-item>
-            <el-descriptions-item label="To" :span="2">{{ displayValue(detail.to_address) }}</el-descriptions-item>
+            <el-descriptions-item label="操作">{{ displayValue(detail.operation) }}</el-descriptions-item>
+            <el-descriptions-item label="开始时间">{{ displayValue(detail.started_at) }}</el-descriptions-item>
+            <el-descriptions-item label="完成时间">{{ displayValue(detail.finished_at) }}</el-descriptions-item>
+            <el-descriptions-item label="耗时">{{ formatDuration(detail.duration_ms) }}</el-descriptions-item>
             <el-descriptions-item label="原始金额">{{ displayValue(detail.value_raw) }}</el-descriptions-item>
             <el-descriptions-item label="格式化金额">{{ formatAmount(detail) }}</el-descriptions-item>
-            <el-descriptions-item label="手续费">{{ formatFee(detail) }}</el-descriptions-item>
-            <el-descriptions-item label="链上执行状态">{{ chainStatusText(detail.chain_status) }}</el-descriptions-item>
+            <el-descriptions-item v-if="hasValue(detail.fee) || hasValue(detail.fee_raw)" label="数据源手续费">
+              {{ formatFee(detail) }}
+            </el-descriptions-item>
+            <el-descriptions-item label="业务 From 地址" :span="2">
+              <span class="breakable-value">{{ displayValue(detail.from_address) }}</span>
+            </el-descriptions-item>
+            <el-descriptions-item label="业务 To 地址" :span="2">
+              <span class="breakable-value">{{ displayValue(detail.to_address) }}</span>
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <h3 class="detail-section-title">监管信息</h3>
+          <el-descriptions :column="2" border>
             <el-descriptions-item label="监管状态">{{ supervisionStatusText(detail.supervision_status) }}</el-descriptions-item>
             <el-descriptions-item label="风险等级">{{ riskLevelText(detail.risk_level) }}</el-descriptions-item>
             <el-descriptions-item label="审计开始时间">{{ displayValue(detail.audit_started_at || detail.audit_state?.audit_started_at) }}</el-descriptions-item>
@@ -297,9 +357,13 @@ export default {
   components: { AppHeader, AppSidebar },
   data() {
     return {
+      username: localStorage.getItem('username') || 'user',
+      userId: localStorage.getItem('userId') || '-',
       overview: { available: false, total: 0, finished_total: 0, status_counts: { ...EMPTY_COUNTS } },
       overviewDate: '',
       overviewLoading: false,
+      overviewLoaded: false,
+      overviewError: '',
       tableLoading: false,
       refreshing: false,
       tableError: '',
@@ -313,6 +377,7 @@ export default {
       nextCursor: null,
       cursorHistory: [],
       hasMore: false,
+      totalRecords: null,
       detailVisible: false,
       detailLoading: false,
       detailError: '',
@@ -324,6 +389,7 @@ export default {
       detailController: null,
       overviewRequestId: 0,
       tableRequestId: 0,
+      detailRequestId: 0,
       supervisionOptions: [
         { label: '全部', value: 'all' },
         { label: '已提交', value: 'submitted' },
@@ -335,18 +401,17 @@ export default {
   },
   computed: {
     backendAvailable() {
-      return this.overview.available === true
+      return !this.overviewError && this.overview.available === true
     },
     availabilityMessage() {
-      return this.overview.message || '交易数据源尚未配置，页面已就绪但当前无法读取交易数据。'
+      return this.overviewError || this.overview.message || '交易数据源暂时不可用。'
     },
     overviewCards() {
-      const counts = { ...EMPTY_COUNTS, ...(this.overview.status_counts || {}) }
       return [
-        { key: 'finished', label: '交易完成数量', value: this.overview.finished_total || 0, note: '数据库全部交易记录数' },
-        { key: 'total', label: '当日交易量', value: this.overview.total || 0, note: this.overview.stat_date || '未接入数据' },
-        { key: 'submitted', label: '已提交', value: counts.submitted, note: '等待进入审计流程' },
-        { key: 'risk', label: '存在风险', value: counts.risk, note: '存在未处置中高风险' }
+        { key: 'finished', label: '交易完成数量', value: this.overview.finished_total ?? 0, note: '数据库全部交易记录数' },
+        { key: 'total', label: '当日交易量', value: this.overview.total ?? 0, note: this.overview.stat_date || '尚无统计日期' },
+        { key: 'submitted', label: '已提交', value: this.statusCount('submitted'), note: '当前统计日期' },
+        { key: 'risk', label: '存在风险', value: this.statusCount('risk'), note: '当前统计日期未处置风险' }
       ]
     },
     isHistoricalDate() {
@@ -355,6 +420,20 @@ export default {
     },
     pageNumber() {
       return this.cursorHistory.length + 1
+    },
+    totalPages() {
+      const total = Number(this.totalRecords)
+      const size = Number(this.pageSize)
+      if (this.totalRecords === null || !Number.isFinite(total) || total < 0 || !Number.isFinite(size) || size <= 0) {
+        return null
+      }
+      return total === 0 ? 0 : Math.ceil(total / size)
+    },
+    paginationSummary() {
+      if (this.totalPages !== null) {
+        return `第 ${this.pageNumber} / ${this.totalPages} 页，共 ${this.formatInteger(this.totalRecords)} 条`
+      }
+      return `第 ${this.pageNumber} 页，本页 ${this.transactions.length} 条`
     }
   },
   mounted() {
@@ -383,18 +462,25 @@ export default {
       this.overviewController = controller
       const requestId = ++this.overviewRequestId
       if (!silent) this.overviewLoading = true
+      this.overviewError = ''
       try {
         const params = {}
         if (this.overviewDate) params.date = this.overviewDate
         params.timezone = 'Asia/Shanghai'
         const response = await fetchTransactionOverview(params, controller.signal)
-        if (requestId === this.overviewRequestId) this.overview = response.data
+        if (requestId === this.overviewRequestId) {
+          this.overview = response.data || { available: false }
+        }
       } catch (error) {
-        if (!this.isCanceled(error) && !silent) {
-          ElMessage.error(this.errorMessage(error, '交易统计加载失败'))
+        if (!this.isCanceled(error) && requestId === this.overviewRequestId) {
+          this.overviewError = this.errorMessage(error, '交易统计加载失败')
+          if (!silent) ElMessage.error(this.overviewError)
         }
       } finally {
-        if (requestId === this.overviewRequestId) this.overviewLoading = false
+        if (requestId === this.overviewRequestId) {
+          this.overviewLoading = false
+          this.overviewLoaded = true
+        }
       }
     },
     async loadTransactions({ silent = false } = {}) {
@@ -411,6 +497,10 @@ export default {
         this.transactions = response.data.items || []
         this.nextCursor = response.data.next_cursor || null
         this.hasMore = Boolean(response.data.has_more)
+        const responseTotal = Number(response.data.total)
+        this.totalRecords = Object.prototype.hasOwnProperty.call(response.data, 'total') && Number.isFinite(responseTotal) && responseTotal >= 0
+          ? responseTotal
+          : null
         if (response.data.available === false) {
           this.tableError = response.data.message || '交易数据源尚未配置。'
         }
@@ -455,6 +545,7 @@ export default {
       this.nextCursor = null
       this.cursorHistory = []
       this.hasMore = false
+      this.totalRecords = null
     },
     nextPage() {
       if (!this.hasMore || !this.nextCursor) return
@@ -482,15 +573,18 @@ export default {
       this.abortRequest('detailController')
       const controller = new AbortController()
       this.detailController = controller
+      const requestId = ++this.detailRequestId
       this.detailLoading = true
       this.detailError = ''
       try {
         const response = await fetchTransactionDetail(this.detailIdentifier, controller.signal)
-        this.detail = response.data
+        if (requestId === this.detailRequestId) this.detail = response.data || {}
       } catch (error) {
-        if (!this.isCanceled(error)) this.detailError = this.errorMessage(error, '交易详情加载失败')
+        if (!this.isCanceled(error) && requestId === this.detailRequestId) {
+          this.detailError = this.errorMessage(error, '交易详情加载失败')
+        }
       } finally {
-        this.detailLoading = false
+        if (requestId === this.detailRequestId) this.detailLoading = false
       }
     },
     retryDetail() {
@@ -498,6 +592,7 @@ export default {
     },
     closeDetail() {
       this.abortRequest('detailController')
+      this.detailRequestId += 1
       this.detail = {}
       this.detailError = ''
       this.detailIdentifier = ''
@@ -510,14 +605,29 @@ export default {
       return error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError'
     },
     errorMessage(error, fallback) {
-      return error?.response?.data?.detail || error?.response?.data?.message || error?.message || fallback
+      const detail = error?.response?.data?.detail
+      if (typeof detail === 'string') return detail
+      if (detail?.message) return detail.message
+      return error?.response?.data?.message || error?.message || fallback
+    },
+    hasValue(value) {
+      return value !== null && value !== undefined && value !== ''
     },
     displayValue(value) {
-      return value === null || value === undefined || value === '' ? '—' : String(value)
+      return this.hasValue(value) ? String(value) : '—'
     },
     formatInteger(value) {
       const number = Number(value)
       return Number.isFinite(number) ? number.toLocaleString('zh-CN') : '0'
+    },
+    formatIntegerOrDash(value) {
+      if (!this.hasValue(value)) return '—'
+      const number = Number(value)
+      return Number.isFinite(number) ? number.toLocaleString('zh-CN') : this.displayValue(value)
+    },
+    statusCount(status) {
+      const nestedValue = this.overview.status_counts?.[status]
+      return nestedValue ?? this.overview[status] ?? 0
     },
     formatTimestamp(value) {
       if (value === null || value === undefined || value === '') return '—'
@@ -525,7 +635,16 @@ export default {
       if (!Number.isFinite(number)) return this.displayValue(value)
       const milliseconds = number < 100000000000 ? number * 1000 : number
       const date = new Date(milliseconds)
-      return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', { hour12: false })
+      return Number.isNaN(date.getTime()) ? '—' : date.toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        hour12: false
+      })
+    },
+    formatDateTime(value, timestampFallback) {
+      if (!this.hasValue(value)) return this.formatTimestamp(timestampFallback)
+      const date = new Date(value)
+      if (Number.isNaN(date.getTime())) return this.displayValue(value)
+      return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', hour12: false })
     },
     formatDecimal(value, maximumFractionDigits = 8) {
       if (value === null || value === undefined || value === '') return '—'
@@ -544,12 +663,25 @@ export default {
       const formatted = this.formatDecimal(row.fee, 10)
       return row.fee_symbol ? `${formatted} ${row.fee_symbol}` : formatted
     },
+    formatDuration(value) {
+      if (!this.hasValue(value)) return '—'
+      const milliseconds = Number(value)
+      if (!Number.isFinite(milliseconds)) return this.displayValue(value)
+      if (milliseconds < 1000) return `${milliseconds.toLocaleString('zh-CN')} ms`
+      return `${(milliseconds / 1000).toLocaleString('zh-CN', { maximumFractionDigits: 3 })} s`
+    },
     middleEllipsis(value, visibleLength = 14) {
       if (!value) return '—'
       const text = String(value)
       if (text.length <= visibleLength) return text
       const side = Math.floor((visibleLength - 1) / 2)
       return `${text.slice(0, side)}…${text.slice(-side)}`
+    },
+    fallbackIdentifierText(row) {
+      if (this.hasValue(row.business_transaction_id)) {
+        return `业务编号：${this.middleEllipsis(row.business_transaction_id, 18)}`
+      }
+      return `记录键：${this.middleEllipsis(row.record_key, 18)}`
     },
     async copyText(value) {
       try {
@@ -566,10 +698,26 @@ export default {
       return { submitted: 'info', auditing: 'warning', risk: 'danger', finished: 'success' }[status] || 'info'
     },
     chainStatusText(status) {
-      return { success: '成功', failed: '失败', pending: '待确认', unknown: '未知' }[status] || this.displayValue(status)
+      return { success: '成功', failed: '失败', unknown: '未知' }[status] || this.displayValue(status)
     },
     chainTagType(status) {
-      return { success: 'success', failed: 'danger', pending: 'warning' }[status] || 'info'
+      return { success: 'success', failed: 'danger', unknown: 'info' }[status] || 'info'
+    },
+    txTypeText(type) {
+      return {
+        INVOKE_CONTRACT: '调用合约',
+        QUERY_CONTRACT: '查询合约',
+        SUBSCRIBE: '订阅',
+        ARCHIVE: '归档'
+      }[type] || this.displayValue(type)
+    },
+    businessSuccessText(value) {
+      if (value === true) return '成功'
+      if (value === false) return '失败'
+      return '—'
+    },
+    sourceKindText(value) {
+      return { chain: 'ChainMaker 链上数据' }[value] || this.displayValue(value)
     },
     riskLevelText(level) {
       return { high: '高风险', medium: '中风险', low: '低风险', normal: '正常' }[level] || '—'
@@ -596,15 +744,37 @@ export default {
 </script>
 
 <style scoped>
+.home {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  min-height: 0;
+  overflow: hidden;
+  background: #f4f6f8;
+  color: #17202a;
+}
+
+.main-content {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .transaction-content {
+  flex: 1;
   min-width: 0;
-  padding: 18px 22px 32px;
+  min-height: 0;
+  box-sizing: border-box;
+  padding: 24px;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .transaction-page {
-  width: min(100%, 1760px);
+  width: min(100%, 1720px);
   margin: 0 auto;
-  color: #1f2937;
+  padding-bottom: 24px;
 }
 
 .page-header,
@@ -618,7 +788,7 @@ export default {
 }
 
 .page-header {
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .page-header h2,
@@ -632,11 +802,18 @@ export default {
   font-size: 26px;
 }
 
-.page-header p,
+.page-header span,
 .section-heading span {
-  margin: 5px 0 0;
-  color: #64748b;
-  font-size: 14px;
+  color: #687481;
+  font-size: 13px;
+}
+
+.eyebrow {
+  margin: 0;
+  color: #397265;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 .availability-alert {
@@ -647,7 +824,7 @@ export default {
 .filter-section,
 .table-section {
   background: #fff;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #dce2e7;
   border-radius: 6px;
 }
 
@@ -685,8 +862,8 @@ export default {
   min-width: 0;
   padding: 16px;
   background: #fff;
-  border: 1px solid #e5e7eb;
-  border-top: 3px solid #2563eb;
+  border: 1px solid #dce2e7;
+  border-top: 3px solid #397265;
   border-radius: 6px;
 }
 
@@ -697,7 +874,8 @@ export default {
 .kpi-card span,
 .kpi-card small {
   display: block;
-  color: #64748b;
+  color: #6c7782;
+  font-size: 13px;
 }
 
 .kpi-card strong {
@@ -768,9 +946,38 @@ export default {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.hash-cell small {
+  display: block;
+  margin-top: 3px;
+  overflow: hidden;
+  color: #7b8792;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overflow-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cursor-pagination {
-  justify-content: flex-end;
   margin-top: 12px;
+}
+
+.pagination-summary {
+  color: #5f6b76;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.pagination-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 .page-size {
@@ -779,6 +986,21 @@ export default {
 
 .detail-body {
   min-height: 260px;
+}
+
+.detail-section-title {
+  margin: 22px 0 12px;
+  font-size: 16px;
+  letter-spacing: 0;
+}
+
+.detail-section-title:first-child {
+  margin-top: 0;
+}
+
+.breakable-value {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 .detail-events {
@@ -805,6 +1027,18 @@ export default {
   .time-range-field,
   .filter-actions { grid-column: span 1; }
   .filter-actions { justify-content: flex-start; }
-  .cursor-pagination { flex-wrap: wrap; }
+  .cursor-pagination {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .pagination-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  :deep(.el-descriptions__body .el-descriptions__table) {
+    table-layout: fixed;
+  }
 }
 </style>

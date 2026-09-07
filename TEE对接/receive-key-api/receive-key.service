@@ -1,0 +1,36 @@
+[Unit]
+Description=Receive Key HTTP Service
+Documentation=file:/home/super/service/receive-key.c
+After=local-fs.target network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=super
+Group=super
+WorkingDirectory=/home/super/service
+Environment="PATH=/opt/hygon/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+ExecStartPre=/usr/bin/test -r /home/super/service/intl.auth
+ExecStart=/home/super/service/receive-key 0.0.0.0
+Restart=on-failure
+RestartSec=3s
+TimeoutStopSec=15s
+KillSignal=SIGTERM
+UMask=0077
+
+# Conservative hardening that does not block access to the TKM device/tool.
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=receive-key
+
+[Install]
+WantedBy=multi-user.target

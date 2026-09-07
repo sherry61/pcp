@@ -25,8 +25,12 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Runtime storage and generated HE result files
-backend/storage/he-results/
+# Runtime storage and generated delivery results/materials
+backend/storage/
+
+# Vendor/reference repositories kept locally for TEE integration
+TEE对接/vm-api/
+TEE对接/vm-api-service/
 
 cert-store/
 

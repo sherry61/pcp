@@ -3095,6 +3095,9 @@ app.post('/api/seller-confirm-transaction', (req, res) => {
 
 app.get('/api/buyer-transaction-status/:buyer_address', (req, res) => {
     const buyer_address = req.params.buyer_address;
+    const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.min(100, Math.max(1, Number.parseInt(req.query.pageSize, 10) || 10));
+    const offset = (page - 1) * pageSize;
 
     const query = `
         SELECT
@@ -3104,15 +3107,19 @@ app.get('/api/buyer-transaction-status/:buyer_address', (req, res) => {
         FROM transactions t
         LEFT JOIN digital_contracts dc
           ON dc.transaction_id = t.transaction_id
-        WHERE t.buyer_address = ?`;
+        WHERE t.buyer_address = ? AND t.status = '已确认' AND dc.pc_type IS NOT NULL`;
 
-    db.query(query, [buyer_address], (err, results) => {
+    const countQuery = `SELECT COUNT(*) AS total FROM transactions t LEFT JOIN digital_contracts dc ON dc.transaction_id=t.transaction_id WHERE t.buyer_address = ? AND t.status = '已确认' AND dc.pc_type IS NOT NULL`;
+    db.query(countQuery, [buyer_address], (countErr, countRows) => {
+      if (countErr) return res.status(500).json({ error: '服务器内部错误' });
+      db.query(`${query} ORDER BY t.created_at DESC LIMIT ? OFFSET ?`, [buyer_address, pageSize, offset], (err, results) => {
         if (err) {
             console.error('查询买方交易状态失败:', err);
             return res.status(500).json({ error: '服务器内部错误' });
         }
 
-        res.status(200).json({ transactions: results });
+        res.status(200).json({ transactions: results, pagination: { page, pageSize, total: Number(countRows[0]?.total || 0) } });
+      });
     });
 });
 
@@ -3138,6 +3145,9 @@ app.get('/api/buyer-transaction-status/:buyer_address', (req, res) => {
 // 卖方查看自己发起的已确认交易 + 每笔交易的交付历史
 app.get('/api/seller-transaction-status/:seller_address', (req, res) => {
   const seller_address = req.params.seller_address;
+  const page = Math.max(1, Number.parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number.parseInt(req.query.pageSize, 10) || 10));
+  const offset = (page - 1) * pageSize;
 
   const txSql = `
     SELECT
@@ -3149,9 +3159,13 @@ app.get('/api/seller-transaction-status/:seller_address', (req, res) => {
       ON dc.transaction_id = t.transaction_id
     WHERE t.seller_address = ? AND t.status = '已确认'
     ORDER BY t.created_at DESC
+    LIMIT ? OFFSET ?
   `;
 
-  db.query(txSql, [seller_address], (err, txRows) => {
+  const countSql = `SELECT COUNT(*) AS total FROM transactions WHERE seller_address = ? AND status = '已确认'`;
+  db.query(countSql, [seller_address], (countErr, countRows) => {
+   if (countErr) return res.status(500).json({ error: '服务器内部错误（查询总数）' });
+   db.query(txSql, [seller_address, pageSize, offset], (err, txRows) => {
     if (err) {
       console.error('查询卖方交易状态失败:', err);
       return res.status(500).json({ error: '服务器内部错误（查询交易）' });
@@ -3159,7 +3173,7 @@ app.get('/api/seller-transaction-status/:seller_address', (req, res) => {
 
     // 没有交易，直接返回空数组
     if (txRows.length === 0) {
-      return res.status(200).json({ transactions: [] });
+      return res.status(200).json({ transactions: [], pagination: { page, pageSize, total: 0 } });
     }
 
     // ② 收集所有 transaction_id，用来一次性查询交付记录
@@ -3217,8 +3231,9 @@ app.get('/api/seller-transaction-status/:seller_address', (req, res) => {
         };
       });
 
-      return res.status(200).json({ transactions: formattedTxs });
+      return res.status(200).json({ transactions: formattedTxs, pagination: { page, pageSize, total: Number(countRows[0]?.total || 0) } });
     });
+  });
   });
 });
 

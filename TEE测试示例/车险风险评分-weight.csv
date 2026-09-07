@@ -1,0 +1,6 @@
+category,weight
+age,0.10
+driving_years,0.15
+violations,0.25
+accident_count,0.30
+car_safety,0.20

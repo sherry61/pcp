@@ -278,49 +278,6 @@
 
 
 
- <!-- 选择模型（来自 model_type 非空的资产） -->
-<!-- 只有TEE模式显示模型选择 -->
-<div 
-  class="form-row"
-  v-if="selectedPcType === 'TEE'"
->
-  <label for="model-select">
-    <strong>选择模型：</strong>
-  </label>
-
-  <select 
-    id="model-select" 
-    v-model="selectedModelHash"
-  >
-    <option value="">请选择模型</option>
-
-    <option 
-      v-for="m in modelOptions" 
-      :key="m.file_hash" 
-      :value="m.file_hash"
-    >
-      {{ m.asset_name }}（{{ m.model_type }}）
-    </option>
-
-  </select>
-
-
-  <small v-if="loadingModels">
-    正在加载模型列表...
-  </small>
-
-
-  <small 
-    v-if="!loadingModels && modelOptions.length === 0" 
-    class="text-danger"
-  >
-    暂无可选模型
-  </small>
-
-</div>
-
-
-
           </div>
 
         </div>
@@ -422,9 +379,6 @@ export default {
       defaultTradeCert: null,
       transactionId: null, // 保存返回的交易ID
 
-       modelOptions: [],          // 下拉模型列表
-  selectedModelHash: '',     // 选中的模型 file_hash
-  loadingModels: false,
       selectedPcType: '',
       bidPrice: null,
       bidSubmitting: false,
@@ -604,25 +558,6 @@ export default {
   return labelMap[String(pcType || '').trim().toUpperCase()] || '未配置';
 },
 
-    async fetchModelOptions() {
-  try {
-    this.loadingModels = true;
-    const resp = await axios.get('http://10.112.47.214:3000/api/model-options');
-
-    if (resp.status === 200 && resp.data.models) {
-      this.modelOptions = resp.data.models;
-    } else {
-      this.modelOptions = [];
-    }
-  } catch (e) {
-    console.error('获取模型列表失败:', e);
-    this.modelOptions = [];
-  } finally {
-    this.loadingModels = false;
-  }
-},
-
-
   // 互斥选择：'model' / 'data' / 取消
   toggleProcessingChoice(option) {
     if (this.processingChoice === option) {
@@ -710,27 +645,6 @@ export default {
         }
       });
     },
-  /*async openPurchaseModal() {
-  this.insufficientBalance = (this.asset.price || 1200) > this.userBalance;
-  this.selectedPermissions = []; // 重置已选权限
-   this.processingChoice = null;  // 👈 每次打开弹窗重置处理类型
-  this.showPurchaseModal = true;
-
-  // 显示所有权限，并根据后端返回的权限信息禁用不可出售的权限
-  this.permissions = [
-  { name: "所有权", canSell: !!this.asset.can_sell_asset },
-  { name: "经营权", canSell: !!this.asset.can_sell_view },
-  { name: "使用权", canSell: !!this.asset.can_sell_process }
-];
-   // ✅ 模型选择初始化
-  this.selectedModelHash = '';
-  this.modelOptions = [];
-
-  // ✅ 拉模型列表
-  await this.fetchModelOptions();
-},*/
-
-
 async openPurchaseModal() {
   this.insufficientBalance = (this.asset.price || 1200) > this.userBalance;
   this.selectedPermissions = [];
@@ -760,15 +674,8 @@ async openPurchaseModal() {
     { name: '使用权', canSell: canSellProcess }
   ];
 
-  // 模型选择初始化
-  this.selectedModelHash = '';
-  this.modelOptions = [];
-
-  // 先显示弹窗
+  // 显示弹窗
   this.showPurchaseModal = true;
-
-  // 再加载模型列表
-  await this.fetchModelOptions();
 },
 
 
@@ -869,8 +776,6 @@ if (!certAddr) {
      // 可能值：'model'、'data'，或者 null（两个都不选）
     processing_type: this.processingChoice,
     expiration_time: this.expirationTime,
-     // ✅ 新增：选择的模型（用 file_hash 最稳）
-    model_file_hash: this.selectedModelHash || null,
     pc_type: this.selectedPcType,
   };
   console.log('用户选择的 expirationTime 是：', this.expirationTime);

@@ -117,7 +117,10 @@
                   >
                     下载结果
                   </el-button>
-                  <el-button v-if="isTeeRow(row)" size="small" type="primary" class="action-btn-primary" :loading="row.teeSubmitting || row.teeContractSubmitting" :disabled="isDeliveryExpired(row) || row.teeResultReady" @click="openTeeAction(row)">{{ getTeeActionLabel(row) }}</el-button>
+                  <template v-if="isTeeRow(row)">
+                    <el-button size="small" type="primary" class="action-btn-primary" :loading="row.teeSubmitting" :disabled="isDeliveryExpired(row) || (row.teeRequested && !isTeeRetryable(row))" @click="requestTeeDelivery(row)">{{ getTeeActionLabel(row) }}</el-button>
+                    <el-button size="small" type="success" class="action-btn-secondary" :loading="row.teeDownloading" :disabled="isDeliveryExpired(row) || !row.teeResultReady" @click="getTeeResult(row)">下载结果</el-button>
+                  </template>
                   <el-button
                     v-if="isMpcRow(row)"
                     size="small"
@@ -151,7 +154,7 @@
               layout="prev, pager, next"
               :current-page="pagination.page"
               :page-size="pagination.pageSize"
-              :total="resultList.length"
+              :total="pagination.total"
               @current-change="handleBuyerPageChange"
             />
           </div>
@@ -289,9 +292,14 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="teeDialog.visible" title="TEE 上传固定权重" width="520px">
-          <div v-if="teeDialog.row" class="dialog-body"><div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDialog.row.transaction_id }}</span></div><input type="file" accept=".csv,text/csv" @change="teeDialog.file = $event.target.files[0]" /><div v-if="teeDialog.file" class="file-name">{{ teeDialog.file.name }}</div></div>
-          <template #footer><el-button @click="teeDialog.visible=false">取消</el-button><el-button type="primary" :loading="teeDialog.submitting" @click="submitTeeWeight">上传权重</el-button></template>
+        <el-dialog v-model="teeDialog.visible" :title="teeDialog.row?.teeRequested ? '上传权重' : '请求交付'" width="620px">
+          <div v-if="teeDialog.row" class="dialog-body"><div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDialog.row.transaction_id }}</span></div><div v-if="teeDialog.row.teeRequested" class="dialog-field"><span class="dialog-label">权重文件</span><input type="file" accept=".csv,text/csv" @change="teeDialog.file = $event.target.files[0]" /></div><div v-if="teeDialog.file" class="file-name inline-file-name">{{ teeDialog.file.name }}</div><div v-if="!teeDialog.row.teeRequested" class="dialog-hint">提交后请等待虚机环境准备完成，卖方上传数据后再上传权重文件。</div></div>
+          <template #footer><el-button @click="teeDialog.visible=false">取消</el-button><el-button type="primary" :loading="teeDialog.submitting" @click="submitTeeDataRequest">{{ teeDialog.row?.teeRequested ? '上传权重' : '请求交付' }}</el-button></template>
+        </el-dialog>
+
+        <el-dialog v-model="teeResultDialog.visible" title="下载TEE结果" width="620px">
+          <div class="dialog-body"><div class="dialog-row"><span class="dialog-label">结果密钥文件</span><input type="file" accept=".json" @change="teeResultDialog.keyFile = $event.target.files?.[0] || null" /></div><div v-if="teeResultDialog.keyFile" class="file-name">{{ teeResultDialog.keyFile.name }}</div><div class="dialog-hint">系统会优先使用服务器生成的私钥文件；也可以手动选择之前保存的密钥文件。</div></div>
+          <template #footer><el-button @click="teeResultDialog.visible=false">取消</el-button><el-button type="primary" :loading="teeResultDialog.processing" @click="confirmTeeResult">解密并下载</el-button></template>
         </el-dialog>
 
         <el-dialog v-model="mpcDialog.visible" title="请求交付" width="520px">
@@ -418,7 +426,7 @@ import heCrypto from '@/utils/heCrypto'
 import heCsv from '@/utils/heCsv'
 import preCrypto from '@/utils/preCrypto'
 import teeApi from '@/utils/teeApi'
-import { generateEcKeyPair, publicKeyPem, decryptEnvelope, encryptSm4, b64 } from '@/utils/teeCrypto'
+import { generateEcKeyPair, publicKeyPem, decryptEnvelope, importPrivateKeyPem, encryptSm4, decryptSm4, b64 } from '@/utils/teeCrypto'
 
 const API_BASE = 'http://10.112.47.214:3000'
 
@@ -433,7 +441,8 @@ export default {
       resultList: [],
       pagination: {
         page: 1,
-        pageSize: 10
+        pageSize: 10,
+        total: 0
       },
       contractInfo: { visible: false, data: null },
       decryptDialog: {
@@ -480,7 +489,7 @@ export default {
         result: null
       },
       statusPollTimer: null,
-      teeDialog: { visible: false, row: null, file: null, submitting: false }
+      teeDialog: { visible: false, row: null, file: null, submitting: false }, teeResultDialog: { visible: false, row: null, keyFile: null, processing: false }
     }
   },
   async created() {
@@ -495,8 +504,7 @@ export default {
   },
   computed: {
     pagedResultList() {
-      const start = (this.pagination.page - 1) * this.pagination.pageSize
-      return this.resultList.slice(start, start + this.pagination.pageSize)
+      return this.resultList
     }
   },
   methods: {
@@ -582,16 +590,14 @@ export default {
           return
         }
 
-        const rows = []
-        for (const address of buyerAddresses) {
+        const addressResults = await Promise.all(buyerAddresses.map(async (address) => {
           try {
-            const response = await axios.get(`${API_BASE}/api/buyer-transaction-status/${address}`)
+            const response = await axios.get(`${API_BASE}/api/buyer-transaction-status/${address}`, { params: { page: this.pagination.page, pageSize: this.pagination.pageSize } })
             const transactions = Array.isArray(response.data.transactions) ? response.data.transactions : []
 
-            transactions
+            const rows = transactions
               .filter((item) => item.status === '已确认' && this.normalizePcType(item.pc_type))
-              .forEach((item) => {
-                rows.push({
+              .map((item) => ({
                   transaction_id: item.transaction_id,
                   pc_type: this.normalizePcType(item.pc_type),
                   buyer_address: item.buyer_address,
@@ -617,16 +623,16 @@ export default {
                   processingMpc: false,
                   viewingMpcResult: false
                   ,teeSubmitting: false, teeContractSubmitting: false, teeContractVerified: false, teeResultReady: false, teeRequested: false
-                })
-              })
-          } catch (error) {
-            console.warn('加载买家交易失败:', address, error?.message || error)
-          }
-        }
+                }))
+            return { rows, total: response.data.pagination?.total || rows.length }
+          } catch (error) { console.warn('加载买家交易失败:', address, error?.message || error); return { rows: [], total: 0 } }
+        }))
+        const rows = addressResults.flatMap((item) => item.rows)
 
         this.resultList = rows.sort((left, right) => this.compareTransactionIdDesc(left, right))
+        this.pagination.total = addressResults.reduce((sum, item) => sum + Number(item.total || 0), 0)
         this.ensureBuyerPageInRange()
-        await this.syncBuyerPageStatus()
+        void this.syncBuyerPageStatus()
       } catch (error) {
         console.error('加载结果失败:', error)
         this.$message?.error('加载结果失败')
@@ -655,22 +661,72 @@ export default {
       return this.normalizePcType(row?.pc_type) === 'MPC'
     },
     isTeeRow(row) { return this.normalizePcType(row?.pc_type) === 'TEE' },
-    getTeeActionLabel(row) { if (row.teeResultReady) return '计算完成'; if (row.teeContractSubmitting) return '校验中'; if (row.teeSubmitting) return '上传中'; if (!row.teeRequested) return '请求交付'; if (row.teeStep === 'WAITING_WEIGHT') return '上传权重'; return '等待卖方交付' },
+    isTeeRetryable(row) { const step = String(row?.teeStep || '').toUpperCase(); return step === 'FAILED' || step.endsWith('_FAILED') },
+    getTeeActionLabel(row) { if (row.teeSubmitting) return '处理中'; if (this.isTeeRetryable(row)) return '请求交付'; if (!row.teeRequested) return '请求交付'; if (row.teeResultReady) return '已完成'; return '处理中' },
     getTeePhaseLabel(row) {
-      return ({ VM_CREATING: '虚机创建中', VM_STARTING: '虚机启动中', VM_RUNNING: '服务部署中' })[String(row?.teeStep || '').toUpperCase()] || ''
+      const step = String(row?.teeStep || '').toUpperCase()
+      if (step === 'VM_CREATING' || step === 'REQUESTED') return '虚机创建中'
+      if (step === 'VM_STARTING') return '虚机启动中'
+      if (['SERVICE_DEPLOYING', 'VM_RUNNING', 'DATA_KEY_NEGOTIATING', 'DATA_UPLOADING', 'WEIGHT_KEY_NEGOTIATING', 'WEIGHT_UPLOADING', 'WAITING_DATA', 'WAITING_WEIGHT', 'CONTRACT_VERIFYING', 'CONTRACT_VERIFIED'].includes(step)) return '环境配置中'
+      if (step === 'COMPUTING') return '计算中'
+      if (['RESULT_READY', 'COMPLETED'].includes(step)) return '完成'
+      if (step.endsWith('_FAILED') || step === 'FAILED') return '失败'
+      return ''
     },
     async openTeeAction(row) {
-      if (!row.teeRequested) {
-        row.teeSubmitting = true
-        try {
-          await teeApi.request({ transactionId: String(row.transaction_id), buyerAddress: row.buyer_address, sellerAddress: row.seller_address, assetId: row.asset_id, vmCpu: 8, vmMemoryMb: 4096 })
-          row.teeRequested = true; row.teeStatus = '待卖方交付'; row.teeStep = 'REQUESTED'; this.$message.success('TEE 交付申请已提交，等待卖方处理')
-        } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE 交付申请失败') } finally { row.teeSubmitting = false }
-        return
-      }
-      if (row.teeStep !== 'WAITING_WEIGHT') return
-      if (!row.teeContractVerified) { await this.verifyTeeContract(row); if (!row.teeContractVerified) return }
-      this.openTeeDialog(row)
+      return this.requestTeeDelivery(row)
+    },
+    async requestTeeDelivery(row) {
+      if (!row || (row.teeRequested && !this.isTeeRetryable(row)) || row.teeSubmitting) return
+      row.teeSubmitting = true
+      try {
+        await teeApi.request({ transactionId: String(row.transaction_id), buyerAddress: row.buyer_address, sellerAddress: row.seller_address, assetId: row.asset_id, vmCpu: 8, vmMemoryMb: 4096 })
+        row.teeRequested = true; row.teeStep = 'VM_CREATING'
+        teeApi.confirm(String(row.transaction_id)).catch((e) => console.warn('[TEE] 后台自动交付失败', e))
+        this.$message.success('TEE 交付已提交，服务器将自动完成')
+      } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE 交付申请失败') } finally { row.teeSubmitting = false }
+    },
+    async getTeeResult(row) {
+      try {
+        row.teeDownloading = true
+        const keyInfo = await teeApi.keyFile(row.transaction_id)
+        const privateKey = await importPrivateKeyPem(keyInfo.privateKeyPem)
+        const keyB64 = b64(await decryptEnvelope(keyInfo.weightKeyEnvelope, privateKey))
+        const response = await teeApi.getResult(row.transaction_id)
+        // 后端返回 { success, transactionId, vmId, result: { iv, ciphertext } }。
+        // 同时兼容早期直接平铺 iv/ciphertext 的响应。
+        const encryptedResult = response?.result || response
+        if (!encryptedResult?.ciphertext || !encryptedResult?.iv) {
+          throw new Error('TEE 结果缺少密文或初始化向量')
+        }
+        const plain = decryptSm4(encryptedResult.ciphertext, keyB64, encryptedResult.iv)
+        let resultText
+        try { resultText = new TextDecoder('utf-8', { fatal: true }).decode(plain) } catch (_) { throw new Error('TEE 结果无法用本交易的密钥解密；该次计算的结果密钥已不匹配，请重新发起 TEE 计算') }
+        try { JSON.parse(resultText) } catch (_) { throw new Error('TEE 解密结果不是有效的加权计算 JSON，请确认选择了该交易下载的结果密钥文件') }
+        const blob = new Blob([resultText], { type: 'application/json;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const link = document.createElement('a')
+        link.href = url
+        link.download = `tee-result-${row.transaction_id}.json`
+        link.click()
+        URL.revokeObjectURL(url)
+        this.$message.success('TEE 明文结果已下载')
+      } catch (error) { this.$message.error(error.response?.data?.message || error.message || 'TEE 结果解密失败') } finally { row.teeDownloading = false }
+    },
+    async submitTeeDataRequest() {
+      const row = this.teeDialog.row
+      if (!row) return
+      this.teeDialog.submitting = true
+      try {
+        const tx = String(row.transaction_id)
+        if (!row.teeRequested) {
+          await teeApi.request({ transactionId: tx, buyerAddress: row.buyer_address, sellerAddress: row.seller_address, assetId: row.asset_id, vmCpu: 8, vmMemoryMb: 4096 })
+          row.teeRequested = true; row.teeStep = 'VM_CREATING'; teeApi.confirm(tx).catch((e) => console.warn('[TEE] VM后台准备失败', e)); this.teeDialog.visible = false; this.$message.success('交付申请已提交，TEE环境正在准备'); return
+        }
+        if (!this.teeDialog.file) return this.$message.error('请选择 weight.csv')
+        await this.submitTeeWeight()
+        this.teeDialog.visible = false
+      } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE交付申请失败') } finally { this.teeDialog.submitting = false }
     },
     async verifyTeeContract(row) {
       row.teeContractSubmitting = true
@@ -689,16 +745,21 @@ export default {
     async submitTeeWeight() {
       const row = this.teeDialog.row
       if (!row || !this.teeDialog.file) return this.$message.error('请选择 weight.csv')
-      if (!row.teeContractVerified) return this.$message.error('请先完成合约校验')
       this.teeDialog.submitting = true
       try {
         const tx = String(row.transaction_id); const kp = await generateEcKeyPair(); const pem = await publicKeyPem(kp.publicKey)
         const key = await teeApi.receiveKey({ transactionId: tx, ecPublicKey: pem, fileType: 'weight', role: 'buyer', name: 'weight.csv' })
         const sm4 = await decryptEnvelope(key.envelope || key, kp.privateKey); const iv = b64(crypto.getRandomValues(new Uint8Array(16)))
         const encrypted = encryptSm4(new Uint8Array(await this.teeDialog.file.arrayBuffer()), b64(sm4), iv)
-        row.teeWeightKey = { key: b64(sm4), iv }; const result = await teeApi.receiveFile({ transactionId: tx, fileType: 'weight', name: 'weight.csv', iv, ciphertext: encrypted.ciphertext, role: 'buyer' })
+        row.teeWeightKey = { key: b64(sm4), iv }; const keyBlob = new Blob([JSON.stringify({ version: 1, transactionId: tx, algorithm: 'SM4-CBC', key: b64(sm4) }, null, 2)], { type: 'application/json' }); const keyUrl = URL.createObjectURL(keyBlob); const keyLink = document.createElement('a'); keyLink.href = keyUrl; keyLink.download = `tee-result-key-${tx}.json`; keyLink.click(); URL.revokeObjectURL(keyUrl)
+        const result = await teeApi.receiveFile({ transactionId: tx, fileType: 'weight', name: 'weight.csv', iv, ciphertext: encrypted.ciphertext, role: 'buyer' })
         row.teeStatus = result.result?.computed ? '结果已生成' : '计算中'; row.teeResultReady = Boolean(result.result?.computed); this.teeDialog.visible = false; this.$message.success('权重已提交')
       } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE权重上传失败') } finally { this.teeDialog.submitting = false }
+    },
+    async confirmTeeResult() {
+      if (!this.teeResultDialog.keyFile) return this.$message.error('请选择结果密钥文件')
+      this.teeResultDialog.processing = true
+      try { const keyInfo = this.teeResultDialog.keyInfo || (this.teeResultDialog.keyFile ? JSON.parse(await this.teeResultDialog.keyFile.text()) : null); let keyB64 = keyInfo?.key; if (!keyB64 && keyInfo?.privateKeyPem && keyInfo?.weightKeyEnvelope) { const privateKey = await importPrivateKeyPem(keyInfo.privateKeyPem); keyB64 = b64(await decryptEnvelope(keyInfo.weightKeyEnvelope, privateKey)) } if (!keyB64) throw new Error('密钥文件缺少结果解密材料'); const response = await teeApi.getResult(this.teeResultDialog.row.transaction_id); const encryptedResult = response?.result || response; if (!encryptedResult?.ciphertext || !encryptedResult?.iv) throw new Error('TEE 结果缺少密文或初始化向量'); const plain = decryptSm4(encryptedResult.ciphertext, keyB64, encryptedResult.iv); let resultText; try { resultText = new TextDecoder('utf-8', { fatal: true }).decode(plain) } catch (_) { throw new Error('TEE 结果无法用本交易的密钥解密；该次计算的结果密钥已不匹配，请重新发起 TEE 计算') } try { JSON.parse(resultText) } catch (_) { throw new Error('TEE 解密结果不是有效的加权计算 JSON，请确认选择了该交易下载的结果密钥文件') } const blob = new Blob([resultText], { type: 'application/json;charset=utf-8' }); const url = URL.createObjectURL(blob); const link = document.createElement('a'); link.href = url; link.download = `tee-result-${this.teeResultDialog.row.transaction_id}.json`; link.click(); URL.revokeObjectURL(url); this.teeResultDialog.visible = false; this.$message.success('TEE 结果已解密下载') } catch (e) { this.$message.error(e.message || '结果解密失败') } finally { this.teeResultDialog.processing = false }
     },
 
     getDeliveryMethodLabel(row) {
@@ -752,7 +813,7 @@ export default {
     },
 
     ensureBuyerPageInRange() {
-      const totalPages = Math.max(1, Math.ceil(this.resultList.length / this.pagination.pageSize))
+      const totalPages = Math.max(1, Math.ceil(this.pagination.total / this.pagination.pageSize))
       this.pagination.page = Math.min(Math.max(this.pagination.page, 1), totalPages)
     },
 
@@ -771,12 +832,14 @@ export default {
     },
 
     async refreshTeeStatus(row) {
-      try { const r = await teeApi.status(row.transaction_id); const s = r.step || r.status; row.teeRequested = true; row.teeStep = s; row.teeStatus = ''; row.teeResultReady = s === 'RESULT_READY' || r.resultStatus === 'READY' } catch (e) { row.teeRequested = false; row.teeStep = ''; row.teeStatus = '' }
+      if (row.teeStatusRefreshing) return
+      row.teeStatusRefreshing = true
+      try { const r = await teeApi.status(row.transaction_id); const s = r.step || r.status; row.teeRequested = true; row.teeStep = s; row.teeStatus = ''; row.teeResultReady = s === 'RESULT_READY' || r.resultStatus === 'READY' } catch (e) { row.teeStatus = '' } finally { row.teeStatusRefreshing = false }
     },
 
     async handleBuyerPageChange(page) {
       this.pagination.page = page
-      await this.syncBuyerPageStatus()
+      await this.refreshResults()
     },
 
     startStatusPolling() {
@@ -804,13 +867,15 @@ export default {
       }
 
       await Promise.all(rows.map((row) => (
-        this.isHeRow(row)
+        this.isTeeRow(row)
+          ? this.refreshTeeStatus(row)
+          : (this.isHeRow(row)
           ? this.refreshHeStatus(row, false)
           : (this.isFlRow(row)
             ? this.refreshFlStatus(row, false)
             : (this.isPreRow(row)
               ? this.refreshPreStatus(row, false)
-              : this.refreshMpcStatus(row, false)))
+              : this.refreshMpcStatus(row, false))))
       )))
     },
 
@@ -861,9 +926,8 @@ export default {
 
     getBuyerDeliveryStatus(row) {
       if (this.isTeeRow(row)) {
-        if (!row.teeRequested || row.teeStep === 'WAITING_WEIGHT') return 'WAIT_BUYER'
+        if (!row.teeRequested) return 'WAIT_BUYER'
         if (row.teeResultReady || row.teeStep === 'RESULT_READY') return 'COMPLETED'
-        if (row.teeStep === 'REQUESTED' || row.teeStep === 'VM_CREATING' || row.teeStep === 'VM_STARTING') return 'WAIT_SELLER'
         if (row.teeStep === 'FAILED') return 'FAILED'
         return 'PROCESSING'
       }

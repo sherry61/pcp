@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="980" viewBox="0 0 1600 980">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#5f7890"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#6b7f91" flood-opacity="0.18"/>
+    </filter>
+    <style>
+      .title{font-family:'Noto Sans CJK SC','Noto Serif CJK SC',sans-serif;font-size:30px;font-weight:700;fill:#18364f}
+      .layer{font-family:'Noto Sans CJK SC','Noto Serif CJK SC',sans-serif;font-size:22px;font-weight:700;fill:#244a67}
+      .box{font-family:'Noto Sans CJK SC','Noto Serif CJK SC',sans-serif;font-size:19px;fill:#20384c}
+      .small{font-family:'Noto Sans CJK SC','Noto Serif CJK SC',sans-serif;font-size:17px;fill:#35566f}
+      .line{stroke:#5f7890;stroke-width:3;fill:none;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect width="1600" height="980" fill="#ffffff"/>
+  <text x="800" y="55" text-anchor="middle" class="title">数字资产交易与隐私计算平台软件系统架构</text>
+
+  <rect x="70" y="90" width="1460" height="125" rx="10" fill="#edf4f8" stroke="#7695aa" stroke-width="2"/>
+  <text x="105" y="125" class="layer">用户访问层</text>
+  <g filter="url(#shadow)">
+    <rect x="300" y="112" width="250" height="70" rx="7" fill="#ffffff" stroke="#8da7b8" stroke-width="2"/><text x="425" y="154" text-anchor="middle" class="box">管理员</text>
+    <rect x="610" y="112" width="250" height="70" rx="7" fill="#ffffff" stroke="#8da7b8" stroke-width="2"/><text x="735" y="154" text-anchor="middle" class="box">资产发布方</text>
+    <rect x="920" y="112" width="250" height="70" rx="7" fill="#ffffff" stroke="#8da7b8" stroke-width="2"/><text x="1045" y="154" text-anchor="middle" class="box">资产购买方</text>
+    <rect x="1230" y="112" width="250" height="70" rx="7" fill="#ffffff" stroke="#8da7b8" stroke-width="2"/><text x="1355" y="154" text-anchor="middle" class="box">审计人员</text>
+  </g>
+
+  <rect x="70" y="240" width="1460" height="150" rx="10" fill="#f5f8fa" stroke="#7695aa" stroke-width="2"/>
+  <text x="105" y="275" class="layer">前端展示层（Vue）</text>
+  <g filter="url(#shadow)">
+    <rect x="180" y="298" width="270" height="58" rx="7" fill="#ffffff" stroke="#a5b8c5" stroke-width="2"/><text x="315" y="334" text-anchor="middle" class="box">用户登录与权限界面</text>
+    <rect x="500" y="298" width="270" height="58" rx="7" fill="#ffffff" stroke="#a5b8c5" stroke-width="2"/><text x="635" y="334" text-anchor="middle" class="box">资产管理与估值定价</text>
+    <rect x="820" y="298" width="270" height="58" rx="7" fill="#ffffff" stroke="#a5b8c5" stroke-width="2"/><text x="955" y="334" text-anchor="middle" class="box">市场交易与资产交付</text>
+    <rect x="1140" y="298" width="270" height="58" rx="7" fill="#ffffff" stroke="#a5b8c5" stroke-width="2"/><text x="1275" y="334" text-anchor="middle" class="box">数字合同与监督查询</text>
+  </g>
+
+  <rect x="70" y="415" width="1460" height="180" rx="10" fill="#eef5f8" stroke="#7695aa" stroke-width="2"/>
+  <text x="105" y="450" class="layer">业务服务层（Node.js / Express）</text>
+  <g filter="url(#shadow)">
+    <rect x="135" y="475" width="250" height="75" rx="7" fill="#ffffff" stroke="#6f9ab3" stroke-width="2"/><text x="260" y="520" text-anchor="middle" class="box">用户与角色权限管理</text>
+    <rect x="415" y="475" width="250" height="75" rx="7" fill="#ffffff" stroke="#6f9ab3" stroke-width="2"/><text x="540" y="520" text-anchor="middle" class="box">数字资产登记与管理</text>
+    <rect x="695" y="475" width="250" height="75" rx="7" fill="#ffffff" stroke="#6f9ab3" stroke-width="2"/><text x="820" y="520" text-anchor="middle" class="box">估值、定价与市场发布</text>
+    <rect x="975" y="475" width="250" height="75" rx="7" fill="#ffffff" stroke="#6f9ab3" stroke-width="2"/><text x="1100" y="520" text-anchor="middle" class="box">交易、合同与资产交付</text>
+    <rect x="1255" y="475" width="180" height="75" rx="7" fill="#ffffff" stroke="#6f9ab3" stroke-width="2"/><text x="1345" y="520" text-anchor="middle" class="box">监督与审计</text>
+  </g>
+
+  <rect x="70" y="620" width="1460" height="155" rx="10" fill="#f5f8fa" stroke="#7695aa" stroke-width="2"/>
+  <text x="105" y="655" class="layer">隐私计算与可信审计层</text>
+  <g filter="url(#shadow)">
+    <rect x="180" y="680" width="245" height="58" rx="7" fill="#e8f1f5" stroke="#6f9ab3" stroke-width="2"/><text x="302" y="716" text-anchor="middle" class="box">同态加密服务</text>
+    <rect x="465" y="680" width="245" height="58" rx="7" fill="#e8f1f5" stroke="#6f9ab3" stroke-width="2"/><text x="587" y="716" text-anchor="middle" class="box">代理重加密服务</text>
+    <rect x="750" y="680" width="245" height="58" rx="7" fill="#e8f1f5" stroke="#6f9ab3" stroke-width="2"/><text x="872" y="716" text-anchor="middle" class="box">联邦学习服务</text>
+    <rect x="1035" y="680" width="245" height="58" rx="7" fill="#e8f1f5" stroke="#6f9ab3" stroke-width="2"/><text x="1157" y="716" text-anchor="middle" class="box">多方安全计算（MPC）</text>
+    <rect x="1320" y="680" width="150" height="58" rx="7" fill="#dcebf2" stroke="#527e98" stroke-width="2"/><text x="1395" y="706" text-anchor="middle" class="small">ChainMaker</text><text x="1395" y="727" text-anchor="middle" class="small">链上审计</text>
+  </g>
+
+  <rect x="70" y="800" width="1460" height="115" rx="10" fill="#edf4f8" stroke="#7695aa" stroke-width="2"/>
+  <text x="105" y="835" class="layer">数据存储层</text>
+  <g filter="url(#shadow)">
+    <rect x="350" y="850" width="280" height="50" rx="7" fill="#ffffff" stroke="#8da7b8" stroke-width="2"/><text x="490" y="882" text-anchor="middle" class="box">MySQL 业务数据库</text>
+    <rect x="700" y="850" width="280" height="50" rx="7" fill="#ffffff" stroke="#8da7b8" stroke-width="2"/><text x="840" y="882" text-anchor="middle" class="box">链上资产与审计凭证</text>
+    <rect x="1050" y="850" width="280" height="50" rx="7" fill="#ffffff" stroke="#8da7b8" stroke-width="2"/><text x="1190" y="882" text-anchor="middle" class="box">文件及计算工件存储</text>
+  </g>
+
+  <path d="M800 215 L800 240" class="line"/><path d="M800 390 L800 415" class="line"/><path d="M800 595 L800 620" class="line"/><path d="M800 775 L800 800" class="line"/>
+  <text x="800" y="950" text-anchor="middle" class="small">图2-1  数字资产交易与隐私计算平台软件系统架构图</text>
+</svg>
