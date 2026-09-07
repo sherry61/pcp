@@ -85,17 +85,12 @@
     </label>
     <div class="radio-group">
       <div class="radio-item">
-        <input type="radio" id="SHA2_256" value="SHA2_256" v-model="form.algorithm" required />
-        <el-tooltip content="使用标准哈希算法生成文件摘要，速度快、兼容性好，适合大多数存证场景。" placement="top" :show-after="300">
-          <label for="SHA2_256" class="radio-label">哈希算法</label>
-        </el-tooltip>
-      </div>
-      <div class="radio-item">
-        <input type="radio" id="fingerprint" value="FINGERPRINT" v-model="form.algorithm" />
+        <input type="radio" id="fingerprint" value="FINGERPRINT" v-model="form.algorithm" checked />
         <el-tooltip content="根据文件内容生成唯一数字指纹，用于校验文件是否被篡改。" placement="top" :show-after="300">
           <label for="fingerprint" class="radio-label">数字指纹</label>
         </el-tooltip>
       </div>
+      <el-button size="small" class="similarity-check-btn" :loading="form.similarityChecking" @click="checkOmniPrintSimilarity">相似度检测</el-button>
     </div>
   </div>
 
@@ -118,7 +113,10 @@
                   <span class="required-asterisk" title="必填：用于生成资产元数据名称。">*</span>
                   选择文件
                 </label>
-                <input type="file" id="file" @change="handleFileChange" required />
+                <div class="asset-file-picker">
+                  <input class="asset-file-input" type="file" id="file" @change="handleFileChange" required />
+                  <span class="asset-file-hint">请上传数字资产描述文件，避免包含个人隐私或敏感信息。</span>
+                </div>
               </div>
             </div>
             <div class="form-row">
@@ -301,22 +299,25 @@
                   <span class="required-asterisk" title="必填：用于生成资产元数据名称。">*</span>
                   交易预览图片
                 </label>
-                <input type="file" id="picture" @change="handlePictureChange" accept="image/*" required />
+                <input class="asset-file-input" type="file" id="picture" @change="handlePictureChange" accept="image/*" required />
               </div>
             </div>
-            <!-- 允许出售选项 -->
+            <!-- 可出售权益 -->
             <div class="form-row">
-              
               <div class="form-group">
-                <el-checkbox v-model="form.isSellBody">允许出售持有权</el-checkbox>
+                <label class="full-width-label left-align rights-selection-label">权益选择</label>
+                <div class="radio-group rights-selection-options">
+                  <div class="radio-item">
+                    <el-checkbox v-model="form.isSellBody">持有权</el-checkbox>
+                  </div>
+                  <div class="radio-item">
+                    <el-checkbox v-model="form.isSellReadRight">经营权</el-checkbox>
+                  </div>
+                  <div class="radio-item">
+                    <el-checkbox v-model="form.isSellProcessRight">使用权</el-checkbox>
+                  </div>
+                </div>
               </div>
-              <div class="form-group">
-                <el-checkbox v-model="form.isSellReadRight">允许出售经营权</el-checkbox>
-              </div>
-              <div class="form-group">
-                <el-checkbox v-model="form.isSellProcessRight">允许出售使用权</el-checkbox>
-              </div>
-             
             </div>
             <!-- 在这里添加一个允许二次交易的下拉框，点击之后有一个二级勾选，可以选择经过管理员以及不经过管理员 -->
             <div class="form-row cascader-container">
@@ -783,7 +784,7 @@ gradingMethods: [
         email: '',
         address: '',
         description: '',
-        algorithm: '',
+        algorithm: 'FINGERPRINT',
         customAlgorithm: '',
         industry: '',  // 新增行业字段,
 
@@ -808,7 +809,10 @@ gradingMethods: [
 analysisResultText: '',
 fingerprint: '',
 fingerprintBits: '',
+omniprintFingerprint: '',
+omniprintModality: '',
 fingerprintLoading: false,
+similarityChecking: false,
         price: null,
         tradeMode: 'fixed',
         auctionEndTime: '',
@@ -2119,6 +2123,8 @@ async generateOmniPrint() {
 
     this.form.fingerprint = sanitizedFingerprint;
     this.form.fingerprintBits = res.data.fingerprint_bits;
+    this.form.omniprintFingerprint = res.data.fingerprint;
+    this.form.omniprintModality = res.data.type || '';
     this.hashValue = sanitizedFingerprint;
 
     this.$message?.success('数字指纹生成成功');
@@ -2140,6 +2146,29 @@ async generateOmniPrint() {
   } finally {
     this.form.fingerprintLoading = false;
   }
+},
+
+async checkOmniPrintSimilarity() {
+  if (!this.form.file) return this.$message?.warning('请先选择文件，再进行相似度检测');
+  this.form.similarityChecking = true;
+  try {
+    await this.generateSelectedIdentifier();
+    if (!this.form.omniprintFingerprint) throw new Error('未获取到原始 OmniPrint 指纹');
+    const { data } = await axios.post('http://10.112.47.214:3000/api/omniprint/similarity-check', {
+      fingerprint: this.form.omniprintFingerprint,
+      fingerprint_bits: this.form.fingerprintBits,
+      modality: this.form.omniprintModality
+    });
+    const matches = data.matches || [];
+    if (!matches.length) {
+      this.$alert('当前没有可比较的同模态历史数字指纹。检测结果仅供参考，不影响登记。', '相似度检测').catch(() => {});
+      return;
+    }
+    const items = matches.slice(0, 3).map((item) => `${item.asset_name || item.file_hash}：${(item.bit_similarity * 100).toFixed(2)}%`).join('<br>');
+    this.$alert(`共比较 ${data.comparedCount} 条同模态资产。<br>最高相似度：${(matches[0].bit_similarity * 100).toFixed(2)}%<br><br>${items}`, '相似度检测结果', { dangerouslyUseHTMLString: true }).catch(() => {});
+  } catch (error) {
+    this.$message?.error(error.response?.data?.message || error.message || '相似度检测失败');
+  } finally { this.form.similarityChecking = false; }
 },
 
 getIdentifierMethodLabel(method) {
@@ -2269,6 +2298,8 @@ async generateSelectedIdentifier() {
 
       this.form.fingerprint = sanitizedFingerprint;
       this.form.fingerprintBits = res.data.fingerprint_bits || '';
+      this.form.omniprintFingerprint = res.data.fingerprint;
+      this.form.omniprintModality = res.data.type || '';
       this.hashValue = sanitizedFingerprint;
       this.hashSuccess = true;
       return this.hashValue;
@@ -2504,6 +2535,8 @@ getCatalogPublishMessage() {
       this.form.file = event.target.files[0];
       this.form.fingerprint = '';
       this.form.fingerprintBits = '';
+      this.form.omniprintFingerprint = '';
+      this.form.omniprintModality = '';
       this.hashValue = '';
       this.hashSuccess = false;
     },
@@ -3013,6 +3046,10 @@ async gradeAssetLevel() {
       formData.append('algorithm', this.form.algorithm);
       formData.append('customAlgorithm', null);
       formData.append('fileHash', this.hashValue);
+      formData.append('omniprint_fingerprint', this.form.algorithm === 'FINGERPRINT' ? this.form.omniprintFingerprint : '');
+      formData.append('omniprint_fingerprint_bits', this.form.algorithm === 'FINGERPRINT' ? this.form.fingerprintBits : '');
+      formData.append('omniprint_modality', this.form.algorithm === 'FINGERPRINT' ? this.form.omniprintModality : '');
+      formData.append('omniprint_source', this.form.algorithm === 'FINGERPRINT' ? 'file' : '');
       formData.append('industry', this.form.industry);
 
       formData.append('industry_raw', this.form.industryRaw);      // A01...T20 / TZ... 等
@@ -3523,10 +3560,83 @@ body {
   box-sizing: border-box;
 }
 
+.rights-selection-label {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  height: var(--control-height);
+  line-height: normal;
+}
+
+.rights-selection-options :deep(.el-checkbox) {
+  display: flex;
+  align-items: center;
+  height: var(--control-height);
+}
+
+.rights-selection-options :deep(.el-checkbox__label) {
+  padding-left: 6px;
+  color: #222;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: normal;
+}
+
 .field-hint {
   margin-top: 5px;
   color: #92400e;
   font-size: 12px;
+}
+
+.asset-file-input {
+  flex: 1;
+  min-width: 0;
+  height: var(--control-height);
+  padding: 4px 8px;
+  border: 1px solid #d9dde3;
+  border-radius: 8px;
+  background: #fff;
+  color: #4b5563;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+.asset-file-input::file-selector-button {
+  margin-right: 10px;
+  padding: 6px 11px;
+  border: 0;
+  border-radius: 6px;
+  background: #333;
+  color: #fff;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color .18s ease;
+}
+
+.asset-file-input::file-selector-button:hover {
+  background: #444;
+}
+
+.asset-file-picker {
+  display: block;
+  flex: 1;
+  min-width: 0;
+}
+
+.asset-file-name,
+.asset-file-hint {
+  overflow: hidden;
+  color: #606266;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.asset-file-hint {
+  display: block;
+  margin-top: 5px;
+  color: #909399;
 }
 
 .form-group input,
@@ -3590,6 +3700,18 @@ input[readonly] {
   border-radius: 6px;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.similarity-check-btn {
+  font-size: 14px;
+  font-weight: 400;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.similarity-check-btn:hover:not(.is-disabled) {
+  color: #fff;
+  background-color: #0f5fd6;
+  border-color: #0f5fd6;
 }
 
 .classify-btn:hover {
@@ -4096,6 +4218,69 @@ input[readonly] {
 .valuation-control-row .btn-primary:hover,
 .valuation-control-row .btn-secondary:hover {
   transform: translateY(-1px);
+}
+
+/* Unified, restrained button system for the registration page. */
+button,
+:deep(.el-button) {
+  border-radius: 10px;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: 0;
+  transition: background-color .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+:deep(.el-button) {
+  border-color: #d2d2d7;
+  background: #fff;
+  color: #1d1d1f;
+}
+
+:deep(.el-button:hover:not(.is-disabled)) {
+  border-color: #0071e3;
+  background: #f5f9ff;
+  color: #0071e3;
+}
+
+.classify-btn,
+.btn-primary,
+.form-group.centered-button > button,
+.hash-value button {
+  border: 1px solid #0071e3;
+  background: #0071e3;
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 113, 227, .18);
+}
+
+.classify-btn:hover:not(:disabled),
+.btn-primary:hover:not(:disabled),
+.form-group.centered-button > button:hover:not(:disabled),
+.hash-value button:hover {
+  border-color: #0077ed;
+  background: #0077ed;
+  box-shadow: 0 4px 12px rgba(0, 113, 227, .22);
+  transform: translateY(-1px);
+}
+
+.btn-secondary {
+  border: 1px solid #d2d2d7;
+  background: #fff;
+  color: #1d1d1f;
+  box-shadow: none;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: #0071e3;
+  background: #f5f9ff;
+  color: #0071e3;
+  transform: translateY(-1px);
+}
+
+button:active:not(:disabled),
+:deep(.el-button:active:not(.is-disabled)) {
+  box-shadow: none;
+  transform: scale(.98);
 }
 
 .valuation-form {

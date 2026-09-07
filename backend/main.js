@@ -1791,7 +1791,8 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
         can_sell_asset, can_sell_view, can_sell_process, allow_resale,
         trade_location, trade_start_ts, trade_end_ts,
         trade_mode, auction_start_price, auction_end_time,
-        allow_authorize, allow_supervision, model_selection, pc_type
+        allow_authorize, allow_supervision, model_selection, pc_type,
+        omniprint_fingerprint, omniprint_fingerprint_bits, omniprint_modality, omniprint_source
     } = req.body;
 
     const picture = req.file;
@@ -1799,6 +1800,13 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
     const resolvedAssetCategory = asset_category || '其他数据';
 
     const normalizedTradeMode = trade_mode === 'auction' ? 'auction' : 'fixed';
+    const rawOmniPrintFingerprint = String(omniprint_fingerprint || '').trim() || null;
+    const omniPrintBits = Number(omniprint_fingerprint_bits);
+    const omniPrintFingerprintBits = Number.isInteger(omniPrintBits) && omniPrintBits > 0 ? omniPrintBits : null;
+    const omniPrintModality = ['text', 'image', 'audio', 'video'].includes(String(omniprint_modality || '').trim())
+        ? String(omniprint_modality).trim()
+        : null;
+    const omniPrintSource = rawOmniPrintFingerprint && String(omniprint_source || '').trim() === 'file' ? 'file' : null;
     if (normalizedTradeMode === 'auction') {
         const startPrice = Number(auction_start_price || price);
         const endTime = new Date(String(auction_end_time || '').replace(' ', 'T'));
@@ -1854,8 +1862,9 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
                 can_sell_asset, can_sell_view, can_sell_process, allow_resale,
                 trade_location, trade_start_ts, trade_end_ts,
                 trade_mode, auction_start_price, auction_end_time,
-                allow_authorize, allow_supervision, model_type, pc_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                allow_authorize, allow_supervision, model_type, pc_type,
+                omniprint_fingerprint, omniprint_fingerprint_bits, omniprint_modality, omniprint_source, omniprint_generated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
 
         const values = [
@@ -1891,7 +1900,11 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
             allow_authorize || 0,
             allow_supervision || 0,
             model_selection || null,
-            pc_type || null
+            pc_type || null,
+            rawOmniPrintFingerprint,
+            omniPrintFingerprintBits,
+            omniPrintModality,
+            omniPrintSource
         ];
 
         console.log('准备插入的数据:', values);
@@ -5530,6 +5543,39 @@ app.post('/api/omniprint/fingerprint', upload.single('file'), async (req, res) =
       message: 'OmniPrint 服务异常',
       error: err.message
     });
+  }
+});
+
+// Informational only: compare a newly generated raw OmniPrint fingerprint with
+// all stored fingerprints of the same modality/bit length.  It never blocks
+// asset registration.
+app.post('/api/omniprint/similarity-check', async (req, res) => {
+  const fingerprint = String(req.body?.fingerprint || '').trim();
+  const fingerprintBits = Number(req.body?.fingerprint_bits);
+  const modality = String(req.body?.modality || '').trim();
+  if (!fingerprint || !Number.isInteger(fingerprintBits) || !['text', 'image', 'audio', 'video'].includes(modality)) {
+    return res.status(400).json({ success: false, message: '缺少有效的原始指纹、位数或模态' });
+  }
+  try {
+    const candidates = await new Promise((resolve, reject) => db.query(
+      `SELECT file_hash, asset_name, omniprint_fingerprint, omniprint_source
+       FROM asset_registrations
+       WHERE omniprint_modality = ? AND omniprint_fingerprint_bits = ?
+         AND omniprint_fingerprint IS NOT NULL AND omniprint_fingerprint <> ''`,
+      [modality, fingerprintBits],
+      (error, rows) => error ? reject(error) : resolve(rows)
+    ));
+    const comparisons = await Promise.all(candidates.map(async (asset) => {
+      const response = await axios.post(`${OMNIPRINT_BASE[modality]}/compare`, {
+        fingerprint_a: fingerprint, fingerprint_b: asset.omniprint_fingerprint,
+        fingerprint_bits: fingerprintBits, asset_id_b: asset.file_hash
+      }, { timeout: 15000 });
+      return { file_hash: asset.file_hash, asset_name: asset.asset_name, source: asset.omniprint_source, ...response.data };
+    }));
+    comparisons.sort((a, b) => b.bit_similarity - a.bit_similarity);
+    res.json({ success: true, comparedCount: comparisons.length, matches: comparisons });
+  } catch (error) {
+    res.status(502).json({ success: false, message: 'OmniPrint 相似度检测失败', error: error.message });
   }
 });
 
