@@ -302,25 +302,35 @@
           <template #footer><el-button @click="teeResultDialog.visible=false">取消</el-button><el-button type="primary" :loading="teeResultDialog.processing" @click="confirmTeeResult">解密并下载</el-button></template>
         </el-dialog>
 
-        <el-dialog v-model="mpcDialog.visible" title="请求交付" width="520px">
+        <el-dialog v-model="mpcDialog.visible" title="设置筛选条件" width="600px">
           <div v-if="mpcDialog.row" class="dialog-body">
             <div class="dialog-row">
               <span class="dialog-label">交易ID</span>
               <span>{{ mpcDialog.row.transaction_id }}</span>
             </div>
             <div class="dialog-field">
-              <span class="dialog-label">目标阈值</span>
-              <el-input v-model="mpcDialog.threshold" placeholder="请输入本次比较的目标阈值" />
+              <span class="dialog-label">达标门槛</span>
+              <el-input v-model="mpcDialog.threshold" placeholder="请输入与本次数据单位一致的数值，例如：100000" inputmode="decimal" />
             </div>
-            <div class="dialog-hint compact-hint">
-              <span>买方设置总资产门槛，系统会返回每个用户是否达标。</span>
+            <div class="mpc-threshold-intro">
+              <strong>这是一条什么条件？</strong>
+              <p>填写本次任务的达标数值。系统会分别汇总每位数据主体的相关数值，并仅返回“是否达到该标准”，不会向您透露原始数据或具体数值。</p>
+            </div>
+            <div class="mpc-threshold-examples">
+              <span class="mpc-examples-title">常见使用场景</span>
+              <ul>
+                <li><b>碳证交易：</b>核验企业碳配额或减排量的汇总值是否达到项目准入标准。</li>
+                <li><b>数字版权：</b>核验创作者可授权作品的累计指标是否达到版权合作条件。</li>
+                <li><b>医疗健康：</b>在不查看个人原始记录的前提下，判断是否满足研究入组条件。</li>
+                <li><b>车联网与交通出行：</b>核验车辆或出行数据的累计指标是否达到服务或试点要求。</li>
+              </ul>
             </div>
           </div>
 
           <template #footer>
             <el-button @click="closeMpcDialog">取消</el-button>
             <el-button type="primary" :loading="mpcDialog.submitting" :disabled="isDeliveryExpired(mpcDialog.row)" @click="submitMpcTask()">
-              请求交付
+              开始安全筛选
             </el-button>
           </template>
         </el-dialog>
@@ -2148,6 +2158,38 @@ export default {
 
 .compact-hint {
   margin-left: 0;
+}
+
+.mpc-threshold-intro,
+.mpc-threshold-examples {
+  padding: 12px 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fafafa;
+  color: #4b5563;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.mpc-threshold-intro strong,
+.mpc-examples-title {
+  display: block;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.mpc-threshold-intro p {
+  margin: 4px 0 0;
+}
+
+.mpc-threshold-examples ul {
+  margin: 5px 0 0;
+  padding-left: 18px;
+}
+
+.mpc-threshold-examples li + li {
+  margin-top: 3px;
 }
 
 .modal {
