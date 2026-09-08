@@ -108,9 +108,17 @@
     编辑
   </button>
 </td>
-<td v-if="isSeller">
+<td v-if="isSeller" class="nowrap proxy-cell">
   <button type="button" @click.stop.prevent="handleAuthorization(item)" class="edit-button">
-    {{ item.isProxied === 1 || item.isProxied === '1' ? '修改代理托管' : '代理托管' }}
+    {{ isAssetProxied(item) ? '修改代理托管' : '代理托管' }}
+  </button>
+  <button
+    v-if="isAssetProxied(item)"
+    type="button"
+    class="edit-button revoke-button"
+    @click.stop.prevent="handleRevokeAuthorization(item)"
+  >
+    取消授权
   </button>
 </td>
 
@@ -1707,6 +1715,63 @@ isIndivisible(industry) {
       this.showAuthorizationModal = true; // 显示授权弹窗
     },
 
+    // 是否已托管：兼容旧数据（部分历史授权只写了 agent_addr，is_proxied 仍为 0）
+    isAssetProxied(item) {
+      if (!item) return false;
+      return item.isProxied === 1 || item.isProxied === '1' || !!item.agentAddr;
+    },
+
+    // 取消代理托管：先走链上撤销（与授权同接口、isApproval 反置/额度归零），
+    // 成功后再清理本系统的数据库托管记录。
+    async handleRevokeAuthorization(item) {
+      if (!item) return;
+      const asset = item;
+      const agentAddr = asset.agentAddr || '';
+      if (!agentAddr) {
+        this.errorMessage = '未找到该资产的托管地址，请刷新后重试。';
+        return;
+      }
+      if (!window.confirm(`确定取消资产“${asset.assetName || asset.fileHash}”的代理托管吗？`)) {
+        return;
+      }
+
+      let owner;
+      try {
+        owner = await this.getOwnerOfAsset(asset.fileHash); // 获取资产拥有者
+      } catch (error) {
+        this.errorMessage = '获取资产拥有者失败，请稍后再试。';
+        return;
+      }
+
+      const indivisible = this.isIndivisible(asset.industry);
+      const payload = indivisible
+        ? { owner: owner, to: agentAddr, tokenId: asset.fileHash, isApproval: 'false' }
+        : { to: agentAddr, amount: '0' }; // 可分割资产按额度归零处理
+      const apiUrl = indivisible
+        ? 'http://10.112.47.214:8848/pre/SetApproval' // 不可分割资产
+        : 'http://10.112.47.214:8848/pre/En-Approve'; // 可分割资产
+
+      try {
+        const response = await axios.post(apiUrl, payload);
+        if (!(response.status === 200 && (response.data.code === 0 || response.data.code === '0'))) {
+          this.errorMessage = '链上取消授权失败：' + (response.data.message || '未知错误');
+          return;
+        }
+        await axios.post('http://10.112.47.214:3000/api/revoke-agent', {
+          file_hash: asset.fileHash
+        });
+        asset.isProxied = 0;
+        asset.agentAddr = '';
+        this.errorMessage = '';
+        if (this.$message && this.$message.success) {
+          this.$message.success('已取消代理托管');
+        }
+      } catch (error) {
+        console.error('取消授权失败:', error);
+        this.errorMessage = '取消授权失败，请稍后再试。';
+      }
+    },
+
     // 关闭授权弹窗
     closeAuthorizationModal() {
       this.showAuthorizationModal = false;
@@ -2874,6 +2939,25 @@ body {
 
 .edit-button:hover {
   background-color: #0056b3;
+}
+
+/* 代理托管单元格：授权/取消并排 */
+.proxy-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.revoke-button {
+  background-color: #fff;
+  color: #dc3545;
+  border: 1px solid #dc3545;
+}
+
+.revoke-button:hover {
+  background-color: #dc3545;
+  color: #fff;
 }
 
 /* 调整分页器样式 */

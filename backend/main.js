@@ -3323,15 +3323,17 @@ app.post('/api/update-agent', async (req, res) => {
         return res.status(400).json({ message: '缺少 file_hash 参数' });
     }
 
+    // 有托管地址视为已授权(is_proxied=1)，传空则视为未托管(is_proxied=0)
     const updateSql = `
         UPDATE asset_registrations
-        SET agent_addr = ?, agent_count = ?
+        SET agent_addr = ?, agent_count = ?, is_proxied = ?
         WHERE file_hash = ?
     `;
 
     const values = [
         agent_addr || null,
         agent_count || 0,
+        agent_addr ? 1 : 0,
         file_hash
     ];
 
@@ -3351,7 +3353,41 @@ app.post('/api/update-agent', async (req, res) => {
             message: '代理信息更新成功',
             file_hash: file_hash,
             agent_addr: agent_addr,
-            agent_count: agent_count
+            agent_count: agent_count,
+            is_proxied: agent_addr ? 1 : 0
+        });
+    });
+});
+
+// 取消代理托管：清空托管地址/数量并把 is_proxied 置 0
+app.post('/api/revoke-agent', async (req, res) => {
+    const { file_hash } = req.body || {};
+
+    if (!file_hash) {
+        return res.status(400).json({ message: '缺少 file_hash 参数' });
+    }
+
+    const sql = `
+        UPDATE asset_registrations
+        SET agent_addr = NULL, agent_count = 0, is_proxied = 0
+        WHERE file_hash = ?
+    `;
+
+    db.query(sql, [file_hash], (err, result) => {
+        if (err) {
+            console.error('取消代理托管失败:', err);
+            return res.status(500).json({ message: '服务器内部错误' });
+        }
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ message: '未找到匹配的资产记录，file_hash 不存在' });
+        }
+
+        return res.status(200).json({
+            message: '已取消代理托管',
+            file_hash: file_hash,
+            agent_addr: null,
+            is_proxied: 0
         });
     });
 });
