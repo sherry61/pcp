@@ -829,18 +829,32 @@ export default {
       this.pagination.page = Math.min(Math.max(this.pagination.page, 1), totalPages)
     },
 
+    // 状态请求统一分发；showMessage 默认 false（轮询/初始同步都不弹提示）。
+    refreshRowStatus(row, showMessage = false, signal) {
+      if (this.isTeeRow(row)) {
+        return this.refreshTeeStatus(row, signal)
+      }
+      if (this.isHeRow(row)) {
+        return this.refreshHeStatus(row, showMessage, signal)
+      }
+      if (this.isFlRow(row)) {
+        return this.refreshFlStatus(row, showMessage, signal)
+      }
+      if (this.isPreRow(row)) {
+        return this.refreshPreStatus(row, showMessage, signal)
+      }
+      return this.refreshMpcStatus(row, showMessage, signal)
+    },
+
     async syncBuyerPageStatus() {
-      await Promise.all(this.pagedResultList.map((row) => (
-        this.isTeeRow(row)
-          ? this.refreshTeeStatus(row)
-          : (this.isHeRow(row)
-          ? this.refreshHeStatus(row, false)
-          : (this.isFlRow(row)
-            ? this.refreshFlStatus(row, false)
-            : (this.isPreRow(row)
-              ? this.refreshPreStatus(row, false)
-              : this.refreshMpcStatus(row, false))))
-      )))
+      const rows = this.pagedResultList.filter((row) => row?.transaction_id)
+      // 限并发逐个批次地摸底，避免进入页面时一次性把十几个请求打出去
+      // 占满浏览器对后端的连接（6 条/域），拖慢后续所有请求。
+      const CONCURRENCY = 3
+      for (let i = 0; i < rows.length; i += CONCURRENCY) {
+        const batch = rows.slice(i, i + CONCURRENCY)
+        await Promise.all(batch.map((row) => this.refreshRowStatus(row)))
+      }
     },
 
     async refreshTeeStatus(row, signal) {
@@ -930,18 +944,12 @@ export default {
       this.pollingInFlight = true
       this.pollAbortController = new AbortController()
       const signal = this.pollAbortController.signal
+      const CONCURRENCY = 3
       try {
-        await Promise.all(rows.map((row) => (
-          this.isTeeRow(row)
-            ? this.refreshTeeStatus(row, signal)
-            : (this.isHeRow(row)
-            ? this.refreshHeStatus(row, false, signal)
-            : (this.isFlRow(row)
-              ? this.refreshFlStatus(row, false, signal)
-              : (this.isPreRow(row)
-                ? this.refreshPreStatus(row, false, signal)
-                : this.refreshMpcStatus(row, false, signal))))
-        )))
+        for (let i = 0; i < rows.length; i += CONCURRENCY) {
+          const batch = rows.slice(i, i + CONCURRENCY)
+          await Promise.all(batch.map((row) => this.refreshRowStatus(row, false, signal)))
+        }
       } finally {
         this.pollingInFlight = false
       }
@@ -953,7 +961,8 @@ export default {
       try {
         const response = await axios.get(`${API_BASE}/api/privacy/he/status`, {
           params: { transactionId: row.transaction_id },
-          signal
+          signal,
+          timeout: 15000
         })
         row.heRecord = response.data?.item || null
         if (showMessage) {
@@ -1164,7 +1173,8 @@ export default {
       try {
         const response = await axios.get(`${API_BASE}/api/privacy/pre/status`, {
           params: { transactionId: row.transaction_id },
-          signal
+          signal,
+          timeout: 15000
         })
         row.preRecord = response.data?.item || null
         if (showMessage) {
@@ -1189,7 +1199,8 @@ export default {
             transactionId: row.transaction_id,
             entityId: row.buyer_address
           },
-          signal
+          signal,
+          timeout: 15000
         })
         row.flRecord = response.data?.item || null
         if (showMessage) {
@@ -1211,7 +1222,8 @@ export default {
       try {
         const response = await axios.get(`${API_BASE}/api/privacy/mpc/status`, {
           params: { transaction_id: row.transaction_id },
-          signal
+          signal,
+          timeout: 15000
         })
         row.mpcRecord = response.data?.data || null
         if (showMessage) {
