@@ -276,10 +276,44 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
       return mapped;
     }
 
+    // The remote MPC service keeps tasks in memory only, so its tasks vanish on
+    // restart while the local rows keep referencing them. Detect that orphan
+    // state and release the record so the buyer can create a fresh delivery
+    // instead of polling a dead task forever (remote HTTP 400 / code 1002).
+    const MPC_ORPHAN_CODES = new Set([1002]);
+    const isOrphanRemoteTaskError = (error) => {
+      const payload = error?.response?.data || {};
+      const code = Number(payload?.code);
+      const message = String(payload?.message || error?.message || '')
+        .toLowerCase()
+        .trim();
+      return MPC_ORPHAN_CODES.has(code) || message.includes('task not found') || message.includes('任务不存在');
+    };
+    const releaseOrphanRemoteTask = (mappedRow) => upsertMpcRecord(mappedRow.transaction_id, {
+      businessContractId: mappedRow.business_contract_id,
+      remoteTaskId: null,
+      taskType: mappedRow.mpc_task_type,
+      buyerId: mappedRow.buyer_id,
+      sellerId: mappedRow.seller_id,
+      computeParams: mappedRow.compute_params,
+      sellerInput: mappedRow.seller_input,
+      sellerFilename: mappedRow.seller_filename,
+      taskStatus: 'failed',
+      remoteStatus: 'failed',
+      result: mappedRow.result,
+      lastError: '远端 MPC 任务已失效（可能因服务重启丢失），请重新发起交付'
+    });
+
     if (isTerminalMpcStatus(mapped.task_status) && mapped.task_status !== 'failed') {
       if (mapped.task_status === 'done' && !mapped.result) {
         const client = createMpcClient();
-        const resultBody = await getRemoteTaskResult(client, mapped.remote_task_id);
+        let resultBody;
+        try {
+          resultBody = await getRemoteTaskResult(client, mapped.remote_task_id);
+        } catch (error) {
+          if (!isOrphanRemoteTaskError(error)) throw error;
+          return releaseOrphanRemoteTask(mapped);
+        }
         const nextResult = resultBody?.data || null;
 
         return upsertMpcRecord(mapped.transaction_id, {
@@ -302,7 +336,13 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
     }
 
     const client = createMpcClient();
-    const statusBody = await getRemoteTaskStatus(client, mapped.remote_task_id);
+    let statusBody;
+    try {
+      statusBody = await getRemoteTaskStatus(client, mapped.remote_task_id);
+    } catch (error) {
+      if (!isOrphanRemoteTaskError(error)) throw error;
+      return releaseOrphanRemoteTask(mapped);
+    }
     const statusData = statusBody?.data || {};
     const remoteStatus = normalizeMpcStatus(statusData.status);
 

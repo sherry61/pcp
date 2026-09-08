@@ -499,6 +499,8 @@ export default {
         result: null
       },
       statusPollTimer: null,
+      pollingInFlight: false,
+      pollAbortController: null,
       teeDialog: { visible: false, row: null, file: null, submitting: false }, teeResultDialog: { visible: false, row: null, keyFile: null, processing: false }
     }
   },
@@ -841,15 +843,59 @@ export default {
       )))
     },
 
-    async refreshTeeStatus(row) {
+    async refreshTeeStatus(row, signal) {
       if (row.teeStatusRefreshing) return
       row.teeStatusRefreshing = true
-      try { const r = await teeApi.status(row.transaction_id); const s = r.step || r.status; row.teeRequested = true; row.teeStep = s; row.teeStatus = ''; row.teeResultReady = s === 'RESULT_READY' || r.resultStatus === 'READY' } catch (e) { row.teeStatus = '' } finally { row.teeStatusRefreshing = false }
+      try { const r = await teeApi.status(row.transaction_id, signal); const s = r.step || r.status; row.teeRequested = true; row.teeStep = s; row.teeStatus = ''; row.teeResultReady = s === 'RESULT_READY' || r.resultStatus === 'READY' } catch (e) { row.teeStatus = '' } finally { row.teeStatusRefreshing = false }
     },
 
     async handleBuyerPageChange(page) {
       this.pagination.page = page
       await this.refreshResults()
+    },
+
+    // 轮询时只跟踪“还需要关注”的行：已过期、买家还没发起、或已经到终态
+    // (完成/失败)的行后端要么必然 404，要么状态不会再变化，轮询只是浪费请求。
+    shouldPollRow(row) {
+      if (!row?.transaction_id) {
+        return false
+      }
+
+      if (this.isDeliveryExpired(row)) {
+        return false
+      }
+
+      if (this.isTeeRow(row)) {
+        // 买家还没点过“请求交付”时后端没有 job，必然 404。
+        if (!row.teeRequested) {
+          return false
+        }
+        const step = String(row.teeStep || '').toUpperCase()
+        return !['RESULT_READY', 'COMPLETED', 'FAILED'].includes(step) && !step.endsWith('_FAILED')
+      }
+
+      if (this.isMpcRow(row)) {
+        // 任务还没创建（或已被释放）时后端没有记录；终态也不会再变化。
+        const record = row.mpcRecord
+        if (!record?.remote_task_id) {
+          return false
+        }
+        const status = String(record.task_status || '').toLowerCase()
+        return !['done', 'failed'].includes(status)
+      }
+
+      // HE / FL / PRE：买家还没发起过（无本地记录）时后端大概率无记录，不轮询。
+      const buyerActed = this.isHeRow(row)
+        ? Boolean(row.heRecord?.public_keys_ready)
+        : (this.isFlRow(row)
+          ? Boolean(row.flRecord?.pcp_contract_id)
+          : Boolean(row.preRecord?.buyer_public_key_ready))
+      if (!buyerActed) {
+        return false
+      }
+
+      const deliveryStatus = this.getBuyerDeliveryStatus(row)
+      return deliveryStatus !== 'COMPLETED' && deliveryStatus !== 'FAILED'
     },
 
     startStatusPolling() {
@@ -864,37 +910,50 @@ export default {
         window.clearInterval(this.statusPollTimer)
         this.statusPollTimer = null
       }
+      if (this.pollAbortController) {
+        this.pollAbortController.abort()
+        this.pollAbortController = null
+      }
     },
 
     async pollCurrentPageStatus() {
-      if (this.isLoading) {
+      // 上一次轮询还没结束就不再叠一轮，避免请求堆积。
+      if (this.isLoading || this.pollingInFlight) {
         return
       }
 
-      const rows = this.pagedResultList.filter((row) => row?.transaction_id)
+      const rows = this.pagedResultList.filter((row) => this.shouldPollRow(row))
       if (!rows.length) {
         return
       }
 
-      await Promise.all(rows.map((row) => (
-        this.isTeeRow(row)
-          ? this.refreshTeeStatus(row)
-          : (this.isHeRow(row)
-          ? this.refreshHeStatus(row, false)
-          : (this.isFlRow(row)
-            ? this.refreshFlStatus(row, false)
-            : (this.isPreRow(row)
-              ? this.refreshPreStatus(row, false)
-              : this.refreshMpcStatus(row, false))))
-      )))
+      this.pollingInFlight = true
+      this.pollAbortController = new AbortController()
+      const signal = this.pollAbortController.signal
+      try {
+        await Promise.all(rows.map((row) => (
+          this.isTeeRow(row)
+            ? this.refreshTeeStatus(row, signal)
+            : (this.isHeRow(row)
+            ? this.refreshHeStatus(row, false, signal)
+            : (this.isFlRow(row)
+              ? this.refreshFlStatus(row, false, signal)
+              : (this.isPreRow(row)
+                ? this.refreshPreStatus(row, false, signal)
+                : this.refreshMpcStatus(row, false, signal))))
+        )))
+      } finally {
+        this.pollingInFlight = false
+      }
     },
 
-    async refreshHeStatus(row, showMessage = true) {
+    async refreshHeStatus(row, showMessage = true, signal) {
       if (!row?.transaction_id) return
       row.syncingHe = true
       try {
         const response = await axios.get(`${API_BASE}/api/privacy/he/status`, {
-          params: { transactionId: row.transaction_id }
+          params: { transactionId: row.transaction_id },
+          signal
         })
         row.heRecord = response.data?.item || null
         if (showMessage) {
@@ -1099,12 +1158,13 @@ export default {
       }
     },
 
-    async refreshPreStatus(row, showMessage = true) {
+    async refreshPreStatus(row, showMessage = true, signal) {
       if (!row?.transaction_id) return
       row.syncingPre = true
       try {
         const response = await axios.get(`${API_BASE}/api/privacy/pre/status`, {
-          params: { transactionId: row.transaction_id }
+          params: { transactionId: row.transaction_id },
+          signal
         })
         row.preRecord = response.data?.item || null
         if (showMessage) {
@@ -1120,7 +1180,7 @@ export default {
       }
     },
 
-    async refreshFlStatus(row, showMessage = true) {
+    async refreshFlStatus(row, showMessage = true, signal) {
       if (!row?.transaction_id) return
       row.syncingFl = true
       try {
@@ -1128,7 +1188,8 @@ export default {
           params: {
             transactionId: row.transaction_id,
             entityId: row.buyer_address
-          }
+          },
+          signal
         })
         row.flRecord = response.data?.item || null
         if (showMessage) {
@@ -1144,12 +1205,13 @@ export default {
       }
     },
 
-    async refreshMpcStatus(row, showMessage = true) {
+    async refreshMpcStatus(row, showMessage = true, signal) {
       if (!row?.transaction_id) return
       row.syncingMpc = true
       try {
         const response = await axios.get(`${API_BASE}/api/privacy/mpc/status`, {
-          params: { transaction_id: row.transaction_id }
+          params: { transaction_id: row.transaction_id },
+          signal
         })
         row.mpcRecord = response.data?.data || null
         if (showMessage) {

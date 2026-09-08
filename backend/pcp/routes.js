@@ -472,6 +472,24 @@ function registerHeRoutes({
   safeBaseName,
   pickContentType
 }) {
+  // /tokens/resend is expensive (PAM re-gates the result), so throttle it per
+  // attempt. The delivery page polls statuses every few seconds; without this
+  // the PCP service gets hammered with a fresh re-gate whenever the result
+  // token is still missing from the attempt payload.
+  const HE_RESEND_THROTTLE_MS = 60 * 1000;
+  const heResendThrottle = new Map();
+
+  // An expired delivery is read-only: the buyer can no longer act or download,
+  // so there is no point syncing (or re-gating) it on every status poll.
+  function isDeliveryExpired(transaction) {
+    const value = transaction?.expiration_time;
+    if (value == null || value === '') {
+      return false;
+    }
+    const timestamp = new Date(String(value).replace(' ', 'T')).getTime();
+    return Number.isFinite(timestamp) && timestamp <= Date.now();
+  }
+
   async function getTransactionById(transactionId) {
     const rows = await dbQuery(
       'SELECT * FROM transactions WHERE transaction_id = ? LIMIT 1',
@@ -988,7 +1006,7 @@ function registerHeRoutes({
       let record = await getHeRecordByTransactionId(transactionId);
       let syncError = null;
 
-      if (record?.pcp_contract_id && record?.current_attempt_id) {
+      if (record?.pcp_contract_id && record?.current_attempt_id && !isDeliveryExpired(transaction)) {
         try {
           const client = createPcpClient({
             baseUrl: getPcpHeBaseUrl()
@@ -1010,24 +1028,32 @@ function registerHeRoutes({
             !buyerResultToken.download_token &&
             String(firstDefined(attemptData.status, record.pcp_status, '')).toUpperCase() === 'PAM_PASSED'
           ) {
-            try {
-              const resendResp = await client.post('/tokens/resend', {
-                contract_id: record.pcp_contract_id,
-                attempt_id: firstDefined(attemptData.attempt_id, record.current_attempt_id),
-                receiver_id: transaction.buyer_address,
-                result_role: 'he_result'
-              });
-              const resendData = resendResp?.data?.data || {};
-              buyerResultToken = {
-                ...buyerResultToken,
-                download_token: firstDefined(
-                  resendData.download_token,
-                  buyerResultToken.download_token,
-                  null
-                )
-              };
-            } catch (error) {
-              // Keep best-effort status sync even if token resend fails.
+            const resendKey = `${record.pcp_contract_id}:${record.current_attempt_id}`;
+            if (Date.now() - (heResendThrottle.get(resendKey) || 0) >= HE_RESEND_THROTTLE_MS) {
+              heResendThrottle.set(resendKey, Date.now());
+              try {
+                const resendResp = await client.post('/tokens/resend', {
+                  contract_id: record.pcp_contract_id,
+                  attempt_id: firstDefined(attemptData.attempt_id, record.current_attempt_id),
+                  receiver_id: transaction.buyer_address,
+                  result_role: 'he_result'
+                });
+                const resendData = resendResp?.data?.data || {};
+                buyerResultToken = {
+                  ...buyerResultToken,
+                  download_token: firstDefined(
+                    resendData.download_token,
+                    buyerResultToken.download_token,
+                    null
+                  )
+                };
+              } catch (error) {
+                // Keep best-effort status sync even if token resend fails.
+              }
+            } else {
+              // A re-gate for this attempt happened moments ago; keep whatever
+              // token is already stored instead of hammering the PCP service.
+              buyerResultToken = { ...buyerResultToken };
             }
           }
 
@@ -1230,6 +1256,21 @@ function registerPreRoutes({
   safeBaseName,
   pickContentType
 }) {
+  // Same rationale as the HE routes: re-gating a PAM result is expensive, so
+  // throttle /tokens/resend per attempt and skip remote sync for deliveries
+  // that have already expired.
+  const PRE_RESEND_THROTTLE_MS = 60 * 1000;
+  const preResendThrottle = new Map();
+
+  function isDeliveryExpired(transaction) {
+    const value = transaction?.expiration_time;
+    if (value == null || value === '') {
+      return false;
+    }
+    const timestamp = new Date(String(value).replace(' ', 'T')).getTime();
+    return Number.isFinite(timestamp) && timestamp <= Date.now();
+  }
+
   async function getTransactionById(transactionId) {
     const rows = await dbQuery(
       'SELECT * FROM transactions WHERE transaction_id = ? LIMIT 1',
@@ -1597,7 +1638,7 @@ function registerPreRoutes({
       let record = await getPreRecordByTransactionId(transactionId);
       let syncError = null;
 
-      if (record?.pcp_contract_id && record?.current_attempt_id) {
+      if (record?.pcp_contract_id && record?.current_attempt_id && !isDeliveryExpired(transaction)) {
         try {
           const client = createPcpClient({
             baseUrl: getPcpPreBaseUrl(),
@@ -1619,24 +1660,32 @@ function registerPreRoutes({
             !buyerResultToken.download_token &&
             String(firstDefined(attemptData.status, record.pcp_status, '')).toUpperCase() === 'PAM_PASSED'
           ) {
-            try {
-              const resendResp = await client.post('/tokens/resend', {
-                contract_id: record.pcp_contract_id,
-                attempt_id: firstDefined(attemptData.attempt_id, record.current_attempt_id),
-                receiver_id: transaction.buyer_address,
-                result_role: 'pre_result'
-              });
-              const resendData = resendResp?.data?.data || {};
-              buyerResultToken = {
-                ...buyerResultToken,
-                download_token: firstDefined(
-                  resendData.download_token,
-                  buyerResultToken.download_token,
-                  null
-                )
-              };
-            } catch (error) {
-              // Best-effort token recovery.
+            const resendKey = `${record.pcp_contract_id}:${record.current_attempt_id}`;
+            if (Date.now() - (preResendThrottle.get(resendKey) || 0) >= PRE_RESEND_THROTTLE_MS) {
+              preResendThrottle.set(resendKey, Date.now());
+              try {
+                const resendResp = await client.post('/tokens/resend', {
+                  contract_id: record.pcp_contract_id,
+                  attempt_id: firstDefined(attemptData.attempt_id, record.current_attempt_id),
+                  receiver_id: transaction.buyer_address,
+                  result_role: 'pre_result'
+                });
+                const resendData = resendResp?.data?.data || {};
+                buyerResultToken = {
+                  ...buyerResultToken,
+                  download_token: firstDefined(
+                    resendData.download_token,
+                    buyerResultToken.download_token,
+                    null
+                  )
+                };
+              } catch (error) {
+                // Best-effort token recovery.
+              }
+            } else {
+              // A re-gate for this attempt happened moments ago; keep whatever
+              // token is already stored instead of hammering the PCP service.
+              buyerResultToken = { ...buyerResultToken };
             }
           }
 

@@ -321,6 +321,20 @@ function registerFlRoutes({
   safeBaseName,
   pickContentType
 }) {
+  // Same rationale as HE/PRE: PAM re-gating via /tokens/resend is expensive,
+  // so throttle it and skip remote sync for deliveries that already expired.
+  const FL_RESEND_THROTTLE_MS = 60 * 1000;
+  const flResendThrottle = new Map();
+
+  function isDeliveryExpired(transaction) {
+    const value = transaction?.expiration_time;
+    if (value == null || value === '') {
+      return false;
+    }
+    const timestamp = new Date(String(value).replace(' ', 'T')).getTime();
+    return Number.isFinite(timestamp) && timestamp <= Date.now();
+  }
+
   async function getTransactionById(transactionId) {
     const rows = await dbQuery(
       'SELECT * FROM transactions WHERE transaction_id = ? LIMIT 1',
@@ -903,6 +917,12 @@ function registerFlRoutes({
       return record;
     }
 
+    const resendKey = `${record.pcp_contract_id}:${sellerId}`;
+    if (Date.now() - (flResendThrottle.get(resendKey) || 0) < FL_RESEND_THROTTLE_MS) {
+      return record;
+    }
+    flResendThrottle.set(resendKey, Date.now());
+
     const mapped = mapFlRecordRow(record);
     const joined = mapped?.seller_join_packages?.[sellerId] || null;
     if (!joined || joined.download_token) {
@@ -1428,8 +1448,9 @@ function registerFlRoutes({
       const { transaction, digitalContract } = await requireFlContext(transactionId);
       let record = await getFlRecordByTransactionId(transactionId);
       let syncError = null;
+      const deliveryExpired = isDeliveryExpired(transaction);
 
-      if (record?.pcp_contract_id) {
+      if (!deliveryExpired && record?.pcp_contract_id) {
         try {
           const client = createPcpClient({
             baseUrl: getPcpFlBaseUrl()
@@ -1458,7 +1479,7 @@ function registerFlRoutes({
         }
       }
 
-      if (record?.pcp_contract_id) {
+      if (!deliveryExpired && record?.pcp_contract_id) {
         try {
           record = await syncCurrentFlAttempt(record);
         } catch (error) {
@@ -1466,7 +1487,7 @@ function registerFlRoutes({
         }
       }
 
-      if (record?.pcp_contract_id && entityId) {
+      if (!deliveryExpired && record?.pcp_contract_id && entityId) {
         record = await tryResendFlSellerBottomModelToken(record, entityId);
       }
 
