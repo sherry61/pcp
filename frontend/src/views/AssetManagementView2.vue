@@ -2614,9 +2614,8 @@ async confirmEdit() {
 }
 
 .action-cell {
-    display: flex;
-    justify-content: center;
-    align-items: center;
+    text-align: center;
+    vertical-align: top;
 }
 
 .nowrap {
@@ -2935,10 +2934,12 @@ body {
 
 /* 代理托管单元格：授权/取消并排 */
 .proxy-cell {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+  vertical-align: top;
+  text-align: center;
+}
+
+.proxy-cell .edit-button + .edit-button {
+  margin-top: 6px;
 }
 
 .revoke-button {
