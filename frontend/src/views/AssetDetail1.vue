@@ -267,6 +267,14 @@
               <div class="form-control">{{ getPcTypeLabel(selectedPcType || asset.pc_type) }}</div>
             </div>
 
+            <!-- TEE 资产：计算模型选择（当前仅“加权计算模型”，前端 mock） -->
+            <div class="form-row" v-if="isTeeAsset">
+              <label for="purchase-model"><strong>模型选择：</strong></label>
+              <select id="purchase-model" v-model="selectedModel" class="form-control">
+                <option value="weighted_calc">加权计算模型</option>
+              </select>
+            </div>
+
             <!-- 交易地点暂仅用于前端申请信息展示，不提交后端或上链。 -->
             <div class="form-row">
               <label for="purchase-trade-location">交易地点：</label>
@@ -380,6 +388,8 @@ export default {
       transactionId: null, // 保存返回的交易ID
 
       selectedPcType: '',
+      // TEE 资产购买时选择的计算模型（当前仅“加权计算模型”，前端 mock）
+      selectedModel: 'weighted_calc',
       bidPrice: null,
       bidSubmitting: false,
       auctionTimer: null,
@@ -432,6 +442,12 @@ export default {
     const hour = String(minimum.getHours()).padStart(2, '0');
     const minute = String(minimum.getMinutes()).padStart(2, '0');
     return `${year}-${month}-${day}T${hour}:${minute}`;
+  },
+
+  // 交付方法是否为“可信执行环境”（TEE）
+  isTeeAsset() {
+    const pcType = String(this.selectedPcType || (this.asset && this.asset.pc_type) || '').trim().toUpperCase();
+    return pcType === 'TEE';
   }
 
   },
