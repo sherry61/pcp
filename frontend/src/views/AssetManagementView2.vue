@@ -50,7 +50,6 @@
             <table v-else class="styled-table table-hover-row">
               <thead>
                 <tr>
-                  <th>资产哈希</th>
                   <th class="nowrap">用户 ID</th>
                   <th>资产名称</th>
                   <th class="nowrap">安全等级</th>
@@ -67,13 +66,6 @@
               </thead>
              <tbody>
   <tr v-for="item in currentPageData" :key="item.id">
-    <td>
-      <div @click="toggleExpand(item)" class="hash-display">
-        <span v-if="!item.isExpanded">{{ shortenHash(item.fileHash) }}... 展开</span>
-        <span v-else>{{ item.fileHash }} <span @click.stop="toggleExpand(item)" class="collapse">收起</span></span>
-      </div>
-      ({{ item.algorithm }})
-    </td>
     <td>{{ item.userId }}</td>
     <td>{{ item.assetName }}</td>
     <td>{{ item.assetType }}</td>
