@@ -92,7 +92,7 @@
         <!-- 资产展示区域 -->
         
 <!-- 资产展示区域 -->
-<div class="assets-list">
+    <div class="assets-list">
   <template v-if="isSearching && searchResults.length">
     <div
       class="asset-row"
@@ -102,9 +102,10 @@
     >
       <div class="asset-row-left">
         <img
-          :src="`data:image/jpeg;base64,${asset.picture}`"
+          :src="assetPictureUrl(asset)"
           alt="资产图片"
           class="asset-row-image"
+          loading="lazy"
         />
       </div>
 
@@ -158,9 +159,10 @@
     >
       <div class="asset-row-left">
         <img
-          :src="`data:image/jpeg;base64,${asset.picture}`"
+          :src="assetPictureUrl(asset)"
           alt="资产图片"
           class="asset-row-image"
+          loading="lazy"
         />
       </div>
 
@@ -238,7 +240,7 @@
         <div v-if="selectedAsset" class="modal" @click.self="closeModal">
           <div class="modal-content">
             <img
-              :src="`data:image/jpeg;base64,${selectedAsset.picture}`"
+              :src="assetPictureUrl(selectedAsset)"
               alt="Asset Image"
               class="modal-image"
             />
@@ -2101,9 +2103,9 @@ async transferAsset(asset) {
   this.isLoading = true;
 
   try {
-    // 准备请求参数
     const params = {
-      industry: category !== 'ALL' ? category : undefined
+      industry: category !== 'ALL' ? category : undefined,
+      include_pictures: '0'
     };
 
     // 1. 并行发起两个带筛选参数的请求
@@ -2142,7 +2144,8 @@ async fetchFilteredAssets() {
     const params = {
       industry_raw_name: this.selectedDomain !== 'ALL' ? this.selectedDomain : undefined,
       asset_category: this.selectedAssetCategory !== 'ALL' ? this.selectedAssetCategory : undefined,
-      asset_type: this.selectedAssetType !== 'ALL' ? this.selectedAssetType : undefined
+      asset_type: this.selectedAssetType !== 'ALL' ? this.selectedAssetType : undefined,
+      include_pictures: '0'
     };
 
     const [availableResponse, resalableResponse] = await Promise.all([
@@ -2182,6 +2185,19 @@ filterByAssetType(type) {
   this.selectedAssetType = type;
   this.fetchFilteredAssets();
 },
+
+    // 列表图片懒加载：优先用 file_hash 指向 /api/asset-picture 小接口；
+    // 兼容个别仍返回 base64 picture 的旧接口。
+    assetPictureUrl(asset) {
+      const hash = asset && asset.file_hash;
+      if (hash) {
+        return `http://10.112.47.214:3000/api/asset-picture/${hash}`;
+      }
+      if (asset && asset.picture) {
+        return `data:image/jpeg;base64,${asset.picture}`;
+      }
+      return '';
+    },
 
     handlePageChange(page) {
       this.currentPage = page;

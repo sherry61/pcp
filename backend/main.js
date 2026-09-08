@@ -2051,15 +2051,19 @@ app.get('/api/get-asset-details/:file_hash', async (req, res) => {
 // [新接口] 获取所有可二次交易的资产 (从 resalable_assets 表)
 app.get('/api/resalable-assets', (req, res) => {
     // 获取前端可能传递的 industry 筛选参数
-    const { industry } = req.query; 
-  
-    // 基础查询语句，从 resalable_assets 表中选择所有字段
-    // 注意：resalable_assets 表的字段结构和 asset_registrations 一样
+    const { industry } = req.query;
+    // 列表默认内嵌图片 base64 保持向后兼容；前端传 include_pictures=0 时跳过
+    // picture 列，改走 /api/asset-picture/:fileHash 懒加载，避免一次传 MB 级数据。
+    const includePictures = req.query.include_pictures !== '0' && req.query.include_pictures !== 'false';
+
+    const selectColumns = `
+        asset_name, asset_type, asset_category, email, address, description, algorithm,
+        custom_algorithm, file_hash, industry, user_id,
+        owner_address, current_owner_address, agent_addr, is_proxied
+        ${includePictures ? ', picture' : ''}
+      `;
     let query = `
-      SELECT 
-        asset_name, asset_type, asset_category, email, address, description, algorithm, 
-        custom_algorithm, file_hash, industry, picture, user_id, 
-        owner_address, current_owner_address, agent_addr, is_proxied 
+      SELECT ${selectColumns}
       FROM resalable_assets
     `;
   
@@ -2206,11 +2210,68 @@ app.get('/api/auction/won/:bidderUserId', (req, res) => {
 });
 
 // 获取可交易的资产，根据传递的 industry 参数来进行过滤
+// 按 file_hash 返回资产图片原始字节（懒加载用），带缓存头。
+// asset_registrations 优先，找不到再查 resalable_assets。
+app.get('/api/asset-picture/:fileHash', (req, res) => {
+  const fileHash = String(req.params.fileHash || '').trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(fileHash)) {
+    return res.status(400).json({ error: 'file_hash 格式非法' });
+  }
+
+  const lookup = (table, callback) => {
+    db.query(
+      `SELECT picture FROM ${table} WHERE file_hash = ? LIMIT 1`,
+      [fileHash],
+      (err, rows) => {
+        if (err) return callback(err);
+        const picture = rows && rows[0] && rows[0].picture;
+        return callback(null, picture && Buffer.isBuffer(picture) ? picture : null);
+      }
+    );
+  };
+
+  const respond = (buffer) => {
+    if (!buffer) {
+      return res.status(404).json({ error: '图片不存在' });
+    }
+    let type = 'application/octet-stream';
+    if (buffer.length > 3 && buffer[0] === 0xFF && buffer[1] === 0xD8 && buffer[2] === 0xFF) {
+      type = 'image/jpeg';
+    } else if (buffer.length > 8 && buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4E && buffer[3] === 0x47) {
+      type = 'image/png';
+    } else if (buffer.length > 3 && buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
+      type = 'image/gif';
+    }
+    res.set('Content-Type', type);
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.set('X-Content-Type-Options', 'nosniff');
+    return res.end(buffer);
+  };
+
+  lookup('asset_registrations', (err, buffer) => {
+    if (err) {
+      console.error('查询资产图片失败:', err);
+      return res.status(500).json({ error: '服务器内部错误' });
+    }
+    if (buffer) {
+      return respond(buffer);
+    }
+    lookup('resalable_assets', (err2, buffer2) => {
+      if (err2) {
+        console.error('查询二次交易资产图片失败:', err2);
+        return res.status(500).json({ error: '服务器内部错误' });
+      }
+      return respond(buffer2);
+    });
+  });
+});
+
 app.get('/api/available-assets', (req, res) => {
   const { industry_raw_name, asset_category, asset_type } = req.query;
 
-  let query = `
-    SELECT
+  const includePictures = req.query.include_pictures !== '0' && req.query.include_pictures !== 'false';
+
+  const selectColumns = `
       asset_name,
       asset_type,
       asset_category,
@@ -2223,7 +2284,6 @@ app.get('/api/available-assets', (req, res) => {
       industry,
       industry_raw,
       industry_raw_name,
-      picture,
       user_id,
       owner_address,
       current_owner_address,
@@ -2232,6 +2292,10 @@ app.get('/api/available-assets', (req, res) => {
       price,
       trade_mode, auction_start_price, auction_end_time,
       auction_current_price, auction_bid_count, auction_status
+      ${includePictures ? ', picture' : ''}
+    `;
+  let query = `
+    SELECT ${selectColumns}
     FROM asset_registrations
     WHERE txperm = 3
       AND (trade_mode <> 'auction' OR ((auction_status IS NULL OR auction_status = 'OPEN') AND auction_end_time > NOW()))
