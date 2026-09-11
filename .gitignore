@@ -55,3 +55,6 @@ mpc_/app/service/mpc/gc_itmac_test_*.txt
 
 # Local screenshots / scratch images
 images/
+
+# Runtime logs
+logs/

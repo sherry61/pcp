@@ -19,10 +19,16 @@ const FormData = require('form-data');
 const { registerFlRoutes, registerHeRoutes, registerPreRoutes } = require('./pcp');
 const { registerMpcRoutes } = require('./mpc');
 const { registerTeeRoutes, createTeeClient } = require('./tee');
+const logger = require('./logger');
+
+logger.patchConsole();
+logger.installProcessHandlers();
+const log = logger.createLogger({ module: 'main' });
 
 
 // ====== 基础实例与常量（确保在后面使用之前就定义好）======
 const app = express();
+app.use(logger.requestLogger());
 const port = process.env.PORT ? Number(process.env.PORT) : 3000;
 const secretKey = process.env.JWT_SECRET || '123456'; // 你原来用到的 JWT 密钥，别漏了
 
@@ -54,6 +60,9 @@ const DIGITAL_CONTRACT_BASE_URL =
 const SUMMARY_API_BASE = 'http://10.112.47.214:8022';
 const DATA_CATALOG_BASE_URL =
   process.env.DATA_CATALOG_BASE_URL || 'http://127.0.0.1:8008';
+// 数据目录发布开关：8008 服务维护期间默认关闭，优先保证上链登记主流程
+// 需要恢复目录发布时，启动时加 DATA_CATALOG_ENABLED=1 即可
+const DATA_CATALOG_ENABLED = process.env.DATA_CATALOG_ENABLED === '1';
 const DATA_CATALOG_ORG_DID =
   process.env.DATA_CATALOG_ORG_DID || 'did:web:data.web';
 const DATA_CATALOG_PLATFORM_NAME =
@@ -1451,7 +1460,12 @@ app.get('/api/get-tps', (req, res) => {
 });
 
 app.listen(port, () => {
-    console.log(`Node.js 后端服务正在运行在 http://10.112.47.214:${port}`);
+    log.info('server listening', {
+        port,
+        pid: process.pid,
+        logFile: logger.currentFile(),
+        logLevel: process.env.LOG_LEVEL || 'info'
+    });
 });
 
 
@@ -1864,7 +1878,7 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
                 trade_mode, auction_start_price, auction_end_time,
                 allow_authorize, allow_supervision, model_type, pc_type,
                 omniprint_fingerprint, omniprint_fingerprint_bits, omniprint_modality, omniprint_source, omniprint_generated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
         `;
 
         const values = [
@@ -5939,6 +5953,15 @@ app.post('/api/datacatalog/publish-asset', async (req, res) => {
     certOrg
   } = req.body || {};
 
+  if (!DATA_CATALOG_ENABLED) {
+    log.info('datacatalog publish skipped (disabled)', { identifier, assetName });
+    return res.status(200).json({
+      success: false,
+      disabled: true,
+      message: '目录发布已临时停用（优先保证上链登记），如需开启请设置 DATA_CATALOG_ENABLED=1'
+    });
+  }
+
   if (!identifier) {
     return res.status(400).json({
       success: false,
@@ -6227,3 +6250,19 @@ async function burnToken(ownerId, tokenId) {
     throw error;
   }
 }
+
+// ====== 统一错误处理（必须放在所有路由之后）======
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not Found', path: req.originalUrl });
+});
+
+app.use((err, req, res, next) => {
+  log.error('unhandled route error', {
+    err,
+    method: req.method,
+    url: req.originalUrl,
+    status: err.status || err.statusCode || 500
+  });
+  if (res.headersSent) return next(err);
+  res.status(err.status || err.statusCode || 500).json({ error: '服务器内部错误' });
+});
