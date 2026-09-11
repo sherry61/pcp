@@ -110,6 +110,7 @@
     <el-table :data="tableData" border style="width: 100%" v-loading="loading" empty-text="暂无数据">
       <el-table-column prop="cert" label="证书名称" />
       <el-table-column prop="organization" label="所属组织" />
+      <el-table-column prop="address" label="证书地址" show-overflow-tooltip />
       <el-table-column prop="createdAt" label="创建时间" />
       <el-table-column prop="expirationAt" label="过期时间" />
     </el-table>
@@ -424,6 +425,7 @@ const fetchUserCertificate = async (userId) => {
       certificates.value = allCertificates.map((item) => {
         const cert = item.cert || "未知证书";
         let organization = item.organization || "未知组织";
+        let address = item.address || "-";
         let createdAt = "未知";
         let expirationAt = "未知";
 
@@ -450,6 +452,7 @@ const fetchUserCertificate = async (userId) => {
         return {
           cert,
           organization,
+          address,
           createdAt,
           expirationAt,
         };
