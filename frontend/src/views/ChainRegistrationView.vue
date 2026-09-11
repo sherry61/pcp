@@ -3205,14 +3205,14 @@ formData.append('trade_location', tradeLocation);
     // 根据上链类型选择不同的接口
     if (chainType === 'divisible') {
       // 可分割的，调用 En-Mint 接口
-      response = await axios.post('http://10.112.47.214:8848/pre/En-Mint', payload, {
+      response = await axios.post('http://10.112.47.214:8009/pre/En-Mint', payload, {
         headers: {
           'Content-Type': 'application/json',
         },
       });
     } else {
       // 不可分割的，调用 Mint 接口
-      response = await axios.post('http://10.112.47.214:8848/pre/Mint', mintPayload, {
+      response = await axios.post('http://10.112.47.214:8009/pre/Mint', mintPayload, {
         headers: {
           'Content-Type': 'application/json',
         },

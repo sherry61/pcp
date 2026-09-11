@@ -6216,7 +6216,7 @@ async function burnToken(ownerId, tokenId) {
   };
 
   try {
-    const response = await axios.post('http://10.112.47.214:8848/pre/BurnToken', params);
+    const response = await axios.post('http://10.112.47.214:8009/pre/BurnToken', params);
     if (response.status === 200) {
       console.log(`代币 ${tokenId} 销毁成功`);
     } else {

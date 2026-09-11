@@ -99,6 +99,27 @@ func main() {
 			Dir:     "/home/super/fqh/mpc_",
 			Port:    "28090",
 		},
+		{
+			Name:    "mint-gosdk",
+			Command: "go",
+			Args:    []string{"run", "main.go"},
+			Dir:     "/home/super/lihuihao/otherwork/mint_service/GoSDK/cmd",
+			Port:    "8009",
+		},
+		{
+			Name:    "hardhat-node",
+			Command: "./node_modules/.bin/hardhat",
+			Args:    []string{"node"},
+			Dir:     "/home/super/std/ethCrossChain/my-hardhat-project",
+			Port:    "8545",
+		},
+		{
+			Name:    "eth-peer",
+			Command: "node",
+			Args:    []string{"server.js"},
+			Dir:     "/home/super/std/ethCrossChain/my-hardhat-project",
+			Port:    "3010",
+		},
 	}
 
 	var wg sync.WaitGroup

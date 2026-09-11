@@ -593,14 +593,14 @@ export default {
     bridgeTokenId: '',
 
     // CB-In 需要
-    bridgeToChainmaker: '',     // CB-In 的 to（示例是 64b6...）
+    bridgeToChainmaker: 'db15ba88c399e2998ebd65e4c127db31b1b37d34', // CB-In 的 to（证书地址，只有它能销毁）
     bridgeCategoryName: 'WH',   // CB-In 的 categoryName
     bridgeMetaSource: 'peer-burn',
     bridgeMetaDesc: 'mint after peer burn',
 
     // CB-Out 需要
     bridgeToEvm: '',            // CB-Out 的 to（示例是 0x...）
-    bridgeOwnerAddress: '',     // CB-Out 的 ownerAddress（示例是 64b6...）
+    bridgeOwnerAddress: 'db15ba88c399e2998ebd65e4c127db31b1b37d34', // CB-Out 的 ownerAddress（必须是证书地址）
 
     bridgeSubmitting: false,
     bridgeLastResp: null,
@@ -811,15 +811,19 @@ if (this.role === 'buyer') {
         console.log('POST /CB-In payload =', payload);
 
         const resp = await axios.post(
-          'http://10.112.47.214:8848/pre/CB-In',
+          'http://10.112.47.214:8009/pre/CB-In',
           payload
         );
 
         this.bridgeLastResp = resp?.data;
-        if (resp.status === 200 && resp.data?.code === 0) {
+        // CB-In/CB-Out 返回是嵌套结构：{ local: {code, message}, peer_txHash }
+        const inBody = resp?.data || {};
+        const inCode = inBody.code ?? inBody.local?.code;
+        const inMsg = inBody.message ?? inBody.local?.message;
+        if (resp.status === 200 && inCode === 0) {
           this.$message?.success?.('✅ 转入成功（CB-In）');
         } else {
-          this.$message?.error?.(`❌ 转入失败：${resp.data?.message || 'unknown error'}`);
+          this.$message?.error?.(`❌ 转入失败：${inMsg || 'unknown error'}`);
         }
 
       } else {
@@ -843,20 +847,37 @@ if (this.role === 'buyer') {
         console.log('POST /CB-Out payload =', payload);
 
         const resp = await axios.post(
-          'http://10.112.47.214:8848/pre/CB-Out',
+          'http://10.112.47.214:8009/pre/CB-Out',
           payload
         );
 
         this.bridgeLastResp = resp?.data;
-        if (resp.status === 200 && resp.data?.code === 0) {
+        // CB-In/CB-Out 返回是嵌套结构：{ local: {code, message}, peer_txHash }
+        const outBody = resp?.data || {};
+        const outCode = outBody.code ?? outBody.local?.code;
+        const outMsg = outBody.message ?? outBody.local?.message;
+        if (resp.status === 200 && outCode === 0) {
           this.$message?.success?.('✅ 转出成功（CB-Out）');
         } else {
-          this.$message?.error?.(`❌ 转出失败：${resp.data?.message || 'unknown error'}`);
+          this.$message?.error?.(`❌ 转出失败：${outMsg || 'unknown error'}`);
         }
       }
     } catch (e) {
       console.error('跨链调配失败:', e);
-      this.$message?.error?.('跨链调配失败：请检查 8848 服务是否正常');
+      const respData = e?.response?.data;
+      if (respData) this.bridgeLastResp = respData;
+      // 后端失败时可能是 {message} 或 {local:{message}}，优先显示具体原因
+      let msg =
+        respData?.message ||
+        respData?.local?.message ||
+        (e?.response ? `HTTP ${e.response.status}` : '网络异常，请检查 8009 服务是否正常');
+      if (String(msg).includes('[code:4]')) {
+        msg +=
+          this.bridgeMode === 'in'
+            ? '（合约执行失败：常见原因是该 tokenId 已在链上存在）'
+            : '（合约执行失败：常见原因是 OwnerAddress 不是该 token 的真实 owner（必须是 db15ba88... 证书地址），或该 tokenId 在链上不存在）';
+      }
+      this.$message?.error?.(`❌ ${this.bridgeMode === 'in' ? '转入' : '转出'}失败：${msg}`);
     } finally {
       this.bridgeSubmitting = false;
     }
@@ -876,9 +897,9 @@ if (this.role === 'buyer') {
     this.bridgeLastResp = null;
     this.bridgeSubmitting = false;
 
-    this.bridgeToChainmaker = '';
+    this.bridgeToChainmaker = 'db15ba88c399e2998ebd65e4c127db31b1b37d34';
     this.bridgeToEvm = '';
-    this.bridgeOwnerAddress = '';
+    this.bridgeOwnerAddress = 'db15ba88c399e2998ebd65e4c127db31b1b37d34';
 
     // 你原来的 UI 字段如果还要保留也行
     this.fromChain = 'Base';
