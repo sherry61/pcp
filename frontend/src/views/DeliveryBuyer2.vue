@@ -438,7 +438,7 @@ import preCrypto from '@/utils/preCrypto'
 import teeApi from '@/utils/teeApi'
 import { generateEcKeyPair, publicKeyPem, decryptEnvelope, importPrivateKeyPem, encryptSm4, decryptSm4, b64 } from '@/utils/teeCrypto'
 
-const API_BASE = 'http://10.112.47.214:3000'
+const API_BASE = 'http://10.112.191.163:3000'
 
 export default {
   name: 'DeliveryBuyer',

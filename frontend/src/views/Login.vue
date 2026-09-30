@@ -83,7 +83,7 @@ export default {
 },
   methods: {
     async fetchPamEntryUrl(token) {
-      const response = await axios.get("http://10.112.47.214:3000/api/pam-entry-url", {
+      const response = await axios.get("http://10.112.191.163:3000/api/pam-entry-url", {
         headers: {
           Authorization: `Bearer ${token}`
         }
@@ -95,7 +95,7 @@ export default {
       this.loading = true; // 启用加载状态
       try {
         // 1. 发送登录请求
-        const response = await axios.post("http://10.112.47.214:3000/api/login", {
+        const response = await axios.post("http://10.112.191.163:3000/api/login", {
           username: this.username,
           password: this.password,
         });
@@ -174,7 +174,7 @@ export default {
     async sendIPToBackend() {
       if (!this.userIP) return; // IP 获取失败则不发送
       try {
-        await axios.post("http://10.112.47.214:8848/pre/Ipaddr", {
+        await axios.post("http://10.112.191.163:8848/pre/Ipaddr", {
           ip: this.userIP,
         });
         console.log("IP 记录成功");

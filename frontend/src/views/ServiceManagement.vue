@@ -127,7 +127,7 @@ import AppSidebar from '@/components/AppSidebar.vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 
-const SERVICE_CONTROL_BASE = process.env.VUE_APP_SERVICE_CONTROL_BASE || 'http://10.112.47.214:8001'
+const SERVICE_CONTROL_BASE = process.env.VUE_APP_SERVICE_CONTROL_BASE || 'http://10.112.191.163:8001'
 const REQUEST_TIMEOUT = 30000
 const ACTION_TIMEOUT = 120000
 const POLL_INTERVAL_MS = 5000
@@ -148,7 +148,7 @@ export default {
           name: '监管模型 API',
           description: '提供账户监管、子图采样、模型推理和 Selected Case 数据接口。',
           unit: 'ada-supervision-model-api.service',
-          endpoint: 'http://10.112.47.214:8000',
+          endpoint: 'http://10.112.191.163:8000',
           statusPath: '/api/service/model/status',
           actionPrefix: '/api/service/model',
           active: false,
@@ -176,7 +176,7 @@ export default {
           name: '目录链后端',
           description: '提供目录链智能合约交互、目录查询和链上数据维护接口。',
           unit: 'ada-catalog-chain-api.service',
-          endpoint: 'http://10.112.47.214:8008',
+          endpoint: 'http://10.112.191.163:8008',
           statusPath: '/api/service/catalog/status',
           actionPrefix: '/api/service/catalog',
           active: false,
@@ -190,7 +190,7 @@ export default {
           name: '敏感数据分类 API',
           description: '提供数字资产分类、分级、RAG 文件分析和 Ollama 模型调用接口。',
           unit: 'ada-sensitive-classifier-api.service',
-          endpoint: 'http://10.112.47.214:8002',
+          endpoint: 'http://10.112.191.163:8002',
           statusPath: '/api/service/classifier/status',
           actionPrefix: '/api/service/classifier',
           active: false,
@@ -204,7 +204,7 @@ export default {
           name: '资产估值 API',
           description: '保存和查询资产估值记录，并连接估值业务数据库。',
           unit: 'ada-valuation-api.service',
-          endpoint: 'http://10.112.47.214:3001',
+          endpoint: 'http://10.112.191.163:3001',
           statusPath: '/api/service/valuation/status',
           actionPrefix: '/api/service/valuation',
           active: false,

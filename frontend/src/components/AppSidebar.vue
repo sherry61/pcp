@@ -145,7 +145,7 @@ export default {
         console.log('当前登录用户名:', this.username);
 
         // 请求用户ID
-        axios.post('http://10.112.47.214:3000/api/get-user-id', { username: this.username })
+        axios.post('http://10.112.191.163:3000/api/get-user-id', { username: this.username })
           .then(response => {
             if (response.status === 200 && response.data.id) {
               this.userId = response.data.id.toString();

@@ -143,7 +143,7 @@ export default {
     console.log('真正发送给后端的 payload →', payload)
     try {
       const response = await axios.post(
-        'http://10.112.47.214:8848/pre/EvaluateValue',
+        'http://10.112.191.163:8848/pre/EvaluateValue',
         payload,
         { headers: { 'Content-Type': 'application/json' } }
       )

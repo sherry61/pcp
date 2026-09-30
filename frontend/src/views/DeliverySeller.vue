@@ -559,7 +559,7 @@ async getContractKey(asset,publicKey){
  try{
 
   const response=await axios.post(
-   'http://10.112.47.214:3000/api/delivery/key/contract',
+   'http://10.112.191.163:3000/api/delivery/key/contract',
    {
     transactionId:
       asset.transaction_id,
@@ -645,7 +645,7 @@ async getDataKey(asset,publicKey){
 
   const response=
    await axios.post(
-   'http://10.112.47.214:3000/api/delivery/key/data',
+   'http://10.112.191.163:3000/api/delivery/key/data',
    {
     transactionId:asset.transaction_id,
     ownerType:'seller',
@@ -693,7 +693,7 @@ async getDataKey(asset,publicKey){
  this.deliveryFlow.steps[4].status='running';
  try{
   const response=await axios.post(
-   'http://10.112.47.214:3000/api/delivery/file/upload',
+   'http://10.112.191.163:3000/api/delivery/file/upload',
    {
     transactionId:asset.transaction_id,
     fileName:'data.csv',
@@ -835,7 +835,7 @@ async uploadDataFile(asset,encryptedFile){
 this.deliveryFlow.steps[4].status='running';
 try{
 const response=await axios.post(
-'http://10.112.47.214:3000/api/delivery/file/upload',
+'http://10.112.191.163:3000/api/delivery/file/upload',
 {
 transactionId:asset.transaction_id,
 fileName:encryptedFile.fileName||'data.bin',
@@ -1027,7 +1027,7 @@ key
       if (!token) return
       const payload = this.parseJwt(token)
       this.username = decodeURIComponent(payload.username)
-      const r = await axios.post('http://10.112.47.214:3000/api/get-user-id', { username: this.username })
+      const r = await axios.post('http://10.112.191.163:3000/api/get-user-id', { username: this.username })
       this.userId = String(r.data.id || '')
     },
 
@@ -1037,12 +1037,12 @@ key
         const transactionId = transaction.transaction_id;
         if (!transactionId) throw new Error('缺少 transaction_id');
 
-        const txDetailRes = await axios.get(`http://10.112.47.214:3000/api/get-transaction-detail/${transactionId}`);
+        const txDetailRes = await axios.get(`http://10.112.191.163:3000/api/get-transaction-detail/${transactionId}`);
         const tx = txDetailRes?.data?.transaction;
         if (!tx) throw new Error('未获取到交易详情');
 
         const assetId = tx.asset_id || transaction.file_hash;
-        const assetRes = await axios.get(`http://10.112.47.214:3000/api/asset/${assetId}`);
+        const assetRes = await axios.get(`http://10.112.191.163:3000/api/asset/${assetId}`);
         const assetInfo = assetRes?.data || {};
 
         const ops = (tx.quality || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -1140,7 +1140,7 @@ this.$message.error(e.message||'下载失败');
         const contractObj = await this.generateContractInfo(asset);
         if (!contractObj) throw new Error('生成合约信息失败');
 
-        const verifyRes = await axios.post('http://10.112.47.214:3000/api/vm/verify-contract', {
+        const verifyRes = await axios.post('http://10.112.191.163:3000/api/vm/verify-contract', {
           vmId: this.activeVmId,
           contract: contractObj
         });
@@ -1170,7 +1170,7 @@ this.$message.error(e.message||'下载失败');
   if (!asset.selectedFile) return this.$message?.error('请选择要上传的文件');
 
   const traceId = `upl_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`;
-  const base = 'http://10.112.47.214:3000';
+  const base = 'http://10.112.191.163:3000';
 
   const log = (...args) => console.log(`[startAssetUpload][${traceId}]`, ...args);
   const logErr = (...args) => console.error(`[startAssetUpload][${traceId}]`, ...args);
@@ -1373,7 +1373,7 @@ if (contractObj.transaction_id) formData.append('transactionId', contractObj.tra
           asset.deliveryConfirmMsg = '';
           try {
             const r = await axios.get(
-              `http://10.112.47.214:3000/api/delivery/seller/request-status/${asset.transaction_id}`
+              `http://10.112.191.163:3000/api/delivery/seller/request-status/${asset.transaction_id}`
             );
             // 约定：{ success:true, requested:true/false, status:'pending|approved|...' }
             const requested = !!r?.data?.requested;
@@ -1398,7 +1398,7 @@ if (contractObj.transaction_id) formData.append('transactionId', contractObj.tra
       asset.deliveryConfirmMsg = '';
 
       try {
-        const r = await axios.post('http://10.112.47.214:3000/api/delivery/seller/confirm', {
+        const r = await axios.post('http://10.112.191.163:3000/api/delivery/seller/confirm', {
           transactionId: asset.transaction_id,
           sellerAddress: asset.seller_address,
         });
@@ -1434,7 +1434,7 @@ try{
 
 const response = await axios.post(
 
-'http://10.112.47.214:3000/api/delivery/secure-confirm',
+'http://10.112.191.163:3000/api/delivery/secure-confirm',
 
 {
  transactionId:
@@ -1522,14 +1522,14 @@ asset.confirmingDelivery=false;
         const certLists = [];
 
         try {
-          const org1Res = await axios.post('http://10.112.47.214:3000/api/get-certificates', { userId: this.userId });
+          const org1Res = await axios.post('http://10.112.191.163:3000/api/get-certificates', { userId: this.userId });
           if (org1Res.status === 200 && Array.isArray(org1Res.data.certificates)) {
             certLists.push(...org1Res.data.certificates.map(cert => ({ org: 'wx-org1.chainmaker.org', cert: cert.cert })));
           }
         } catch (err) { console.error('获取 org1 证书失败:', err); }
 
         try {
-          const org2Res = await axios.post('http://10.112.47.214:3000/api/get-certificates2', { userId: this.userId });
+          const org2Res = await axios.post('http://10.112.191.163:3000/api/get-certificates2', { userId: this.userId });
           if (org2Res.status === 200 && Array.isArray(org2Res.data.certificates)) {
             certLists.push(...org2Res.data.certificates.map(cert => ({ org: 'wx-org2.chainmaker.org', cert: cert.cert })));
           }
@@ -1540,11 +1540,11 @@ asset.confirmingDelivery=false;
         for (const { org, cert } of certLists) {
           try {
             const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${cert}/${cert}.sign.crt`;
-            const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', { cert_path: certPath });
+            const addrRes = await axios.post('http://10.112.191.163:9092/cert-to-addr', { cert_path: certPath });
             const certAddr = addrRes?.data?.ethereum?.address;
             if (!certAddr) continue;
 
-            const txRes = await axios.get(`http://10.112.47.214:3000/api/seller-transaction-status/${certAddr}`);
+            const txRes = await axios.get(`http://10.112.191.163:3000/api/seller-transaction-status/${certAddr}`);
             if (txRes.status !== 200 || !Array.isArray(txRes.data.transactions)) continue;
 
             const formatted = txRes.data.transactions

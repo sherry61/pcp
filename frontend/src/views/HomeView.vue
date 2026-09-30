@@ -136,7 +136,7 @@ import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import LineChart from '@/components/LineChart.vue'
 import axios from 'axios'
-const MODEL_API_BASE = process.env.VUE_APP_MODEL_API_BASE || 'http://10.112.47.214:8000'
+const MODEL_API_BASE = process.env.VUE_APP_MODEL_API_BASE || 'http://10.112.191.163:8000'
 export default {
   name: 'HomeView',
   components: {
@@ -181,7 +181,7 @@ beforeUnmount() {
 
   async fetchIndustryStats() {
   try {
-    const response = await axios.get('http://10.112.47.214:3000/api/industry-transaction-stats');
+    const response = await axios.get('http://10.112.191.163:3000/api/industry-transaction-stats');
 
     if (response.status === 200 && response.data?.success) {
       this.industryStats = response.data.data || [];
@@ -196,7 +196,7 @@ beforeUnmount() {
   this.tpsLoading = true;
 
   try {
-    const response = await axios.get('http://10.112.47.214:3000/api/get-tps');
+    const response = await axios.get('http://10.112.191.163:3000/api/get-tps');
 
     if (response.status === 200 && response.data?.success) {
       this.currentTPS =
@@ -216,7 +216,7 @@ beforeUnmount() {
 
   async fetchTodayTransaction() {
     try {
-      const response = await axios.get('http://10.112.47.214:3000/api/get-today-transaction-stats');
+      const response = await axios.get('http://10.112.191.163:3000/api/get-today-transaction-stats');
       if (response.status === 200 && response.data) {
         this.todayTransactionVolume = response.data.today_transaction_count || 0;
         
@@ -234,7 +234,7 @@ beforeUnmount() {
 
   async fetchTotalTransaction() {
     try {
-      const response = await axios.get('http://10.112.47.214:3000/api/get-total-transaction-stats');
+      const response = await axios.get('http://10.112.191.163:3000/api/get-total-transaction-stats');
       if (response.status === 200 && response.data) {
         this.totalTransactionVolume = response.data.total_transaction_count || 0;
       }
@@ -263,7 +263,7 @@ beforeUnmount() {
 
   async fetchTransactionHistory() {
     try {
-      const response = await axios.get('http://10.112.47.214:3000/api/get-transaction-history');
+      const response = await axios.get('http://10.112.191.163:3000/api/get-transaction-history');
       if (response.status === 200 && response.data.transaction_history) {
         this.transactionHistory = response.data.transaction_history;
         console.log('历史交易数据:', this.transactionHistory);

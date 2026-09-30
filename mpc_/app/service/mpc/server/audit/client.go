@@ -24,7 +24,7 @@ type AuditClient struct {
 // NewAuditClient 创建审计客户端
 func NewAuditClient(baseURL string) *AuditClient {
 	if baseURL == "" {
-		baseURL = "http://10.112.47.214:8080"
+		baseURL = "http://10.112.191.163:8080"
 	}
 
 	return &AuditClient{

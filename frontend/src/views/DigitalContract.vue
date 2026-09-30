@@ -575,7 +575,7 @@ export default {
   methods: {
     async fetchUserId(username) {
       try {
-        const response = await axios.post('http://10.112.47.214:3000/api/get-user-id', { username });
+        const response = await axios.post('http://10.112.191.163:3000/api/get-user-id', { username });
         if (response.status === 200 && response.data.id) {
           this.userId = response.data.id;
         }
@@ -598,7 +598,7 @@ export default {
       try {
         // 这里应该调用后端API获取当前用户的合约列表
         // 暂时使用模拟数据
-        const response = await axios.get(`http://10.112.47.214:3000/api/user-contracts/${this.userId}`);
+        const response = await axios.get(`http://10.112.191.163:3000/api/user-contracts/${this.userId}`);
         if (response.status === 200) {
           this.contracts = response.data.contracts || this.getMockContracts();
           this.filterContracts();
@@ -619,7 +619,7 @@ export default {
     // 获取可用数据产品
     async fetchAvailableAssets() {
       try {
-        const response = await axios.get('http://10.112.47.214:3000/api/available-assets');
+        const response = await axios.get('http://10.112.191.163:3000/api/available-assets');
         this.availableAssets = response.data || [];
       } catch (error) {
         console.error('获取可用数据产品失败:', error);
@@ -630,7 +630,7 @@ export default {
     // 获取可用签署方
     async fetchAvailableParties() {
       try {
-        const response = await axios.get(`http://10.112.47.214:3000/api/available-parties/${this.userId}`);
+        const response = await axios.get(`http://10.112.191.163:3000/api/available-parties/${this.userId}`);
         this.availableParties = response.data || [];
       } catch (error) {
         console.error('获取可用签署方失败:', error);
@@ -689,7 +689,7 @@ export default {
         };
         
         // 调用后端API创建合约
-        const response = await axios.post('http://10.112.47.214:3000/api/create-contract', contractData);
+        const response = await axios.post('http://10.112.191.163:3000/api/create-contract', contractData);
         
         if (response.status === 200 && response.data.success) {
           this.$message.success('合约创建成功');
@@ -782,7 +782,7 @@ export default {
         };
         
         // 调用后端API提交审核
-        const response = await axios.post('http://10.112.47.214:3000/api/submit-contract-review', reviewData);
+        const response = await axios.post('http://10.112.191.163:3000/api/submit-contract-review', reviewData);
         
         if (response.status === 200 && response.data.success) {
           this.$message.success('审核提交成功');
@@ -812,7 +812,7 @@ export default {
     async executeContract(contract) {
       try {
         // 调用后端API履行合约
-        const response = await axios.post('http://10.112.47.214:3000/api/execute-contract', {
+        const response = await axios.post('http://10.112.191.163:3000/api/execute-contract', {
           contractId: contract.contractId,
           userId: this.userId
         });
@@ -838,7 +838,7 @@ export default {
           type: 'warning'
         }).then(async () => {
           // 调用后端API终止合约
-          const response = await axios.post('http://10.112.47.214:3000/api/terminate-contract', {
+          const response = await axios.post('http://10.112.191.163:3000/api/terminate-contract', {
             contractId: contract.contractId,
             userId: this.userId
           });

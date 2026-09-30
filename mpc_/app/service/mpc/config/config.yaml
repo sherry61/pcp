@@ -4,7 +4,7 @@ server:
 
 # 审计服务配置
 audit:
-  base_url: "http://10.112.47.214:8080"
+  base_url: "http://10.112.191.163:8080"
   enabled: true
 
 chainmaker:
@@ -12,7 +12,7 @@ chainmaker:
   # 组织ID  
   org_id: "wx-org1.chainmaker.org"
   # 节点地址
-  node_addr: "10.112.47.214:12301"
+  node_addr: "10.112.191.163:12301"
   # TLS配置
   tls:
     hostname: "chainmaker.org"

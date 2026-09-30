@@ -974,7 +974,7 @@ certAddr: '',                     // 单个证书对应地址
 
       this.valuationSaving = true;
       try {
-        const response = await axios.post('http://10.112.47.214:3001/api/asset-valuations', payload);
+        const response = await axios.post('http://10.112.191.163:3001/api/asset-valuations', payload);
         if (response.data && response.data.code === 0) {
           const recordNo = response.data?.data?.recordNo;
           this.$message.success(recordNo ? `保存成功，记录号：${recordNo}` : '保存成功');
@@ -1608,7 +1608,7 @@ certAddr: '',                     // 单个证书对应地址
 },
     async setDynamicCert() {
       try {
-        const response = await axios.post('http://10.112.47.214:8848/pre/DynamicCertConfig', {
+        const response = await axios.post('http://10.112.191.163:8848/pre/DynamicCertConfig', {
           clientName: 'client1',
           orgName: 'wx-org1.chainmaker.org'
         });
@@ -1620,7 +1620,7 @@ certAddr: '',                     // 单个证书对应地址
     },
     async setTransactionLocation(location) {
       try {
-        const response = await axios.post('http://10.112.47.214:8848/pre/SetAllowedLocations', {
+        const response = await axios.post('http://10.112.191.163:8848/pre/SetAllowedLocations', {
           allowedLocations: [location]
         });
         if (response.status === 200 && response.data.code === 0) {
@@ -1670,7 +1670,7 @@ isIndivisible(industry) {
       console.log('当前登录用户名:', this.username);
 
       // 请求用户ID
-      axios.post('http://10.112.47.214:3000/api/get-user-id', { username: this.username })
+      axios.post('http://10.112.191.163:3000/api/get-user-id', { username: this.username })
         .then(response => {
           if (response.status === 200 && response.data.id) {
             this.userId = response.data.id.toString(); // 确保 userId 转为字符串
@@ -1740,8 +1740,8 @@ isIndivisible(industry) {
         ? { owner: owner, to: agentAddr, tokenId: asset.fileHash, isApproval: 'false' }
         : { to: agentAddr, amount: '0' }; // 可分割资产按额度归零处理
       const apiUrl = indivisible
-        ? 'http://10.112.47.214:8848/pre/SetApproval' // 不可分割资产
-        : 'http://10.112.47.214:8848/pre/En-Approve'; // 可分割资产
+        ? 'http://10.112.191.163:8848/pre/SetApproval' // 不可分割资产
+        : 'http://10.112.191.163:8848/pre/En-Approve'; // 可分割资产
 
       try {
         const response = await axios.post(apiUrl, payload);
@@ -1749,7 +1749,7 @@ isIndivisible(industry) {
           this.errorMessage = '链上取消授权失败：' + (response.data.message || '未知错误');
           return;
         }
-        await axios.post('http://10.112.47.214:3000/api/revoke-agent', {
+        await axios.post('http://10.112.191.163:3000/api/revoke-agent', {
           file_hash: asset.fileHash
         });
         asset.isProxied = 0;
@@ -1784,7 +1784,7 @@ isIndivisible(industry) {
         agent_addr: this.authorizationData.targetAddress,  // 用户输入的目标地址
       };
 
-      axios.post('http://10.112.47.214:3000/api/authorize', payload)
+      axios.post('http://10.112.191.163:3000/api/authorize', payload)
         .then(response => {
           console.log(response.data.message);  // 成功消息
           this.showAuthorizationSuccessModal = true;
@@ -1820,10 +1820,10 @@ async fetchCertificates() {
   try {
     // 同时请求两类证书（不传 org 字段）
     const [org1Res, org2Res] = await Promise.all([
-      axios.post('http://10.112.47.214:3000/api/get-certificates', {
+      axios.post('http://10.112.191.163:3000/api/get-certificates', {
         userId: this.userId
       }),
-      axios.post('http://10.112.47.214:3000/api/get-certificates2', {
+      axios.post('http://10.112.191.163:3000/api/get-certificates2', {
         userId: this.userId
       })
     ]);
@@ -1929,7 +1929,7 @@ async fetchPurchasedAssets() {
 
     // 4. 根据有效地址查询购买资产
     const response = await axios.post(
-      'http://10.112.47.214:3000/api/get-purchased-assets',
+      'http://10.112.191.163:3000/api/get-purchased-assets',
       {
         addresses
       }
@@ -1988,7 +1988,7 @@ updatePurchasedAssetsPagination() {
 
     async getOwnerOfAsset(tokenId) {
     try {
-      const response = await axios.post('http://10.112.47.214:8848/pre/OwnerOf', {
+      const response = await axios.post('http://10.112.191.163:8848/pre/OwnerOf', {
         tokenId: tokenId
       });
 
@@ -2074,15 +2074,15 @@ updatePurchasedAssetsPagination() {
 
       // 判断资产是可分割的还是不可分割的，选择正确的调用接口
       const apiUrl = this.isIndivisible(asset.industry)
-        ? 'http://10.112.47.214:8848/pre/SetApproval' // 不可分割资产
-        : 'http://10.112.47.214:8848/pre/En-Approve'; // 可分割资产
+        ? 'http://10.112.191.163:8848/pre/SetApproval' // 不可分割资产
+        : 'http://10.112.191.163:8848/pre/En-Approve'; // 可分割资产
 
       try {
         const response = await axios.post(apiUrl, payload);
 
         if (response.status === 200 && (response.data.code === 0 || response.data.code === '0')) {
           console.log('授权成功:', response);
-          await axios.post('http://10.112.47.214:3000/api/update-agent', {
+          await axios.post('http://10.112.191.163:3000/api/update-agent', {
             file_hash: asset.fileHash,
             agent_addr: this.authorizationData.targetAddress,
             agent_count: authorizationQuantity
@@ -2123,7 +2123,7 @@ updatePurchasedAssetsPagination() {
 
     fetchAssetDataFromChangan() {
       this.isLoading = true;
-      axios.post('http://10.112.47.214:8848/pre/QueryAsset')
+      axios.post('http://10.112.191.163:8848/pre/QueryAsset')
         .then(response => {
           console.log('长安链返回原始数据:', response.data);
           const rawAssets = response.data.result;
@@ -2196,7 +2196,7 @@ updatePurchasedAssetsPagination() {
         this.isAdmin = false;
       }
       // 获取资产数据
-      axios.get(`http://10.112.47.214:3000/api/get-asset2`)
+      axios.get(`http://10.112.191.163:3000/api/get-asset2`)
         .then(response => {
           this.isLoading = true;
           const groupedAssets = response.data.reduce((acc, item) => {
@@ -2378,7 +2378,7 @@ updatePurchasedAssetsPagination() {
 
   // 2. 调用后端接口保存交易时间
   try {
-    const response = await axios.post('http://10.112.47.214:8848/pre/SetTradingTime', {
+    const response = await axios.post('http://10.112.191.163:8848/pre/SetTradingTime', {
       startTime: startTimeStamp,
       endTime: endTimeStamp
     });
@@ -2447,7 +2447,7 @@ async confirmEdit() {
         return;
       }
 
-      const response = await axios.post('http://10.112.47.214:8848/pre/SetTradingTime', {
+      const response = await axios.post('http://10.112.191.163:8848/pre/SetTradingTime', {
         startTime: startTimeStamp,
         endTime: endTimeStamp
       });
@@ -2494,7 +2494,7 @@ async confirmEdit() {
         fileHash: this.editAsset.fileHash,  // 确保哈希值不变
       };
       console.log('参数', payload);
-      axios.post('http://10.112.47.214:3000/api/update-asset', payload)
+      axios.post('http://10.112.191.163:3000/api/update-asset', payload)
         .then(response => {
           if (response.status === 200) {
             this.showSuccessModal = true;
@@ -2535,7 +2535,7 @@ async confirmEdit() {
       console.log('请求体:', payload);
 
       try {
-        const response = await axios.post('http://10.112.47.214:8848/pre/IssueAsset', payload, {
+        const response = await axios.post('http://10.112.191.163:8848/pre/IssueAsset', payload, {
           headers: {
             'Content-Type': 'application/json',
           },

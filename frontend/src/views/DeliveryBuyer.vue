@@ -468,7 +468,7 @@ async getWeightKey() {
     }
 
     const res = await axios.post(
-      'http://10.112.47.214:3000/api/delivery/key/data',
+      'http://10.112.191.163:3000/api/delivery/key/data',
       {
         transactionId: this.weightKeyForm.transactionId,
         ownerType: 'buyer',
@@ -685,7 +685,7 @@ chooseWeightFile(row) {
   reader.onload=async()=>{
     const data=JSON.parse(reader.result);
     try{
-      const res=await axios.post('http://10.112.47.214:3000/api/delivery/file/upload',{
+      const res=await axios.post('http://10.112.191.163:3000/api/delivery/file/upload',{
       transactionId:this.pendingWeightUpload.row.transaction_id,
       fileName:'weight.csv',
       fileType:'weight',
@@ -752,7 +752,7 @@ async uploadWeightFile() {
 
     const res = await axios.post(
 
-      'http://10.112.47.214:3000/api/delivery/file/upload',
+      'http://10.112.191.163:3000/api/delivery/file/upload',
 
       {
 
@@ -857,7 +857,7 @@ async uploadWeightFile() {
   // ✅ 没有 history：现场去卖家交易接口补齐
   try {
     const r = await axios.get(
-      `http://10.112.47.214:3000/api/seller-transaction-status/${asset.seller_address}`
+      `http://10.112.191.163:3000/api/seller-transaction-status/${asset.seller_address}`
     );
     const txs = r?.data?.transactions || [];
     const matched = txs.find(t => String(t.transaction_id) === tid);
@@ -925,12 +925,12 @@ async uploadWeightFile() {
         const transactionId = transaction.transaction_id;
         if (!transactionId) throw new Error('缺少 transaction_id');
 
-        const txDetailRes = await axios.get(`http://10.112.47.214:3000/api/get-transaction-detail/${transactionId}`);
+        const txDetailRes = await axios.get(`http://10.112.191.163:3000/api/get-transaction-detail/${transactionId}`);
         const tx = txDetailRes?.data?.transaction;
         if (!tx) throw new Error('未获取到交易详情');
 
         const assetId = tx.asset_id || transaction.file_hash;
-        const assetRes = await axios.get(`http://10.112.47.214:3000/api/asset/${assetId}`);
+        const assetRes = await axios.get(`http://10.112.191.163:3000/api/asset/${assetId}`);
         const assetInfo = assetRes?.data || {};
 
         const ops = (tx.quality || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -1016,7 +1016,7 @@ async uploadWeightFile() {
       const payload = this.parseJwt(token);
       this.username = decodeURIComponent(payload.username);
 
-      const r = await axios.post('http://10.112.47.214:3000/api/get-user-id', {
+      const r = await axios.post('http://10.112.191.163:3000/api/get-user-id', {
         username: this.username
       });
       this.userId = String(r.data.id || '');
@@ -1031,14 +1031,14 @@ async uploadWeightFile() {
 
       for (const { org, api } of orgs) {
         try {
-          const r = await axios.post(`http://10.112.47.214:3000/api/${api}`, {
+          const r = await axios.post(`http://10.112.191.163:3000/api/${api}`, {
             userId: this.userId
           });
           const certs = r.data.certificates || [];
 
           for (const c of certs) {
             const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${c.cert}/${c.cert}.sign.crt`;
-            const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
+            const addrRes = await axios.post('http://10.112.191.163:9092/cert-to-addr', {
               cert_path: certPath
             });
             const addr = addrRes?.data?.ethereum?.address;
@@ -1063,7 +1063,7 @@ async uploadWeightFile() {
         const allTxs = [];
         for (const addr of buyerAddresses) {
           const txRes = await axios.get(
-            `http://10.112.47.214:3000/api/buyer-transaction-status/${addr}`
+            `http://10.112.191.163:3000/api/buyer-transaction-status/${addr}`
           );
           const txs = txRes?.data?.transactions || [];
 
@@ -1095,7 +1095,7 @@ async uploadWeightFile() {
         const eligibleMap = new Map();
         for (const addr of buyerAddresses) {
           try {
-            const r = await axios.get('http://10.112.47.214:3000/api/vm/export/eligible', {
+            const r = await axios.get('http://10.112.191.163:3000/api/vm/export/eligible', {
               params: {
                 vmId: this.activeVmId,
                 buyerAddress: addr
@@ -1123,7 +1123,7 @@ await Promise.all(
     try {
       const tid = String(tx.transaction_id);
       const detailRes = await axios.get(
-        `http://10.112.47.214:3000/api/get-transaction-detail/${tid}`
+        `http://10.112.191.163:3000/api/get-transaction-detail/${tid}`
       );
       const t = detailRes?.data?.transaction;
       if (!t) return;
@@ -1231,7 +1231,7 @@ await Promise.all(
 
 
       const txRes = await axios.get(
-        `http://10.112.47.214:3000/api/buyer-transaction-status/${addr}`
+        `http://10.112.191.163:3000/api/buyer-transaction-status/${addr}`
       );
 
 
@@ -1309,7 +1309,7 @@ await Promise.all(
 
 
         const r = await axios.get(
-          'http://10.112.47.214:3000/api/vm/export/eligible',
+          'http://10.112.191.163:3000/api/vm/export/eligible',
           {
             params:{
               vmId:this.activeVmId,
@@ -1394,7 +1394,7 @@ await Promise.all(
           const detailRes =
             await axios.get(
 
-              `http://10.112.47.214:3000/api/get-transaction-detail/${tid}`
+              `http://10.112.191.163:3000/api/get-transaction-detail/${tid}`
 
             );
 
@@ -1551,7 +1551,7 @@ await Promise.all(
 
           const r = await axios.get(
 
-            `http://10.112.47.214:3000/api/delivery/seller/request-status/${tid}`
+            `http://10.112.191.163:3000/api/delivery/seller/request-status/${tid}`
 
           );
 
@@ -1794,7 +1794,7 @@ async submitRequestDelivery(form) {
     const response = String(this.currentRowRef?.pc_type || '').toUpperCase() === 'TEE'
       ? { data: await teeApi.request({ transactionId: String(form.transaction_id), buyerAddress: form.buyer_address, sellerAddress: form.seller_address, assetId: this.currentRowRef.asset_id, vmCpu: 8, vmMemoryMb: 4096 }) }
       : await axios.post(
-      'http://10.112.47.214:3000/api/delivery/request-secure',
+      'http://10.112.191.163:3000/api/delivery/request-secure',
       {
         transactionId: String(form.transaction_id),
 
@@ -1889,7 +1889,7 @@ async submitRequestDelivery(form) {
           transaction_id: item.transaction_id
         };
 
-        const response = await axios.post('http://10.112.47.214:3000/api/vm/export', payload, {
+        const response = await axios.post('http://10.112.191.163:3000/api/vm/export', payload, {
           responseType: 'blob',
           timeout: 60000
         });
@@ -1903,7 +1903,7 @@ async submitRequestDelivery(form) {
 
         // 记录一次交付
         try {
-          await axios.post('http://10.112.47.214:3000/api/delivery/record', {
+          await axios.post('http://10.112.191.163:3000/api/delivery/record', {
             transactionId: item.transaction_id
           });
         } catch (e) {

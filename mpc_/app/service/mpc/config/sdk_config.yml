@@ -22,7 +22,7 @@ chain_client:
 
   nodes:
     - # 节点地址
-      node_addr: "10.112.47.214:12301"
+      node_addr: "10.112.191.163:12301"
       # 节点连接数
       conn_cnt: 10
       # RPC连接是否启用双向TLS认证

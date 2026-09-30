@@ -1201,7 +1201,7 @@ gradeRationale: '',
       valuationHasErrors: false,
       valuationCalculating: false,
       valuationSaving: false,
-      valuationModelApiUrl: (typeof window !== 'undefined' && window.__VALUATION_MODEL_API_URL__) || 'http://10.112.47.214:8039/predict',
+      valuationModelApiUrl: (typeof window !== 'undefined' && window.__VALUATION_MODEL_API_URL__) || 'http://10.112.191.163:8039/predict',
       valuationResultDetail: null,
       lastValuationInputSnapshot: null,
       showValuationModal: false,
@@ -1494,7 +1494,7 @@ buildErrorResult(methodName, errors) {
 
       this.valuationSaving = true;
       try {
-        const response = await axios.post('http://10.112.47.214:3001/api/asset-valuations', payload);
+        const response = await axios.post('http://10.112.191.163:3001/api/asset-valuations', payload);
         if (response.data && response.data.code === 0) {
           const recordNo = response.data?.data?.recordNo;
           this.$message.success(recordNo ? `保存成功，记录号：${recordNo}` : '保存成功');
@@ -2104,7 +2104,7 @@ async generateOmniPrint() {
     fd.append('assetId', this.form.assetName || `asset-${Date.now()}`);
 
     const res = await axios.post(
-      'http://10.112.47.214:3000/api/omniprint/fingerprint',
+      'http://10.112.191.163:3000/api/omniprint/fingerprint',
       fd,
       {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -2154,7 +2154,7 @@ async checkOmniPrintSimilarity() {
   try {
     await this.generateSelectedIdentifier();
     if (!this.form.omniprintFingerprint) throw new Error('未获取到原始 OmniPrint 指纹');
-    const { data } = await axios.post('http://10.112.47.214:3000/api/omniprint/similarity-check', {
+    const { data } = await axios.post('http://10.112.191.163:3000/api/omniprint/similarity-check', {
       fingerprint: this.form.omniprintFingerprint,
       fingerprint_bits: this.form.fingerprintBits,
       modality: this.form.omniprintModality
@@ -2279,7 +2279,7 @@ async generateSelectedIdentifier() {
       fd.append('assetId', this.form.assetName || `asset-${Date.now()}`);
 
       const res = await axios.post(
-        'http://10.112.47.214:3000/api/omniprint/fingerprint',
+        'http://10.112.191.163:3000/api/omniprint/fingerprint',
         fd,
         {
           headers: { 'Content-Type': 'multipart/form-data' },
@@ -2342,7 +2342,7 @@ async fetchDefaultRegisterCertInfo() {
   }
 
   const res = await axios.get(
-    'http://10.112.47.214:3000/api/default-register-cert-info',
+    'http://10.112.191.163:3000/api/default-register-cert-info',
     {
       params: {
         userId: this.userId
@@ -2366,7 +2366,7 @@ async publishToDataCatalog() {
 
   try {
     const response = await axios.post(
-      'http://10.112.47.214:3000/api/datacatalog/publish-asset',
+      'http://10.112.191.163:3000/api/datacatalog/publish-asset',
       {
         identifier: this.hashValue,
         assetName: this.form.assetName,
@@ -2425,13 +2425,13 @@ getCatalogPublishMessage() {
         if (this.isDivisibleIndustry(industry)) {
           // 可分割资产，调用get-certificates2接口
           console.log("调用 get-certificates2 接口");
-          response = await axios.post('http://10.112.47.214:3000/api/get-certificates2', {
+          response = await axios.post('http://10.112.191.163:3000/api/get-certificates2', {
             userId: this.userId,
           });
         } else {
           // 不可分割资产，调用get-certificates接口
           console.log("调用 get-certificates 接口");
-          response = await axios.post('http://10.112.47.214:3000/api/get-certificates', {
+          response = await axios.post('http://10.112.191.163:3000/api/get-certificates', {
             userId: this.userId,
           });
         }
@@ -2500,7 +2500,7 @@ getCatalogPublishMessage() {
 
     async setDynamicCert() {
   try {
-    const response = await axios.post('http://10.112.47.214:8848/pre/DynamicCertConfig', {
+    const response = await axios.post('http://10.112.191.163:8848/pre/DynamicCertConfig', {
       clientName: 'client1',
       orgName: 'wx-org1.chainmaker.org'
     });
@@ -2575,7 +2575,7 @@ getCatalogPublishMessage() {
     },
     async fetchUserId(username) {
       try {
-        const response = await axios.post('http://10.112.47.214:3000/api/get-user-id', { username });
+        const response = await axios.post('http://10.112.191.163:3000/api/get-user-id', { username });
         if (response.status === 200 && response.data.id) {
           this.userId = response.data.id;  // 成功获取 user_id
           console.log('获取的用户ID:', this.userId);
@@ -2802,7 +2802,7 @@ async confirmForm() {
     }
 
     const response = await axios.post(
-      `http://10.112.47.214:3000${endpoint}`,
+      `http://10.112.191.163:3000${endpoint}`,
       {
         source_file: this.summarySourceFile,
         records: this.summaryRecords,
@@ -2896,7 +2896,7 @@ async analyzeAssetCombined() {
     }
 
     const response = await axios.post(
-      `http://10.112.47.214:3000${endpoint}`,
+      `http://10.112.191.163:3000${endpoint}`,
       {
         model: 'qwen3:8b',
         embedding_model: 'bge-m3',
@@ -2985,7 +2985,7 @@ async gradeAssetLevel() {
     formData.append('input_file', this.form.file);
 
     const response = await axios.post(
-      'http://10.112.47.214:3000/api/asset-analysis/grade',
+      'http://10.112.191.163:3000/api/asset-analysis/grade',
       formData,
       {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -3094,7 +3094,7 @@ formData.append('trade_location', tradeLocation);
 
 
       try {
-        const response = await axios.post('http://10.112.47.214:3000/api/save-asset2', formData, {
+        const response = await axios.post('http://10.112.191.163:3000/api/save-asset2', formData, {
           headers: {
             'Content-Type': 'multipart/form-data',
           },
@@ -3205,14 +3205,14 @@ formData.append('trade_location', tradeLocation);
     // 根据上链类型选择不同的接口
     if (chainType === 'divisible') {
       // 可分割的，调用 En-Mint 接口
-      response = await axios.post('http://10.112.47.214:8009/pre/En-Mint', payload, {
+      response = await axios.post('http://10.112.191.163:8009/pre/En-Mint', payload, {
         headers: {
           'Content-Type': 'application/json',
         },
       });
     } else {
       // 不可分割的，调用 Mint 接口
-      response = await axios.post('http://10.112.47.214:8009/pre/Mint', mintPayload, {
+      response = await axios.post('http://10.112.191.163:8009/pre/Mint', mintPayload, {
         headers: {
           'Content-Type': 'application/json',
         },

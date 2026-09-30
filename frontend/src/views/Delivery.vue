@@ -732,7 +732,7 @@ formatDeliveryTime(ts) {
     const certLists = [];
 
     try {
-      const org1Res = await axios.post('http://10.112.47.214:3000/api/get-certificates', {
+      const org1Res = await axios.post('http://10.112.191.163:3000/api/get-certificates', {
         userId: this.userId,
       });
       if (org1Res.status === 200 && Array.isArray(org1Res.data.certificates)) {
@@ -746,7 +746,7 @@ formatDeliveryTime(ts) {
     }
 
     try {
-      const org2Res = await axios.post('http://10.112.47.214:3000/api/get-certificates2', {
+      const org2Res = await axios.post('http://10.112.191.163:3000/api/get-certificates2', {
         userId: this.userId,
       });
       if (org2Res.status === 200 && Array.isArray(org2Res.data.certificates)) {
@@ -763,14 +763,14 @@ formatDeliveryTime(ts) {
     for (const { org, cert } of certLists) {
       try {
         const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${cert}/${cert}.sign.crt`;
-        const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
+        const addrRes = await axios.post('http://10.112.191.163:9092/cert-to-addr', {
           cert_path: certPath,
         });
 
         const certAddr = addrRes?.data?.ethereum?.address;
         if (!certAddr) continue;
 
-        const txRes = await axios.get(`http://10.112.47.214:3000/api/seller-transaction-status/${certAddr}`);
+        const txRes = await axios.get(`http://10.112.191.163:3000/api/seller-transaction-status/${certAddr}`);
         if (txRes.status !== 200 || !Array.isArray(txRes.data.transactions)) continue;
 
         const formattedTxs = txRes.data.transactions
@@ -879,7 +879,7 @@ formatDeliveryTime(ts) {
           throw new Error('生成合约信息失败');
         }
         
-        const verifyRes = await axios.post('http://10.112.47.214:3000/api/vm/verify-contract', {
+        const verifyRes = await axios.post('http://10.112.191.163:3000/api/vm/verify-contract', {
           vmId: this.activeVmId,
           contract: contractObj
         });
@@ -959,7 +959,7 @@ async startAssetUpload(asset) {
     // 1. 获取 file 用的密钥
     asset.uploadProgress = '正在获取加密密钥...';
     const keyRes = await axios.post(
-      'http://10.112.47.214:3000/api/vm/send-key',
+      'http://10.112.191.163:3000/api/vm/send-key',
       {
         vmId: this.activeVmId,
         purpose: 'file'           // 👈 这里要加
@@ -972,7 +972,7 @@ async startAssetUpload(asset) {
 
     // 2. （可选）读取缓存里的 key（主要是给你自己看）
     const keyResponse = await axios.get(
-      `http://10.112.47.214:3000/api/vm/send-key/response/${this.activeVmId}?purpose=file`,
+      `http://10.112.191.163:3000/api/vm/send-key/response/${this.activeVmId}?purpose=file`,
       { timeout: 10000 }
     );
     const payload = keyResponse?.data?.payload || {};
@@ -988,7 +988,7 @@ async startAssetUpload(asset) {
 
     asset.uploadProgress = '正在上传合约信息...';
     const jsonRes = await axios.post(
-      'http://10.112.47.214:3000/api/vm/send-json',
+      'http://10.112.191.163:3000/api/vm/send-json',
       {
         vmId: this.activeVmId,
         purpose: 'json',
@@ -1011,7 +1011,7 @@ async startAssetUpload(asset) {
     formData.append('file', asset.selectedFile);
 
     const uploadRes = await axios.post(
-      'http://10.112.47.214:3000/api/vm/send-file',
+      'http://10.112.191.163:3000/api/vm/send-file',
       formData,
       {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -1056,7 +1056,7 @@ async refreshDownloadList() {
     for (const buyerAddress of buyerAddresses) {
       try {
         // 调用后端接口获取买家可下载的加密计算结果
-        const response = await axios.get('http://10.112.47.214:3000/api/vm/export/eligible', {
+        const response = await axios.get('http://10.112.191.163:3000/api/vm/export/eligible', {
           params: {
             vmId: this.activeVmId,
             buyerAddress: buyerAddress
@@ -1113,7 +1113,7 @@ async loadBuyerTransactionsAsDownloadList() {
 
     for (const buyerAddress of buyerAddresses) {
       try {
-        const txRes = await axios.get(`http://10.112.47.214:3000/api/buyer-transaction-status/${buyerAddress}`);
+        const txRes = await axios.get(`http://10.112.191.163:3000/api/buyer-transaction-status/${buyerAddress}`);
         if (txRes.status === 200 && Array.isArray(txRes.data.transactions)) {
           const buyerTxs = txRes.data.transactions
             .filter(tx => tx.status === '已确认')
@@ -1175,7 +1175,7 @@ async downloadAsset(item) {
     console.log('下载请求参数:', payload);
 
     const response = await axios.post(
-      'http://10.112.47.214:3000/api/vm/export',
+      'http://10.112.191.163:3000/api/vm/export',
       payload,
       {
         responseType: 'blob',
@@ -1239,7 +1239,7 @@ async downloadAsset(item) {
     let serverTime = null;
     try {
       const recordRes = await axios.post(
-        'http://10.112.47.214:3000/api/delivery/record',
+        'http://10.112.191.163:3000/api/delivery/record',
         { transactionId: item.transaction_id }
       );
 
@@ -1454,12 +1454,12 @@ formatFileSize(bytes) {
         const transactionId = transaction.transaction_id;
         if (!transactionId) throw new Error('缺少 transaction_id');
 
-        const txDetailRes = await axios.get(`http://10.112.47.214:3000/api/get-transaction-detail/${transactionId}`);
+        const txDetailRes = await axios.get(`http://10.112.191.163:3000/api/get-transaction-detail/${transactionId}`);
         const tx = txDetailRes?.data?.transaction;
         if (!tx) throw new Error('未获取到交易详情');
 
         const assetId = tx.asset_id || transaction.file_hash;
-        const assetRes = await axios.get(`http://10.112.47.214:3000/api/asset/${assetId}`);
+        const assetRes = await axios.get(`http://10.112.191.163:3000/api/asset/${assetId}`);
         const assetInfo = assetRes?.data || {};
 
         const ops = (tx.quality || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -1521,7 +1521,7 @@ formatFileSize(bytes) {
 
         this.markStep('send_pubkey', 'doing');
         const res = await axios.post(
-          'http://10.112.47.214:3000/api/vm/send-key',
+          'http://10.112.191.163:3000/api/vm/send-key',
           { vmId: this.activeVmId },
           { timeout: 20000 }
         );
@@ -1531,7 +1531,7 @@ formatFileSize(bytes) {
         this.markStep('recv_enc_key', 'done');
 
         const resp2 = await axios.get(
-          `http://10.112.47.214:3000/api/vm/send-key/response/${this.activeVmId}`,
+          `http://10.112.191.163:3000/api/vm/send-key/response/${this.activeVmId}`,
           { timeout: 10000 }
         );
         const payload = resp2?.data?.payload || {};
@@ -1606,7 +1606,7 @@ formatFileSize(bytes) {
         await this.ensureSm4Key(vmId, 'json');
 
         const jsonRes = await axios.post(
-          'http://10.112.47.214:3000/api/vm/send-json',
+          'http://10.112.191.163:3000/api/vm/send-json',
           { vmId, purpose: 'json', json: jsonString },
           { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
         );
@@ -1633,7 +1633,7 @@ formatFileSize(bytes) {
         formData.append('file', file);
 
         const uploadRes = await axios.post(
-          'http://10.112.47.214:3000/api/vm/send-file',
+          'http://10.112.191.163:3000/api/vm/send-file',
           formData,
           { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 }
         );
@@ -1722,7 +1722,7 @@ formatFileSize(bytes) {
       if (!token) return
       const payload = this.parseJwt(token)
       this.username = decodeURIComponent(payload.username)
-      const r = await axios.post('http://10.112.47.214:3000/api/get-user-id', { username: this.username })
+      const r = await axios.post('http://10.112.191.163:3000/api/get-user-id', { username: this.username })
       this.userId = String(r.data.id || '')
     },
 
@@ -1744,11 +1744,11 @@ formatFileSize(bytes) {
       ]
       for (const { org, api } of orgs) {
         try {
-          const r = await axios.post(`http://10.112.47.214:3000/api/${api}`, { userId: this.userId })
+          const r = await axios.post(`http://10.112.191.163:3000/api/${api}`, { userId: this.userId })
           const certs = r.data.certificates || []
           for (const c of certs) {
             const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${c.cert}/${c.cert}.sign.crt`
-            const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', { cert_path: certPath })
+            const addrRes = await axios.post('http://10.112.191.163:9092/cert-to-addr', { cert_path: certPath })
             const addr = addrRes?.data?.ethereum?.address
             if (addr) res.push(addr)
           }
@@ -1763,7 +1763,7 @@ formatFileSize(bytes) {
         const addrs = await this.getAllCertAddresses()
         const all = []
         for (const a of addrs) {
-          const r = await axios.get(`http://10.112.47.214:3000/api/buyer-transaction-status/${a}`)
+          const r = await axios.get(`http://10.112.191.163:3000/api/buyer-transaction-status/${a}`)
           ;(r.data.transactions || []).forEach(t => all.push(t))
         }
         this.orders = all.sort((a,b)=> (b.transaction_id||0)-(a.transaction_id||0))
@@ -1818,7 +1818,7 @@ formatFileSize(bytes) {
         }
         console.log('[创建虚机] 请求参数 =>', payload)
 
-        const r = await axios.post('http://10.112.47.214:3000/api/vm/create', payload)
+        const r = await axios.post('http://10.112.191.163:3000/api/vm/create', payload)
 
         this.$message?.success('虚机创建成功')
         this.modelModal.open = false
@@ -1835,7 +1835,7 @@ formatFileSize(bytes) {
 
     async refreshVmList() {
       try {
-        const r = await axios.get('http://10.112.47.214:3000/api/vm/list', { params: { userId: this.userId } })
+        const r = await axios.get('http://10.112.191.163:3000/api/vm/list', { params: { userId: this.userId } })
         this.vmList = r.data?.vms || []
         if (!this.activeVmId && this.vmList.length) this.activeVmId = this.vmList[0].id
       } catch (e) {
@@ -1878,7 +1878,7 @@ formatFileSize(bytes) {
           throw new Error('生成合约信息失败');
         }
         
-        const verifyRes = await axios.post('http://10.112.47.214:3000/api/vm/verify-contract', {
+        const verifyRes = await axios.post('http://10.112.191.163:3000/api/vm/verify-contract', {
           vmId: this.activeVmId,
           contract: contractObj
         });
@@ -1921,8 +1921,8 @@ formatFileSize(bytes) {
     async loadAttachableAssets() {
       try {
         const [a1, a2] = await Promise.all([
-          axios.get('http://10.112.47.214:3000/api/available-assets'),
-          axios.get('http://10.112.47.214:3000/api/resalable-assets')
+          axios.get('http://10.112.191.163:3000/api/available-assets'),
+          axios.get('http://10.112.191.163:3000/api/resalable-assets')
         ])
         this.attachableAssets = [...(a1.data||[]), ...(a2.data||[])]
         this.pickedAssets = []
@@ -1946,7 +1946,7 @@ formatFileSize(bytes) {
           vmId: this.activeVmId,
           assets: this.pickedAssets.map(a => a.file_hash)
         }
-        await axios.post('http://10.112.47.214:3000/api/vm/mount-assets', payload)
+        await axios.post('http://10.112.191.163:3000/api/vm/mount-assets', payload)
         this.$message?.success('已挂载到虚机')
         this.assetModal.open = false
       } catch (e) {
@@ -1962,7 +1962,7 @@ formatFileSize(bytes) {
           model: this.computeForm.model,
           params: this.computeForm.params
         }
-        await axios.post('http://10.112.47.214:3000/api/vm/compute', payload)
+        await axios.post('http://10.112.191.163:3000/api/vm/compute', payload)
         this.$message?.success('计算任务已提交')
         this.computeModal.open = false
       } catch (e) {
@@ -1997,7 +1997,7 @@ formatFileSize(bytes) {
         
         for (const buyerAddress of buyerAddresses) {
           try {
-            const r = await axios.get('http://10.112.47.214:3000/api/vm/export/eligible', {
+            const r = await axios.get('http://10.112.191.163:3000/api/vm/export/eligible', {
               params: { 
                 vmId: '1',
                 buyerAddress: buyerAddress
@@ -2048,7 +2048,7 @@ formatFileSize(bytes) {
           buyerAddress: transaction.buyer_address
         };
 
-        const response = await axios.post('http://10.112.47.214:3000/api/vm/asset/record', payload);
+        const response = await axios.post('http://10.112.191.163:3000/api/vm/asset/record', payload);
         
         if (response.data?.success) {
           console.log('资产记录保存成功');
@@ -2072,7 +2072,7 @@ async saveAssetRecord(asset) {
       buyerAddress: asset.buyer_address
     };
 
-    const response = await axios.post('http://10.112.47.214:3000/api/vm/asset/record', payload);
+    const response = await axios.post('http://10.112.191.163:3000/api/vm/asset/record', payload);
     
     if (response.data?.success) {
       console.log('资产记录保存成功');
@@ -2103,7 +2103,7 @@ async saveAssetRecord(asset) {
           transaction_id: this.selectedExportTxId,
           file: this.selectedExportFile || undefined
         }
-        const r = await axios.post('http://10.112.47.214:3000/api/vm/export', payload, { responseType: 'blob' })
+        const r = await axios.post('http://10.112.191.163:3000/api/vm/export', payload, { responseType: 'blob' })
         const url = URL.createObjectURL(new Blob([r.data]))
         const a = document.createElement('a')
         a.href = url
@@ -2159,7 +2159,7 @@ async saveAssetRecord(asset) {
     },
 
     async ensureSm4Key(vmId, purpose) {
-      const base = 'http://10.112.47.214:3000';
+      const base = 'http://10.112.191.163:3000';
       try {
         const peek = await axios.get(`${base}/api/vm/send-key/response/${vmId}?purpose=${purpose}`, { timeout: 8000 });
         if (peek?.status === 200) return true;

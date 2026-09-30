@@ -440,7 +440,7 @@ onFileChangeOne(asset, event) {
       if (!token) return
       const payload = this.parseJwt(token)
       this.username = decodeURIComponent(payload.username)
-      const r = await axios.post('http://10.112.47.214:3000/api/get-user-id', { username: this.username })
+      const r = await axios.post('http://10.112.191.163:3000/api/get-user-id', { username: this.username })
       this.userId = String(r.data.id || '')
     },
 
@@ -450,12 +450,12 @@ onFileChangeOne(asset, event) {
         const transactionId = transaction.transaction_id;
         if (!transactionId) throw new Error('缺少 transaction_id');
 
-        const txDetailRes = await axios.get(`http://10.112.47.214:3000/api/get-transaction-detail/${transactionId}`);
+        const txDetailRes = await axios.get(`http://10.112.191.163:3000/api/get-transaction-detail/${transactionId}`);
         const tx = txDetailRes?.data?.transaction;
         if (!tx) throw new Error('未获取到交易详情');
 
         const assetId = tx.asset_id || transaction.file_hash;
-        const assetRes = await axios.get(`http://10.112.47.214:3000/api/asset/${assetId}`);
+        const assetRes = await axios.get(`http://10.112.191.163:3000/api/asset/${assetId}`);
         const assetInfo = assetRes?.data || {};
 
         const ops = (tx.quality || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -522,14 +522,14 @@ onFileChangeOne(asset, event) {
       try {
         asset.uploadProgress = '正在获取加密密钥...';
         const keyRes = await axios.post(
-          'http://10.112.47.214:3000/api/vm/send-key',
+          'http://10.112.191.163:3000/api/vm/send-key',
           { vmId: this.activeVmId, purpose: 'file' },
           { timeout: 20000 }
         );
         if (keyRes.status !== 200) throw new Error('获取加密密钥失败');
 
         const keyResponse = await axios.get(
-          `http://10.112.47.214:3000/api/vm/send-key/response/${this.activeVmId}?purpose=file`,
+          `http://10.112.191.163:3000/api/vm/send-key/response/${this.activeVmId}?purpose=file`,
           { timeout: 10000 }
         );
         const payload = keyResponse?.data?.payload || {};
@@ -540,7 +540,7 @@ onFileChangeOne(asset, event) {
 
         asset.uploadProgress = '正在上传合约信息...';
         const jsonRes = await axios.post(
-          'http://10.112.47.214:3000/api/vm/send-json',
+          'http://10.112.191.163:3000/api/vm/send-json',
           { vmId: this.activeVmId, purpose: 'json', json: JSON.stringify(contractObj) },
           { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
         );
@@ -553,7 +553,7 @@ onFileChangeOne(asset, event) {
         formData.append('file', asset.selectedFile);
 
         const uploadRes = await axios.post(
-          'http://10.112.47.214:3000/api/vm/send-file',
+          'http://10.112.191.163:3000/api/vm/send-file',
           formData,
           {
             headers: { 'Content-Type': 'multipart/form-data' },
@@ -591,7 +591,7 @@ onFileChangeOne(asset, event) {
           sellerAddress: asset.seller_address,
           buyerAddress: asset.buyer_address
         };
-        await axios.post('http://10.112.47.214:3000/api/vm/asset/record', payload);
+        await axios.post('http://10.112.191.163:3000/api/vm/asset/record', payload);
       } catch (e) {
         console.error('保存资产记录失败(不阻塞):', e);
       }
@@ -607,7 +607,7 @@ onFileChangeOne(asset, event) {
           asset.deliveryConfirmMsg = '';
           try {
             const r = await axios.get(
-              `http://10.112.47.214:3000/api/delivery/seller/request-status/${asset.transaction_id}`
+              `http://10.112.191.163:3000/api/delivery/seller/request-status/${asset.transaction_id}`
             );
             // 约定：{ success:true, requested:true/false, status:'pending|approved|...' }
             const requested = !!r?.data?.requested;
@@ -661,14 +661,14 @@ onFileChangeOne(asset, event) {
         const certLists = [];
 
         try {
-          const org1Res = await axios.post('http://10.112.47.214:3000/api/get-certificates', { userId: this.userId });
+          const org1Res = await axios.post('http://10.112.191.163:3000/api/get-certificates', { userId: this.userId });
           if (org1Res.status === 200 && Array.isArray(org1Res.data.certificates)) {
             certLists.push(...org1Res.data.certificates.map(cert => ({ org: 'wx-org1.chainmaker.org', cert: cert.cert })));
           }
         } catch (err) { console.error('获取 org1 证书失败:', err); }
 
         try {
-          const org2Res = await axios.post('http://10.112.47.214:3000/api/get-certificates2', { userId: this.userId });
+          const org2Res = await axios.post('http://10.112.191.163:3000/api/get-certificates2', { userId: this.userId });
           if (org2Res.status === 200 && Array.isArray(org2Res.data.certificates)) {
             certLists.push(...org2Res.data.certificates.map(cert => ({ org: 'wx-org2.chainmaker.org', cert: cert.cert })));
           }
@@ -679,11 +679,11 @@ onFileChangeOne(asset, event) {
         for (const { org, cert } of certLists) {
           try {
             const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${cert}/${cert}.sign.crt`;
-            const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', { cert_path: certPath });
+            const addrRes = await axios.post('http://10.112.191.163:9092/cert-to-addr', { cert_path: certPath });
             const certAddr = addrRes?.data?.ethereum?.address;
             if (!certAddr) continue;
 
-            const txRes = await axios.get(`http://10.112.47.214:3000/api/seller-transaction-status/${certAddr}`);
+            const txRes = await axios.get(`http://10.112.191.163:3000/api/seller-transaction-status/${certAddr}`);
             if (txRes.status !== 200 || !Array.isArray(txRes.data.transactions)) continue;
 
             const formatted = txRes.data.transactions

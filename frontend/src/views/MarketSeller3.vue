@@ -210,7 +210,7 @@ return {};
 async fetchUserId(username){
 try{
 const res=await axios.post(
-'http://10.112.47.214:3000/api/get-user-id',
+'http://10.112.191.163:3000/api/get-user-id',
 {
 username:username
 }
@@ -223,7 +223,7 @@ console.error('获取用户ID失败',e);
 async fetchCertificates(){
 try{
 const res=await axios.post(
-'http://10.112.47.214:3000/api/get-certificates',
+'http://10.112.191.163:3000/api/get-certificates',
 {
 userId:this.userId
 }
@@ -241,7 +241,7 @@ this.certificates=[];
 async fetchAssets(){
 try{
 const res=await axios.get(
-'http://10.112.47.214:3000/api/get-assets'
+'http://10.112.191.163:3000/api/get-assets'
 );
 let list=res.data.assets||res.data||[];
 list=list.map(item=>{
@@ -281,7 +281,7 @@ console.error("卖家地址为空");
 return;
 }
 const res=await axios.get(
-`http://10.112.47.214:3000/api/seller-pending-transactions/${this.address}`
+`http://10.112.191.163:3000/api/seller-pending-transactions/${this.address}`
 );
 const list=res.data.pendingTransactions||res.data.transactions||[];
 this.awaitingAssets=list.map(item=>{
@@ -314,7 +314,7 @@ this.$message.error('资产未设置交付方式');
 return;
 }
 const response=await axios.post(
-'http://10.112.47.214:3000/api/seller-confirm-transaction',
+'http://10.112.191.163:3000/api/seller-confirm-transaction',
 {
 transactionId:asset.transaction_id,
 sellerAddress:asset.seller_address,
@@ -339,7 +339,7 @@ e.message||
 async saveDigitalContract(asset,deliveryMethod){
 try{
 await axios.post(
-'http://10.112.47.214:3000/api/save-digital-contract',
+'http://10.112.191.163:3000/api/save-digital-contract',
 {
 transaction_id:asset.transaction_id,
 asset_id:asset.asset_id,
@@ -355,7 +355,7 @@ console.error('保存数字合约失败:',e);
 async transferAsset(asset){
 try{
 await axios.post(
-'http://10.112.47.214:3000/api/transfer-asset',
+'http://10.112.191.163:3000/api/transfer-asset',
 {
 transactionId:asset.transaction_id
 }

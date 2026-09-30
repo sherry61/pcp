@@ -348,7 +348,7 @@ export default {
 
     async fetchAssetDetails(id) {
       try {
-        const response = await axios.get(`http://10.112.47.214:3000/api/asset/${id}`);
+        const response = await axios.get(`http://10.112.191.163:3000/api/asset/${id}`);
         this.asset = response.data;
         console.log("asset detail response:", response.data);
 
@@ -430,12 +430,12 @@ export default {
         let response;
         if(this.isDivisibleIndustry(this.asset.industry)){
           console.log('调用2接口');
-            response = await axios.post('http://10.112.47.214:3000/api/get-certificates2', {
+            response = await axios.post('http://10.112.191.163:3000/api/get-certificates2', {
           userId: this.userId,
         });
         }else{
           console.log('调用1接口');
-          response = await axios.post('http://10.112.47.214:3000/api/get-certificates', {
+          response = await axios.post('http://10.112.191.163:3000/api/get-certificates', {
           userId: this.userId,
         });
         }
@@ -487,7 +487,7 @@ export default {
   console.log('即将发送的请求体:', JSON.stringify(requestBody, null, 2)); // ⭐⭐
 
   try {
-    const response = await axios.post('http://10.112.47.214:3000/api/save-transaction', requestBody);
+    const response = await axios.post('http://10.112.191.163:3000/api/save-transaction', requestBody);
 
     if (response.status === 201 && response.data.message === '交易已成功创建') {
       this.transactionId = response.data.transactionId;
@@ -518,7 +518,7 @@ export default {
         console.log("To (Selected certificate address):", certAddr);  // 用户选择的证书地址
         console.log("TokenId (Asset's file hash):", this.asset.file_hash);  // 使用资产的哈希值作为 tokenId
 
-        const response = await axios.post('http://10.112.47.214:8848/pre/TransferFrom', {
+        const response = await axios.post('http://10.112.191.163:8848/pre/TransferFrom', {
           from: this.asset.owner_address,
           to: certAddr,
           tokenId: this.asset.file_hash,
@@ -529,7 +529,7 @@ export default {
 
           // 更新当前拥有者的证书地址为新拥有者
           this.current_owner_address = certAddr;
-          await axios.post('http://10.112.47.214:3000/api/update-owner', {
+          await axios.post('http://10.112.191.163:3000/api/update-owner', {
             assetId: this.asset.file_hash,
             newOwner: certAddr
           })
@@ -563,7 +563,7 @@ export default {
     },
     async fetchUserId(username) {
       try {
-        const response = await axios.post('http://10.112.47.214:3000/api/get-user-id', { username });
+        const response = await axios.post('http://10.112.191.163:3000/api/get-user-id', { username });
         if (response.status === 200 && response.data.id) {
           this.userId = response.data.id;  // 成功获取 userId
           console.log('获取的用户ID:', this.userId);

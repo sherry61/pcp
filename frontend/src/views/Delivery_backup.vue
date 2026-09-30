@@ -810,7 +810,7 @@ isLoadingEligible: false,*/
         }
         
         // 发送到后端进行校验
-        const verifyRes = await axios.post('http://10.112.47.214:3000/api/vm/verify-contract', {
+        const verifyRes = await axios.post('http://10.112.191.163:3000/api/vm/verify-contract', {
           vmId: this.activeVmId,
           contract: contractObj
         });
@@ -859,7 +859,7 @@ isLoadingEligible: false,*/
       
       for (const buyerAddress of buyerAddresses) {
         try {
-          const r = await axios.get('http://10.112.47.214:3000/api/vm/export/eligible', {
+          const r = await axios.get('http://10.112.191.163:3000/api/vm/export/eligible', {
             params: { 
               vmId: '1',
               buyerAddress: buyerAddress
@@ -910,7 +910,7 @@ isLoadingEligible: false,*/
         buyerAddress: transaction.buyer_address
       };
 
-      const response = await axios.post('http://10.112.47.214:3000/api/vm/asset/record', payload);
+      const response = await axios.post('http://10.112.191.163:3000/api/vm/asset/record', payload);
       
       if (response.data?.success) {
         console.log('资产记录保存成功');
@@ -982,7 +982,7 @@ isLoadingEligible: false,*/
   },
 
   async ensureSm4Key(vmId, purpose) {
-    const base = 'http://10.112.47.214:3000';
+    const base = 'http://10.112.191.163:3000';
     try {
       const peek = await axios.get(`${base}/api/vm/send-key/response/${vmId}?purpose=${purpose}`, { timeout: 8000 });
       if (peek?.status === 200) return true;
@@ -1036,7 +1036,7 @@ isLoadingEligible: false,*/
     if (!token) return
     const payload = this.parseJwt(token)
     this.username = decodeURIComponent(payload.username)
-    const r = await axios.post('http://10.112.47.214:3000/api/get-user-id', { username: this.username })
+    const r = await axios.post('http://10.112.191.163:3000/api/get-user-id', { username: this.username })
     this.userId = String(r.data.id || '')
   },
 
@@ -1058,11 +1058,11 @@ isLoadingEligible: false,*/
     ]
     for (const { org, api } of orgs) {
       try {
-        const r = await axios.post(`http://10.112.47.214:3000/api/${api}`, { userId: this.userId })
+        const r = await axios.post(`http://10.112.191.163:3000/api/${api}`, { userId: this.userId })
         const certs = r.data.certificates || []
         for (const c of certs) {
           const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${c.cert}/${c.cert}.sign.crt`
-          const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', { cert_path: certPath })
+          const addrRes = await axios.post('http://10.112.191.163:9092/cert-to-addr', { cert_path: certPath })
           const addr = addrRes?.data?.ethereum?.address
           if (addr) res.push(addr)
         }
@@ -1077,7 +1077,7 @@ isLoadingEligible: false,*/
       const addrs = await this.getAllCertAddresses()
       const all = []
       for (const a of addrs) {
-        const r = await axios.get(`http://10.112.47.214:3000/api/buyer-transaction-status/${a}`)
+        const r = await axios.get(`http://10.112.191.163:3000/api/buyer-transaction-status/${a}`)
         ;(r.data.transactions || []).forEach(t => all.push(t))
       }
       this.orders = all.sort((a,b)=> (b.transaction_id||0)-(a.transaction_id||0))
@@ -1132,7 +1132,7 @@ isLoadingEligible: false,*/
       }
       console.log('[创建虚机] 请求参数 =>', payload)
 
-      const r = await axios.post('http://10.112.47.214:3000/api/vm/create', payload)
+      const r = await axios.post('http://10.112.191.163:3000/api/vm/create', payload)
 
       this.$message?.success('虚机创建成功')
       this.modelModal.open = false
@@ -1149,7 +1149,7 @@ isLoadingEligible: false,*/
 
   async refreshVmList() {
     try {
-      const r = await axios.get('http://10.112.47.214:3000/api/vm/list', { params: { userId: this.userId } })
+      const r = await axios.get('http://10.112.191.163:3000/api/vm/list', { params: { userId: this.userId } })
       this.vmList = r.data?.vms || []
       if (!this.activeVmId && this.vmList.length) this.activeVmId = this.vmList[0].id
     } catch (e) {
@@ -1165,7 +1165,7 @@ isLoadingEligible: false,*/
       const certLists = [];
 
       try {
-        const org1Res = await axios.post('http://10.112.47.214:3000/api/get-certificates', {
+        const org1Res = await axios.post('http://10.112.191.163:3000/api/get-certificates', {
           userId: this.userId,
         });
         if (org1Res.status === 200 && Array.isArray(org1Res.data.certificates)) {
@@ -1179,7 +1179,7 @@ isLoadingEligible: false,*/
       }
 
       try {
-        const org2Res = await axios.post('http://10.112.47.214:3000/api/get-certificates2', {
+        const org2Res = await axios.post('http://10.112.191.163:3000/api/get-certificates2', {
           userId: this.userId,
         });
         if (org2Res.status === 200 && Array.isArray(org2Res.data.certificates)) {
@@ -1196,14 +1196,14 @@ isLoadingEligible: false,*/
       for (const { org, cert } of certLists) {
         try {
           const certPath = `/home/super/r/GoSDK/crypto-config/${org}/user/${cert}/${cert}.sign.crt`;
-          const addrRes = await axios.post('http://10.112.47.214:9092/cert-to-addr', {
+          const addrRes = await axios.post('http://10.112.191.163:9092/cert-to-addr', {
             cert_path: certPath,
           });
 
           const certAddr = addrRes?.data?.ethereum?.address;
           if (!certAddr) continue;
 
-          const txRes = await axios.get(`http://10.112.47.214:3000/api/seller-transaction-status/${certAddr}`);
+          const txRes = await axios.get(`http://10.112.191.163:3000/api/seller-transaction-status/${certAddr}`);
           if (txRes.status !== 200 || !Array.isArray(txRes.data.transactions)) continue;
 
           const formattedTxs = txRes.data.transactions
@@ -1271,12 +1271,12 @@ isLoadingEligible: false,*/
       const transactionId = transaction.transaction_id;
       if (!transactionId) throw new Error('缺少 transaction_id');
 
-      const txDetailRes = await axios.get(`http://10.112.47.214:3000/api/get-transaction-detail/${transactionId}`);
+      const txDetailRes = await axios.get(`http://10.112.191.163:3000/api/get-transaction-detail/${transactionId}`);
       const tx = txDetailRes?.data?.transaction;
       if (!tx) throw new Error('未获取到交易详情');
 
       const assetId = tx.asset_id || transaction.file_hash;
-      const assetRes = await axios.get(`http://10.112.47.214:3000/api/asset/${assetId}`);
+      const assetRes = await axios.get(`http://10.112.191.163:3000/api/asset/${assetId}`);
       const assetInfo = assetRes?.data || {};
 
       const ops = (tx.quality || '').split(',').map(s => s.trim()).filter(Boolean)
@@ -1326,7 +1326,7 @@ isLoadingEligible: false,*/
       }
       
       // 发送到后端进行校验
-      const verifyRes = await axios.post('http://10.112.47.214:3000/api/vm/verify-contract', {
+      const verifyRes = await axios.post('http://10.112.191.163:3000/api/vm/verify-contract', {
         vmId: this.activeVmId,
         contract: contractObj
       });
@@ -1401,7 +1401,7 @@ isLoadingEligible: false,*/
 
       this.markStep('send_pubkey', 'doing');
       const res = await axios.post(
-        'http://10.112.47.214:3000/api/vm/send-key',
+        'http://10.112.191.163:3000/api/vm/send-key',
         { vmId: this.activeVmId },
         { timeout: 20000 }
       );
@@ -1411,7 +1411,7 @@ isLoadingEligible: false,*/
       this.markStep('recv_enc_key', 'done');
 
       const resp2 = await axios.get(
-        `http://10.112.47.214:3000/api/vm/send-key/response/${this.activeVmId}`,
+        `http://10.112.191.163:3000/api/vm/send-key/response/${this.activeVmId}`,
         { timeout: 10000 }
       );
       const payload = resp2?.data?.payload || {};
@@ -1487,7 +1487,7 @@ isLoadingEligible: false,*/
       await this.ensureSm4Key(vmId, 'json');
 
       const jsonRes = await axios.post(
-        'http://10.112.47.214:3000/api/vm/send-json',
+        'http://10.112.191.163:3000/api/vm/send-json',
         { vmId, purpose: 'json', json: jsonString },
         { headers: { 'Content-Type': 'application/json' }, timeout: 30000 }
       );
@@ -1514,7 +1514,7 @@ isLoadingEligible: false,*/
       formData.append('file', file);
 
       const uploadRes = await axios.post(
-        'http://10.112.47.214:3000/api/vm/send-file',
+        'http://10.112.191.163:3000/api/vm/send-file',
         formData,
         { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 60000 }
       );
@@ -1593,8 +1593,8 @@ isLoadingEligible: false,*/
   async loadAttachableAssets() {
     try {
       const [a1, a2] = await Promise.all([
-        axios.get('http://10.112.47.214:3000/api/available-assets'),
-        axios.get('http://10.112.47.214:3000/api/resalable-assets')
+        axios.get('http://10.112.191.163:3000/api/available-assets'),
+        axios.get('http://10.112.191.163:3000/api/resalable-assets')
       ])
       this.attachableAssets = [...(a1.data||[]), ...(a2.data||[])]
       this.pickedAssets = []
@@ -1618,7 +1618,7 @@ isLoadingEligible: false,*/
         vmId: this.activeVmId,
         assets: this.pickedAssets.map(a => a.file_hash)
       }
-      await axios.post('http://10.112.47.214:3000/api/vm/mount-assets', payload)
+      await axios.post('http://10.112.191.163:3000/api/vm/mount-assets', payload)
       this.$message?.success('已挂载到虚机')
       this.assetModal.open = false
     } catch (e) {
@@ -1634,7 +1634,7 @@ isLoadingEligible: false,*/
         model: this.computeForm.model,
         params: this.computeForm.params
       }
-      await axios.post('http://10.112.47.214:3000/api/vm/compute', payload)
+      await axios.post('http://10.112.191.163:3000/api/vm/compute', payload)
       this.$message?.success('计算任务已提交')
       this.computeModal.open = false
     } catch (e) {
@@ -1660,7 +1660,7 @@ isLoadingEligible: false,*/
         transaction_id: this.selectedExportTxId,
         file: this.selectedExportFile || undefined
       }
-      const r = await axios.post('http://10.112.47.214:3000/api/vm/export', payload, { responseType: 'blob' })
+      const r = await axios.post('http://10.112.191.163:3000/api/vm/export', payload, { responseType: 'blob' })
       const url = URL.createObjectURL(new Blob([r.data]))
       const a = document.createElement('a')
       a.href = url

@@ -26,7 +26,7 @@ module.exports = {
         },
       // ===== CA 服务 =====
       '/api/ca': {
-        target: 'http://10.112.47.214:8090',
+        target: 'http://10.112.191.163:8090',
         changeOrigin: true,
         pathRewrite: {
           '^/api/ca': '/api/ca'
@@ -36,7 +36,7 @@ module.exports = {
 
       // ===== 主后端 API =====
       '/api': {
-        target: 'http://10.112.47.214:8080',
+        target: 'http://10.112.191.163:8080',
         changeOrigin: true,
         pathRewrite: {
           '^/api': '/api'
@@ -45,7 +45,7 @@ module.exports = {
 
       // ===== AI 生成服务 =====
       '/generate': {
-        target: 'http://10.112.47.214:9081',
+        target: 'http://10.112.191.163:9081',
         changeOrigin: true,
         pathRewrite: {
           '^/generate': '/generate'
@@ -64,7 +64,7 @@ module.exports = {
 
       
       '/catalogapi': {
-        target: 'http://10.112.47.214:8008',
+        target: 'http://10.112.191.163:8008',
         changeOrigin: true,
         pathRewrite: {
           '^/catalogapi': ''

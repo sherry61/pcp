@@ -167,7 +167,7 @@ export default {
 
   try {
     const res = await axios.get(
-      'http://10.112.47.214:3000/api/user-certificates',
+      'http://10.112.191.163:3000/api/user-certificates',
       {
         params: {
           userId: userId.value
@@ -189,7 +189,7 @@ export default {
 
       try {
         const res = await axios.get(
-          'http://10.112.47.214:3000/api/default-cert',
+          'http://10.112.191.163:3000/api/default-cert',
           {
             params: {
               userId: userId.value
@@ -226,7 +226,7 @@ export default {
         savingDefaultCert.value = true;
 
         const res = await axios.post(
-          'http://10.112.47.214:3000/api/save-default-cert',
+          'http://10.112.191.163:3000/api/save-default-cert',
           {
             userId: userId.value,
             defaultRegisterCert: defaultRegisterCert.value,
@@ -292,7 +292,7 @@ export default {
 
         if (generateResponse.status === 200 && generateResponse.data.status === "success") {
           // 第二步：调用 /api/add-certificate 接口添加证书
-          const addCertResponse = await axios.post('http://10.112.47.214:3000/api/add-certificate', {
+          const addCertResponse = await axios.post('http://10.112.191.163:3000/api/add-certificate', {
             userId: parseInt(userId.value),
             certificateName: form.value.certificateName,
             org: form.value.organization.split(".")[0] 
@@ -345,7 +345,7 @@ export default {
     const fetchUserId = async (username) => {
       try {
         const response = await axios.post(
-          "http://10.112.47.214:3000/api/get-user-id",
+          "http://10.112.191.163:3000/api/get-user-id",
           { username }
         );
         if (response.status === 200 && response.data.id) {
@@ -403,10 +403,10 @@ const fetchUserCertificate = async (userId) => {
     loading.value = true;
     const [response1, response2] = await Promise.allSettled([
       // 获取 org-chainmaker1 的证书
-      axios.post("http://10.112.47.214:3000/api/get-certificates", { userId: parseInt(userId) }),
+      axios.post("http://10.112.191.163:3000/api/get-certificates", { userId: parseInt(userId) }),
       
       // 获取 org-chainmaker2 的证书
-      axios.post("http://10.112.47.214:3000/api/get-certificates2", { userId: parseInt(userId) })
+      axios.post("http://10.112.191.163:3000/api/get-certificates2", { userId: parseInt(userId) })
     ]);
     
     // 合并两个组织的证书数据

@@ -175,7 +175,7 @@
     return hash.length > 10 ? hash.substring(0, 10) : hash; // 如果哈希的长度超过10，显示前10个字符
   },
       fetchAssetData() {
-  axios.get('http://10.112.47.214:3000/api/get-user')
+  axios.get('http://10.112.191.163:3000/api/get-user')
     .then(response => {
     //   // 按资产名称分组，并只保留每组中ID最新的资产
     //   const groupedAssets = response.data.reduce((acc, item) => {
@@ -256,7 +256,7 @@
       confirmEdit() {
   this.isLoading = true;
   this.errorMessage = '';
-  axios.post('http://10.112.47.214:3000/api/update-user', this.editAsset)
+  axios.post('http://10.112.191.163:3000/api/update-user', this.editAsset)
   .then(response => {
       if (response.status === 200) {
         // 确保成功处理逻辑在此处

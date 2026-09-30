@@ -81,7 +81,7 @@ const routes = [
     const role = localStorage.getItem('user_role') || 'seller';
 
     if (role === 'auditor') {
-      window.location.href = 'http://10.112.47.214:8081';
+      window.location.href = 'http://10.112.191.163:8081';
       return '/login';
     }
 

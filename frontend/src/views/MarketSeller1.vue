@@ -178,7 +178,7 @@ export default {
     },
 
     async fetchUserId(username) {
-      const response = await axios.post("http://10.112.47.214:3000/api/get-user-id", { username });
+      const response = await axios.post("http://10.112.191.163:3000/api/get-user-id", { username });
       this.userId = response?.data?.id || "";
     },
 
@@ -189,7 +189,7 @@ export default {
 
         // org1
         try {
-          const org1Res = await axios.post("http://10.112.47.214:3000/api/get-certificates", {
+          const org1Res = await axios.post("http://10.112.191.163:3000/api/get-certificates", {
             userId: this.userId,
           });
           if (org1Res.status === 200 && Array.isArray(org1Res.data.certificates)) {
@@ -205,7 +205,7 @@ export default {
 
         // org2
         try {
-          const org2Res = await axios.post("http://10.112.47.214:3000/api/get-certificates2", {
+          const org2Res = await axios.post("http://10.112.191.163:3000/api/get-certificates2", {
             userId: this.userId,
           });
           if (org2Res.status === 200 && Array.isArray(org2Res.data.certificates)) {
@@ -227,7 +227,7 @@ export default {
             if (!certAddr) continue;
 
             const txRes = await axios.get(
-              `http://10.112.47.214:3000/api/seller-pending-transactions/${certAddr}`
+              `http://10.112.191.163:3000/api/seller-pending-transactions/${certAddr}`
             );
             const list = txRes?.data?.pendingTransactions || [];
 
@@ -303,7 +303,7 @@ export default {
     }
 
     // --- Step 1: 获取交易和资产的必要信息 ---
-    const txDetail = await axios.get(`http://10.112.47.214:3000/api/get-transaction-detail/${asset.transaction_id}`);
+    const txDetail = await axios.get(`http://10.112.191.163:3000/api/get-transaction-detail/${asset.transaction_id}`);
     const transactionInfo = txDetail.data.transaction;
     if (!transactionInfo || !transactionInfo.quality) {
       this.$message.error('无法获取交易详情或权限类型');
@@ -320,11 +320,11 @@ export default {
     if (expiration) {
       expiration = new Date(expiration.replace(' ', 'T')).toISOString();
     }
-    const assetDetailRes = await axios.get(`http://10.112.47.214:3000/api/asset/${asset.file_hash}`);
+    const assetDetailRes = await axios.get(`http://10.112.191.163:3000/api/asset/${asset.file_hash}`);
     asset.industry = assetDetailRes.data.industry;
 
     // --- Step 2: 在数据库中确认交易状态 ---
-    const response = await axios.post('http://10.112.47.214:3000/api/seller-confirm-transaction', {
+    const response = await axios.post('http://10.112.191.163:3000/api/seller-confirm-transaction', {
       seller_address: asset.seller_address,
       transaction_id: asset.transaction_id,
       isAgree,
@@ -388,7 +388,7 @@ export default {
     modelFileHash
   });
 
-  await axios.post("http://10.112.47.214:3000/api/save-digital-contract", {
+  await axios.post("http://10.112.191.163:3000/api/save-digital-contract", {
     ...digitalContractBase,
     verify_payload: verifyPayload
   });
@@ -419,7 +419,7 @@ export default {
 
       try {
         console.log(`调用 BuyPermission for [${rightType}]:`, permissionPayload);
-        const permissionResponse = await axios.post('http://10.112.47.214:8848/pre/BuyPermission', permissionPayload);
+        const permissionResponse = await axios.post('http://10.112.191.163:8848/pre/BuyPermission', permissionPayload);
         if (permissionResponse.status === 200 && permissionResponse.data.code === 0) {
           this.$message.success(`权限 [${rightType}] 交易成功`);
         } else {
@@ -461,7 +461,7 @@ export default {
 
     for (const { orgName, api } of orgs) {
       try {
-        const res = await axios.post(`http://10.112.47.214:3000/api/${api}`, {
+        const res = await axios.post(`http://10.112.191.163:3000/api/${api}`, {
           userId: this.userId,
         });
 
@@ -500,7 +500,7 @@ export default {
     console.log("🔍 找到对应证书与组织:", certInfo);
 
     // Step 1: DynamicCertConfig
-    const configResponse = await axios.post('http://10.112.47.214:8848/pre/DynamicCertConfig', {
+    const configResponse = await axios.post('http://10.112.191.163:8848/pre/DynamicCertConfig', {
       clientName: certInfo.cert,
       orgName: certInfo.orgName
     });
@@ -515,14 +515,14 @@ export default {
 
     if (indivisibleIndustries.includes(asset.industry)) {
       console.log("🛡️ 资产类型：不可分割，调用 TransferFrom");
-      transferResponse = await axios.post('http://10.112.47.214:8848/pre/TransferFrom', {
+      transferResponse = await axios.post('http://10.112.191.163:8848/pre/TransferFrom', {
         from: asset.seller_address,
         to: asset.buyer_address,
         tokenId: asset.file_hash,
       });
     } else {
       console.log("🛡️ 资产类型：可分割，调用 En-Transfer");
-      transferResponse = await axios.post('http://10.112.47.214:8848/pre/En-Transfer', {
+      transferResponse = await axios.post('http://10.112.191.163:8848/pre/En-Transfer', {
         to: asset.buyer_address,
         amount: asset.quantity.toString(),
       });
@@ -532,7 +532,7 @@ export default {
       this.$message.success('资产转移成功');
       console.log('✅ 资产链上转移成功');
 
-      await axios.post('http://10.112.47.214:3000/api/update-owner', {
+      await axios.post('http://10.112.191.163:3000/api/update-owner', {
         assetId: asset.file_hash,
         newOwner: asset.buyer_address
       });

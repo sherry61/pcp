@@ -117,7 +117,7 @@ func main() {
 	if viper.GetBool("audit.enabled") {
 		auditBaseURL := viper.GetString("audit.base_url")
 		if auditBaseURL == "" {
-			auditBaseURL = "http://10.112.47.214:8080"
+			auditBaseURL = "http://10.112.191.163:8080"
 		}
 		auditClient = audit.NewAuditClient(auditBaseURL)
 		log.Printf("✅ 审计客户端已初始化并启用: %s", auditBaseURL)

@@ -2,7 +2,7 @@ import axios from 'axios'
 
 // Keep this aligned with the other privacy-delivery clients. The Vue dev server
 // does not proxy /api to the backend, so a relative URL would return its 404.
-const API_BASE = process.env.VUE_APP_API_BASE || 'http://10.112.47.214:3000'
+const API_BASE = process.env.VUE_APP_API_BASE || 'http://10.112.191.163:3000'
 const api = axios.create({ baseURL: API_BASE, timeout: 180000 })
 export const teeApi = {
   uploadAssetMaterials(assetId, sellerAddress, dataFile, weightFile) {

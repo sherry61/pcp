@@ -451,7 +451,7 @@ func handleGenerate(w http.ResponseWriter, r *http.Request) {
 
 	// 循环结束后，只生成一个 .pem
 	if firstPrivateKey != "" {
-		sktopkURL := "http://10.112.47.214:10086/sktopk"
+		sktopkURL := "http://10.112.191.163:10086/sktopk"
 		skReq := SktopkRequest{Details: []SktopkDetail{{PrivateKey: firstPrivateKey}}}
 		skBody, _ := json.Marshal(skReq)
 		resp2, err := http.Post(sktopkURL, "application/json", bytes.NewBuffer(skBody))

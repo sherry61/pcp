@@ -32,10 +32,10 @@ export default {
       const payload = JSON.parse(atob(payloadPart + '='.repeat((4 - payloadPart.length % 4) % 4)));
       const username = payload.username ? String(payload.username) : '';
       if (!username) throw new Error('登录信息中缺少用户名');
-      const { data } = await axios.post('http://10.112.47.214:3000/api/get-user-id', { username });
+      const { data } = await axios.post('http://10.112.191.163:3000/api/get-user-id', { username });
       if (!data?.id) throw new Error('未获取到买方用户ID');
       this.userId = data.id;
-      const response = await axios.get(`http://10.112.47.214:3000/api/auction/won/${this.userId}`);
+      const response = await axios.get(`http://10.112.191.163:3000/api/auction/won/${this.userId}`);
       this.assets = response.data || [];
     } catch (error) {
       // 查询失败时按空列表处理，不打扰买方；详细错误仅写入控制台便于排查。

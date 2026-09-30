@@ -58,7 +58,7 @@ export default {
       }
 
       try {
-        const response = await axios.post('http://10.112.47.214:3000/api/register', {
+        const response = await axios.post('http://10.112.191.163:3000/api/register', {
           username: this.username,
           password: this.password,
           email: this.email,

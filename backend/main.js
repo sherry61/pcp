@@ -44,20 +44,20 @@ const REMOTE_KEY_URL   = process.env.REMOTE_KEY_URL   || 'http://10.112.14.6:808
 const KEY_FILE_PATH    = process.env.PUBLIC_KEY_PATH  || '/home/super/r/cert/client3/client3.pem';
 const PRIVATE_KEY_PATH = process.env.PRIVATE_KEY_PATH || '/home/super/r/cert/client3/client3.sign.key';
 const EXPORT_DIR = process.env.EXPORT_DIR || '/home/super/r/20251028test';
-const REMOTE_PRE_BASE_URL = process.env.REMOTE_PRE_BASE_URL || 'http://10.112.47.214:8123/pre';
+const REMOTE_PRE_BASE_URL = process.env.REMOTE_PRE_BASE_URL || 'http://10.112.191.163:8123/pre';
 const PRE_PYTHON_BIN = process.env.PRE_PYTHON_BIN || 'python3';
 const PRE_HELPER_DIR = process.env.PRE_HELPER_DIR || '/home/super/r/localdata/pre_helpers';
 const REMOTE_FL_BASE_URL =
-  process.env.REMOTE_FL_BASE_URL || 'http://10.112.47.214:8000/federate/task';
+  process.env.REMOTE_FL_BASE_URL || 'http://10.112.191.163:8000/federate/task';
 
 const FL_MODEL_DIR =
   process.env.FL_MODEL_DIR || '/home/super/r/localdata/fl_models';
 const ASSET_ANALYSIS_BASE_URL =
-  process.env.ASSET_ANALYSIS_BASE_URL || 'http://10.112.47.214:8003';
+  process.env.ASSET_ANALYSIS_BASE_URL || 'http://10.112.191.163:8003';
 const PRE_UPLOAD_DIR = process.env.PRE_UPLOAD_DIR || '/home/super/r/localdata/pre_uploads';
 const DIGITAL_CONTRACT_BASE_URL =
   process.env.DIGITAL_CONTRACT_BASE_URL || 'http://10.112.14.6:18080/api';
-const SUMMARY_API_BASE = 'http://10.112.47.214:8022';
+const SUMMARY_API_BASE = 'http://10.112.191.163:8022';
 const DATA_CATALOG_BASE_URL =
   process.env.DATA_CATALOG_BASE_URL || 'http://127.0.0.1:8008';
 // 数据目录发布开关：8008 服务维护期间默认关闭，优先保证上链登记主流程
@@ -70,11 +70,11 @@ const DATA_CATALOG_PLATFORM_NAME =
 const DATA_CATALOG_PLATFORM_DID =
   process.env.DATA_CATALOG_PLATFORM_DID || 'did:web:data.web';
 const DATA_CATALOG_PLATFORM_URL =
-  process.env.DATA_CATALOG_PLATFORM_URL || 'http://10.112.47.214';
+  process.env.DATA_CATALOG_PLATFORM_URL || 'http://10.112.191.163';
 const PAM_WEB_BASE_URL =
-  process.env.PAM_WEB_BASE_URL || 'http://10.112.47.214:5174';
+  process.env.PAM_WEB_BASE_URL || 'http://10.112.191.163:5174';
 const PAM_API_BASE_URL =
-  process.env.PAM_API_BASE_URL || 'http://10.112.47.214:8140';
+  process.env.PAM_API_BASE_URL || 'http://10.112.191.163:8140';
 const PAM_VIEW_CLIENT_ID =
   process.env.PAM_VIEW_CLIENT_ID || 'pam-web-dev-viewer-20260622';
 const PAM_VIEW_CLIENT_SECRET =
@@ -3707,7 +3707,7 @@ app.post('/api/classify-asset', async (req, res) => {
     }
 
     try {
-        const response = await axios.post('http://10.112.47.214:5000/classify', {
+        const response = await axios.post('http://10.112.191.163:5000/classify', {
             text: String(text).trim(),
             asset_id: asset_id || `asset-${Date.now()}`,
             run_judge: true
@@ -5554,10 +5554,10 @@ app.post('/api/delivery/test-start-vm', async (req, res) => {
 
 
 const OMNIPRINT_BASE = {
-  text: 'http://10.112.47.214:8110',
-  image: 'http://10.112.47.214:8111',
-  audio: 'http://10.112.47.214:8112',
-  video: 'http://10.112.47.214:8113'
+  text: 'http://10.112.191.163:8110',
+  image: 'http://10.112.191.163:8111',
+  audio: 'http://10.112.191.163:8112',
+  video: 'http://10.112.191.163:8113'
 };
 
 function detectOmniPrintType(file) {
@@ -6239,7 +6239,7 @@ async function burnToken(ownerId, tokenId) {
   };
 
   try {
-    const response = await axios.post('http://10.112.47.214:8009/pre/BurnToken', params);
+    const response = await axios.post('http://10.112.191.163:8009/pre/BurnToken', params);
     if (response.status === 200) {
       console.log(`代币 ${tokenId} 销毁成功`);
     } else {
