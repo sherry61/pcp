@@ -55,7 +55,26 @@
                   >
                     {{ getSellerHeActionLabel(row) }}
                   </el-button>
-                  <span v-if="isTeeRow(row)" class="tee-seller-hint">买方请求后自动交付</span>
+                  <template v-if="isTeeRow(row)">
+                    <el-button
+                      size="small"
+                      type="primary"
+                      class="action-btn-primary"
+                      :loading="row.teeDelivering"
+                      :disabled="isDeliveryExpired(row) || !canSellerDeliverTee(row)"
+                      @click="openTeeSellerDialog(row)"
+                    >
+                      {{ getSellerTeeActionLabel(row) }}
+                    </el-button>
+                    <el-button
+                      size="small"
+                      class="action-btn-secondary"
+                      :loading="row.teeDetailLoading"
+                      @click="openTeeDeliveryDetail(row)"
+                    >
+                      交付详情
+                    </el-button>
+                  </template>
                   <el-button
                     v-if="isFlRow(row)"
                     size="small"
@@ -313,12 +332,45 @@
         </el-dialog>
 
         <el-dialog v-model="teeDialog.visible" title="执行交付" width="620px">
-          <div v-if="teeDialog.row" class="dialog-body">
+          <div v-if="teeDialog.row" class="dialog-body" v-loading="teeDialog.loading">
             <div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDialog.row.transaction_id }}</span></div>
-            <div class="dialog-field"><span class="dialog-label">数据文件</span><div class="file-action-group"><input ref="teeDataCsvInput" class="hidden-file-input" type="file" accept=".csv,text/csv" @change="onTeeDataFileChange" /><el-button size="small" plain @click="openFileSelector('teeDataCsvInput')">选择文件</el-button></div></div>
-            <div v-if="teeDialog.dataFile" class="file-name inline-file-name">{{ teeDialog.dataFile.name }}</div>
+            <div class="dialog-row"><span class="dialog-label">买方请求时间</span><span>{{ formatTeeTime(teeDialog.info?.requestedAt) }}</span></div>
+            <div class="dialog-row"><span class="dialog-label">本次权重</span><span>{{ teeDialog.info?.buyerWeight?.source === 'BUYER_UPLOADED' ? `买方上传：${teeDialog.info?.buyerWeight?.fileName || 'weight.csv'}` : '资产默认权重' }}</span></div>
+            <div v-if="teeDialog.info?.lastAttempt" class="dialog-row"><span class="dialog-label">上次交付</span><span>{{ teeAttemptStatusText(teeDialog.info.lastAttempt.status) }}（第 {{ teeDialog.info.lastAttempt.attemptNo }} 次）</span></div>
+            <div class="dialog-hint">确认后将先清理海光主机上已有虚机，再创建新的 TEE 环境并自动完成计算，可能需要数分钟。</div>
           </div>
-          <template #footer><el-button @click="teeDialog.visible=false">取消</el-button><el-button type="primary" :loading="teeDialog.submitting" :disabled="isDeliveryExpired(teeDialog.row)" @click="submitTeeSellerData">执行交付</el-button></template>
+          <template #footer>
+            <el-button @click="teeDialog.visible=false">取消</el-button>
+            <el-button type="primary" :loading="teeDialog.submitting" :disabled="teeDialog.loading || !canSellerDeliverTee(teeDialog.row)" @click="submitTeeDeliver">确认执行交付</el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="teeDetailDialog.visible" title="交付详情" width="780px">
+          <div v-if="teeDetailDialog.row" class="dialog-body">
+            <div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDetailDialog.row.transaction_id }}</span></div>
+            <el-table :data="teeDetailDialog.attempts" border size="small" v-loading="teeDetailDialog.loading" style="width:100%;margin-top:12px">
+              <el-table-column prop="attemptNo" label="序号" width="70" align="center" />
+              <el-table-column label="交付状态" width="110" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="row.status==='SUCCESS' ? 'success' : (row.status==='FAILED' ? 'danger' : 'primary')" effect="plain">{{ teeAttemptStatusText(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="权重来源" width="110" align="center">
+                <template #default="{ row }">{{ row.weightSource==='BUYER_UPLOADED' ? '买方上传' : '资产默认' }}</template>
+              </el-table-column>
+              <el-table-column label="开始时间" min-width="160" align="center">
+                <template #default="{ row }">{{ formatTeeTime(row.startedAt) }}</template>
+              </el-table-column>
+              <el-table-column label="完成时间" min-width="160" align="center">
+                <template #default="{ row }">{{ formatTeeTime(row.finishedAt) }}</template>
+              </el-table-column>
+              <el-table-column label="失败原因" min-width="180" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.errorMessage || '-' }}</template>
+              </el-table-column>
+            </el-table>
+            <div v-if="!teeDetailDialog.loading && !teeDetailDialog.attempts.length" class="dialog-hint">暂无交付记录</div>
+          </div>
+          <template #footer><el-button @click="teeDetailDialog.visible=false">关闭</el-button></template>
         </el-dialog>
 
         <div v-if="contractInfo.visible" class="modal" @click.self="closeContractInfo">
@@ -389,7 +441,6 @@ import heCsv from '@/utils/heCsv'
 import flCrypto from '@/utils/flCrypto'
 import preCrypto from '@/utils/preCrypto'
 import teeApi from '@/utils/teeApi'
-import { generateEcKeyPair, publicKeyPem, decryptEnvelope, encryptSm4, b64 } from '@/utils/teeCrypto'
 
 const API_BASE = 'http://10.112.191.163:3000'
 
@@ -456,7 +507,8 @@ export default {
     contractVerifyMsg: '',
 
     contractVerifyTime: '',
-    teeDialog: { visible: false, row: null, dataFile: null, submitting: false }
+    teeDialog: { visible: false, row: null, submitting: false, loading: false, info: null },
+    teeDetailDialog: { visible: false, row: null, loading: false, attempts: [] }
     }
   },
   computed: {
@@ -574,7 +626,8 @@ export default {
                   uploadingFlBatch: false,
                   flBottomModelDownloaded: false,
                   downloadingFlBottom: false,
-                  downloadingFlGradient: false
+                  downloadingFlGradient: false,
+                  teeRequested: false, teeStep: '', teeStatus: '', teeResultReady: false, teeCurrentAttemptId: null, teeBuyerWeightName: '', teeDelivering: false, teeDetailLoading: false
                 }))
             return { rows, total: response.data.pagination?.total || rows.length }
           } catch (error) { console.error(`加载卖家交易失败: ${address}`, error); return { rows: [], total: 0 } }
@@ -625,14 +678,16 @@ export default {
     async refreshTeeStatus(row) {
       try {
         const response = await teeApi.status(row.transaction_id)
-        row.teeStep = response.step || response.status || ''
-        row.teeStatus = ''
-        if (row.teeStep === 'WAITING_DATA' && row.teePendingFile && !row.teeDataUploading) {
-          row.teeDataUploading = true
-          try { await this.uploadTeeData(row, row.teePendingFile) } catch (error) { this.$message.error(error.response?.data?.message || error.message || 'TEE 数据上传失败') } finally { row.teeDataUploading = false }
-        }
+        row.teeRequested = true
+        row.teeStep = response.step || ''
+        row.teeStatus = String(response.status || '').toUpperCase()
+        row.teeResultReady = row.teeStatus === 'SUCCESS' || response.resultStatus === 'READY'
+        row.teeCurrentAttemptId = response.currentAttemptId ?? null
+        row.teeBuyerWeightName = response.buyerWeightFileName || ''
       } catch (error) {
-        row.teeStep = ''
+        if (error?.response?.status === 404) {
+          row.teeRequested = false; row.teeStep = ''; row.teeStatus = ''; row.teeCurrentAttemptId = null
+        }
       }
     },
 
@@ -698,48 +753,98 @@ export default {
       return this.normalizePcType(row?.pc_type) === 'MPC'
     },
     isTeeRow(row) { return this.normalizePcType(row?.pc_type) === 'TEE' },
-    openTeeSellerDialog(row) { this.teeDialog = { visible: true, row, dataFile: null, submitting: false } },
-    onTeeDataFileChange(event) { this.teeDialog.dataFile = event.target.files?.[0] || null; event.target.value = '' },
-    async submitTeeSellerData() {
-      const row = this.teeDialog.row
-      if (!row || !this.teeDialog.dataFile) return this.$message.error('请选择 data.csv')
-      this.teeDialog.submitting = true
-      try {
-        const tx = String(row.transaction_id)
-        let task
-        try { task = await teeApi.status(tx) } catch (error) { throw new Error('请先等待买方发起 TEE 交付申请') }
-        const step = String(task.step || '')
-        if (!['WAITING_DATA', 'DATA_KEY_FAILED', 'DATA_UPLOAD_FAILED'].includes(step)) {
-          if (task.vmId || task.vm_id) {
-            row.teeStep = step
-            this.teeDialog.visible = false
-            this.$message.info('当前 TEE 任务仍在处理中，请等待环境准备完成')
-            return
-          }
-          // VM provisioning is deliberately fire-and-forget. The backend owns
-          // the long-running setup; this click must finish immediately.
-          teeApi.confirm(tx).catch((error) => {
-            console.warn('[TEE] 后台准备失败:', error?.response?.data || error?.message || error)
-          })
-          row.teeStep = 'VM_CREATING'
-          row.teeStatus = ''
-          this.teeDialog.visible = false
-          this.$message.success('TEE 环境已开始后台准备，请稍后刷新状态')
-          return
-        }
-        await this.uploadTeeData(row, this.teeDialog.dataFile)
-        this.teeDialog.visible = false
-      } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE交付失败') } finally { this.teeDialog.submitting = false }
+    isTeeRunning(row) {
+      const step = String(row?.teeStep || '').toUpperCase()
+      if (step === 'REQUESTED') return false
+      return ['VM_CREATING', 'VM_STARTING', 'SERVICE_DEPLOYING', 'VM_RUNNING', 'DATA_KEY_NEGOTIATING', 'DATA_UPLOADING', 'WEIGHT_KEY_NEGOTIATING', 'WEIGHT_UPLOADING', 'WAITING_DATA', 'WAITING_WEIGHT', 'CONTRACT_VERIFYING', 'CONTRACT_VERIFIED', 'COMPUTING'].includes(step)
     },
-    async uploadTeeData(row, file) {
-        const tx = String(row.transaction_id)
-        const kp = await generateEcKeyPair(); const pem = await publicKeyPem(kp.publicKey)
-        const key = await teeApi.receiveKey({ transactionId: tx, ecPublicKey: pem, fileType: 'data', role: 'seller', name: 'data.csv' })
-        const sm4 = await decryptEnvelope(key.envelope, kp.privateKey)
-        const iv = b64(crypto.getRandomValues(new Uint8Array(16)))
-        const encrypted = encryptSm4(new Uint8Array(await file.arrayBuffer()), b64(sm4), iv)
-        await teeApi.receiveFile({ transactionId: tx, fileType: 'data', name: 'data.csv', iv, ciphertext: encrypted.ciphertext, role: 'seller' })
-        row.teeStep = 'WAITING_WEIGHT'; row.teeStatus = '等待买方上传权重'; this.$message.success('TEE 数据已提交，等待买方上传权重')
+    isTeeSuccess(row) {
+      const step = String(row?.teeStep || '').toUpperCase()
+      return Boolean(row?.teeResultReady) || row?.teeStatus === 'SUCCESS' || ['RESULT_READY', 'COMPLETED'].includes(step)
+    },
+    isTeeFailed(row) {
+      const step = String(row?.teeStep || '').toUpperCase()
+      return row?.teeStatus === 'FAILED' || step === 'FAILED' || step.endsWith('_FAILED')
+    },
+    canSellerDeliverTee(row) {
+      if (!row || row.teeDelivering) return false
+      if (!row.teeRequested) return false
+      // current_attempt_id 非空说明买方上一次请求已交付过，需买方重新请求。
+      if (row.teeCurrentAttemptId != null) return false
+      if (this.isTeeRunning(row)) return false
+      return true
+    },
+    getSellerTeeActionLabel(row) {
+      if (row.teeDelivering || this.isTeeRunning(row)) return '交付中'
+      if (!row.teeRequested) return '待买方请求'
+      if (this.isTeeSuccess(row)) return '交付成功'
+      if (this.isTeeFailed(row)) return '交付失败'
+      if (row.teeCurrentAttemptId != null) return '待买方重新请求'
+      return '执行交付'
+    },
+    getSellerTeeStatusText(row) {
+      if (!row?.teeRequested) return '待买方请求交付'
+      if (this.isTeeRunning(row)) return '交付中'
+      if (this.isTeeSuccess(row)) return '交付成功'
+      if (this.isTeeFailed(row)) return '交付失败'
+      if (row.teeCurrentAttemptId != null) return '待买方重新请求'
+      return '待执行交付'
+    },
+    async openTeeSellerDialog(row) {
+      if (!this.canSellerDeliverTee(row)) return
+      this.teeDialog = { visible: true, row, submitting: false, loading: true, info: null }
+      try {
+        this.teeDialog.info = await teeApi.requestInfo(row.transaction_id)
+      } catch (e) {
+        this.$message.error(e.response?.data?.message || e.message || '加载交付请求失败')
+        this.teeDialog.visible = false
+      } finally {
+        this.teeDialog.loading = false
+      }
+    },
+    async submitTeeDeliver() {
+      const row = this.teeDialog.row
+      if (!row) return
+      this.teeDialog.submitting = true
+      row.teeDelivering = true
+      try {
+        await teeApi.deliver(row.transaction_id)
+        this.teeDialog.visible = false
+        this.$message.success('已开始交付，可点击“交付详情”查看进度')
+        await this.refreshTeeStatus(row)
+      } catch (e) {
+        this.$message.error(e.response?.data?.message || e.message || 'TEE 交付启动失败')
+        await this.refreshTeeStatus(row)
+      } finally {
+        this.teeDialog.submitting = false
+        row.teeDelivering = false
+      }
+    },
+    async openTeeDeliveryDetail(row) {
+      if (!row?.transaction_id) return
+      this.teeDetailDialog = { visible: true, row, loading: true, attempts: [] }
+      try {
+        // 打开时拉取一次，不做轮询。
+        const response = await teeApi.attempts(row.transaction_id)
+        this.teeDetailDialog.attempts = Array.isArray(response?.attempts) ? response.attempts : []
+      } catch (e) {
+        this.$message.error(e.response?.data?.message || e.message || '加载交付详情失败')
+      } finally {
+        this.teeDetailDialog.loading = false
+      }
+    },
+    formatTeeTime(value) {
+      if (!value) return '-'
+      const date = new Date(String(value).replace(' ', 'T'))
+      if (!Number.isFinite(date.getTime())) return String(value)
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    },
+    teeAttemptStatusText(status) {
+      const value = String(status || '').toUpperCase()
+      if (value === 'SUCCESS') return '成功'
+      if (value === 'FAILED') return '失败'
+      return '进行中'
     },
 
     getDeliveryMethodLabel(row) {
@@ -802,7 +907,7 @@ export default {
 
     getStatusText(rowOrStatus) {
       if (typeof rowOrStatus === 'object' && rowOrStatus !== null) {
-        if (this.isTeeRow(rowOrStatus)) { const step = String(rowOrStatus.teeStep || '').toUpperCase(); if (step === 'VM_CREATING' || step === 'REQUESTED') return '虚机创建中'; if (step === 'VM_STARTING') return '虚机启动中'; if (['SERVICE_DEPLOYING', 'VM_RUNNING', 'DATA_KEY_NEGOTIATING', 'DATA_UPLOADING', 'WEIGHT_KEY_NEGOTIATING', 'WEIGHT_UPLOADING', 'WAITING_DATA', 'WAITING_WEIGHT', 'CONTRACT_VERIFYING', 'CONTRACT_VERIFIED'].includes(step)) return '环境配置中'; if (step === 'COMPUTING') return '计算中'; if (['RESULT_READY', 'COMPLETED'].includes(step)) return '完成'; if (step.endsWith('_FAILED') || step === 'FAILED') return '失败'; return '环境配置中' }
+        if (this.isTeeRow(rowOrStatus)) return this.getSellerTeeStatusText(rowOrStatus)
         const businessStatus = this.getSellerDeliveryStatus(rowOrStatus)
         const currentStatus = String(this.getCurrentStatus(rowOrStatus) || '').toUpperCase()
         const labelMap = {
@@ -836,14 +941,11 @@ export default {
 
     getSellerDeliveryStatus(row) {
       if (this.isTeeRow(row)) {
-        const step = String(row?.teeStep || '').toUpperCase()
-        if (!step) return 'WAIT_BUYER'
-        if (['COMPUTING', 'RESULT_READY', 'COMPLETED'].includes(step)) return step === 'COMPUTING' ? 'PROCESSING' : 'COMPLETED'
-        // The new TEE flow is fully server-side after the buyer requests
-        // delivery. The seller has no upload or execution action.
-        if (['REQUESTED', 'VM_CREATING', 'VM_CREATED', 'VM_STARTING', 'SERVICE_DEPLOYING', 'VM_RUNNING', 'WAITING_DATA', 'DATA_KEY_NEGOTIATING', 'DATA_KEY_FAILED', 'DATA_UPLOADING', 'DATA_UPLOAD_FAILED', 'WAITING_WEIGHT', 'WEIGHT_KEY_NEGOTIATING', 'WEIGHT_KEY_FAILED', 'WEIGHT_UPLOADING'].includes(step)) return 'PROCESSING'
-        if (step === 'FAILED') return 'FAILED'
-        return 'PROCESSING'
+        if (!row.teeRequested) return 'WAIT_BUYER'
+        if (this.isTeeRunning(row)) return 'PROCESSING'
+        if (this.isTeeSuccess(row)) return 'COMPLETED'
+        if (this.isTeeFailed(row)) return 'FAILED'
+        return 'WAIT_SELLER'
       }
       if (this.isMpcRow(row)) {
         const currentStatus = String(this.getCurrentStatus(row) || '').toLowerCase()

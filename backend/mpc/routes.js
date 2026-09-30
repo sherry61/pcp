@@ -19,6 +19,8 @@ const {
   validateGcComputeParams
 } = require('./gc');
 
+const log = require('../logger').createLogger({ module: 'mpc' });
+
 function isMissingMpcTableError(error) {
   return error && (error.code === 'ER_NO_SUCH_TABLE' || error.errno === 1146);
 }
@@ -346,6 +348,15 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
     const statusData = statusBody?.data || {};
     const remoteStatus = normalizeMpcStatus(statusData.status);
 
+    if (remoteStatus !== mapped.task_status) {
+      log.info('MPC 任务状态更新', {
+        transaction_id: mapped.transaction_id,
+        remote_task_id: mapped.remote_task_id,
+        from_status: mapped.task_status,
+        to_status: remoteStatus
+      });
+    }
+
     let nextResult = mapped.result;
     let lastError = extractRemoteTaskError(statusData) || mapped.last_error;
     let taskStatus = remoteStatus;
@@ -355,6 +366,20 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
       nextResult = resultBody?.data || null;
       taskStatus = 'done';
       lastError = null;
+
+      log.info('MPC 计算完成', {
+        transaction_id: mapped.transaction_id,
+        remote_task_id: mapped.remote_task_id,
+        threshold: nextResult?.threshold,
+        user_count: nextResult?.user_count,
+        qualified_count: nextResult?.qualified_count,
+        verified: nextResult?.verified,
+        users: (nextResult?.user_results || []).map((item) => ({
+          user_id: item.user_id,
+          total_assets: item.total_assets,
+          is_qualified: item.is_qualified
+        }))
+      });
     }
 
     const synced = await upsertMpcRecord(mapped.transaction_id, {
@@ -398,6 +423,15 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
         });
       }
 
+      log.info('MPC 创建计算任务', {
+        transaction_id: transactionId,
+        buyer_id: transaction.buyer_address,
+        seller_id: transaction.seller_address,
+        threshold: computeParams.threshold,
+        risk_factor: computeParams.risk_factor,
+        compute_mode: computeParams.compute_mode
+      });
+
       const client = createMpcClient();
       const taskName =
         String(req.body.task_name || '').trim() || `MPC-GC-${transactionId}`;
@@ -409,6 +443,12 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
         has_buyer_data: false
       });
       const remoteData = remoteBody?.data || {};
+
+      log.info('MPC 远端计算任务已创建', {
+        transaction_id: transactionId,
+        remote_task_id: remoteData.task_id,
+        status: remoteData.status
+      });
 
       const record = await upsertMpcRecord(transactionId, {
         businessContractId: digitalContract.contract_id,
@@ -428,6 +468,7 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
         data: toMpcResponseRecord(record)
       });
     } catch (error) {
+      log.error('MPC 创建计算任务失败', { transaction_id: transactionId, err: error });
       const formatted = formatMpcRouteError(error);
       return res.status(formatted.status).json({
         success: false,
@@ -456,6 +497,13 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
         const parsedFiles = parseSellerCsvFiles(req.files);
         const client = createMpcClient();
 
+        log.info('MPC 卖方数据已解析', {
+          transaction_id: transactionId,
+          remote_task_id: record.remote_task_id,
+          files: parsedFiles.persistedInput.files.map((file) => file.filename),
+          total_rows: parsedFiles.persistedInput.files.reduce((sum, file) => sum + file.row_count, 0)
+        });
+
         await uploadRemoteTaskSellerData(client, record.remote_task_id, {
           sellerId: record.seller_id,
           payload: Buffer.from(JSON.stringify(parsedFiles.remotePayload), 'utf8'),
@@ -467,14 +515,23 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
         let statusData = statusBody?.data || {};
         let nextStatus = normalizeMpcStatus(statusData.status);
 
+        let autoStarted = false;
         if (nextStatus === 'ready') {
           await startRemoteTask(client, record.remote_task_id, {
             buyer_id: record.buyer_id
           });
+          autoStarted = true;
           statusBody = await getRemoteTaskStatus(client, record.remote_task_id);
           statusData = statusBody?.data || {};
           nextStatus = normalizeMpcStatus(statusData.status);
         }
+
+        log.info('MPC 卖方数据上传完成', {
+          transaction_id: transactionId,
+          remote_task_id: record.remote_task_id,
+          task_status: nextStatus,
+          auto_started: autoStarted
+        });
 
         const updated = await upsertMpcRecord(transactionId, {
           businessContractId: record.business_contract_id,
@@ -497,6 +554,7 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
           data: toMpcResponseRecord(updated)
         });
       } catch (error) {
+        log.error('MPC 卖方数据上传失败', { transaction_id: transactionId, err: error });
         const formatted = formatMpcRouteError(error);
 
         if (transactionId && record) {
@@ -545,6 +603,11 @@ function registerMpcRoutes({ app, upload, dbQuery }) {
       const client = createMpcClient();
       await startRemoteTask(client, record.remote_task_id, {
         buyer_id: record.buyer_id
+      });
+
+      log.info('MPC 任务已启动', {
+        transaction_id: transactionId,
+        remote_task_id: record.remote_task_id
       });
 
       const synced = await syncRemoteTask(record);

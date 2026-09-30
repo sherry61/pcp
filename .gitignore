@@ -58,3 +58,6 @@ images/
 
 # Runtime logs
 logs/
+
+# TEE 海光主机 ssh 密码（本地密钥文件）
+.tee-host-ssh-secret

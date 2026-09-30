@@ -1511,8 +1511,10 @@ app.post('/api/register', async (req, res) => {
 // 用户登录的 API 端点
 app.post('/api/login', (req, res) => {
     const { username, password } = req.body;
+    const rlog = req.log || log; // requestLogger 注入，失败时回退到模块 logger
 
     if (!username || !password) {
+        rlog.warn('登录失败: 缺少用户名或密码', { username: username || null });
         return res.status(400).json({ error: '用户名和密码是必填项' });
     }
 
@@ -1520,11 +1522,12 @@ app.post('/api/login', (req, res) => {
     const findUserQuery = 'SELECT * FROM users WHERE username = ?';
     db.query(findUserQuery, [username], async (err, results) => {
         if (err) {
-            console.error('数据库查询错误:', err);
+            rlog.error('登录失败: 数据库查询错误', { username, err });
             return res.status(500).json({ error: '服务器内部错误' });
         }
 
         if (results.length === 0) {
+            rlog.warn('登录失败: 用户不存在', { username });
             return res.status(400).json({ error: '用户名或密码错误' });
         }
 
@@ -1533,12 +1536,14 @@ app.post('/api/login', (req, res) => {
         // 验证密码
         const isMatch = await bcrypt.compare(password, user.password);
         if (!isMatch) {
+            rlog.warn('登录失败: 密码错误', { username, userId: user.id });
             return res.status(400).json({ error: '用户名或密码错误' });
         }
 
         // 生成 JWT 令牌
         const token = jwt.sign({ id: user.id, username: user.username }, secretKey, { expiresIn: '1h' });
 
+        rlog.info('登录成功', { username, userId: user.id });
         res.json({ message: '登录成功', token });
     });
 });

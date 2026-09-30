@@ -16,6 +16,17 @@ module.exports = {
     port: 8085,
     https: true,
     proxy: {
+      // ===== Node 后端（默认 3000）=====
+      // https 页面下浏览器会拦截到 http://10.112.191.163:3000 的直连请求（混合内容），
+      // 前端 main.js 会把这类地址改写为同源 /node-api 走此代理。
+      '/node-api': {
+        target: 'http://10.112.191.163:3000',
+        changeOrigin: true,
+        pathRewrite: {
+          '^/node-api': ''
+        },
+        secure: false
+      },
       '/api/transaction-supervision': {
           target: transactionSupervisionTarget,
           changeOrigin: true,

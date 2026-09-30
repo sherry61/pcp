@@ -118,7 +118,8 @@
                     下载结果
                   </el-button>
                   <template v-if="isTeeRow(row)">
-                    <el-button size="small" type="primary" class="action-btn-primary" :loading="row.teeSubmitting" :disabled="isDeliveryExpired(row) || (row.teeRequested && !isTeeRetryable(row))" @click="requestTeeDelivery(row)">{{ getTeeActionLabel(row) }}</el-button>
+                    <el-button size="small" type="primary" class="action-btn-primary" :loading="row.teeSubmitting" :disabled="isDeliveryExpired(row) || !canBuyerRequestTee(row)" @click="openTeeDialog(row)">{{ getTeeActionLabel(row) }}</el-button>
+                    <el-button size="small" class="action-btn-secondary" :loading="row.teeDetailLoading" @click="openTeeDeliveryDetail(row)">交付详情</el-button>
                     <el-button size="small" type="success" class="action-btn-secondary" :loading="row.teeDownloading" :disabled="isDeliveryExpired(row) || !row.teeResultReady" @click="getTeeResult(row)">下载结果</el-button>
                   </template>
                   <el-button
@@ -292,9 +293,56 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="teeDialog.visible" :title="teeDialog.row?.teeRequested ? '上传权重' : '请求交付'" width="620px">
-          <div v-if="teeDialog.row" class="dialog-body"><div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDialog.row.transaction_id }}</span></div><div v-if="teeDialog.row.teeRequested" class="dialog-field"><span class="dialog-label">权重文件</span><input type="file" accept=".csv,text/csv" @change="teeDialog.file = $event.target.files[0]" /></div><div v-if="teeDialog.file" class="file-name inline-file-name">{{ teeDialog.file.name }}</div><div v-if="!teeDialog.row.teeRequested" class="dialog-hint">提交后请等待虚机环境准备完成，卖方上传数据后再上传权重文件。</div></div>
-          <template #footer><el-button @click="teeDialog.visible=false">取消</el-button><el-button type="primary" :loading="teeDialog.submitting" @click="submitTeeDataRequest">{{ teeDialog.row?.teeRequested ? '上传权重' : '请求交付' }}</el-button></template>
+        <el-dialog v-model="teeDialog.visible" title="请求交付" width="620px">
+          <div v-if="teeDialog.row" class="dialog-body">
+            <div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDialog.row.transaction_id }}</span></div>
+            <div class="dialog-field">
+              <span class="dialog-label">权重文件</span>
+              <div class="file-action-group">
+                <input ref="teeWeightInput" class="hidden-file-input" type="file" accept=".csv,text/csv" @change="onTeeWeightChange" />
+                <el-button size="small" plain @click="openFileSelector('teeWeightInput')">选择文件</el-button>
+              </div>
+            </div>
+            <div v-if="teeDialog.file" class="file-name inline-file-name">{{ teeDialog.file.name }}</div>
+            <div class="dialog-field">
+              <el-checkbox v-model="teeDialog.useDefaultWeight" :disabled="Boolean(teeDialog.file)">使用资产默认权重（不覆盖）</el-checkbox>
+            </div>
+            <div class="dialog-hint">
+              当前权重：{{ teeDialog.currentWeightLabel }}。提交后不会立即开始交付，需等待卖方点击“执行交付”才会创建 TEE 环境并计算；此处上传的权重仅覆盖本订单。
+            </div>
+          </div>
+          <template #footer>
+            <el-button @click="teeDialog.visible=false">取消</el-button>
+            <el-button type="primary" :loading="teeDialog.submitting" @click="submitTeeRequest">请求交付</el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="teeDetailDialog.visible" title="交付详情" width="780px">
+          <div v-if="teeDetailDialog.row" class="dialog-body">
+            <div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDetailDialog.row.transaction_id }}</span></div>
+            <el-table :data="teeDetailDialog.attempts" border size="small" v-loading="teeDetailDialog.loading" style="width:100%;margin-top:12px">
+              <el-table-column prop="attemptNo" label="序号" width="70" align="center" />
+              <el-table-column label="交付状态" width="110" align="center">
+                <template #default="{ row }">
+                  <el-tag :type="row.status==='SUCCESS' ? 'success' : (row.status==='FAILED' ? 'danger' : 'primary')" effect="plain">{{ teeAttemptStatusText(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="权重来源" width="110" align="center">
+                <template #default="{ row }">{{ row.weightSource==='BUYER_UPLOADED' ? '买方上传' : '资产默认' }}</template>
+              </el-table-column>
+              <el-table-column label="开始时间" min-width="160" align="center">
+                <template #default="{ row }">{{ formatTeeTime(row.startedAt) }}</template>
+              </el-table-column>
+              <el-table-column label="完成时间" min-width="160" align="center">
+                <template #default="{ row }">{{ formatTeeTime(row.finishedAt) }}</template>
+              </el-table-column>
+              <el-table-column label="失败原因" min-width="180" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.errorMessage || '-' }}</template>
+              </el-table-column>
+            </el-table>
+            <div v-if="!teeDetailDialog.loading && !teeDetailDialog.attempts.length" class="dialog-hint">暂无交付记录</div>
+          </div>
+          <template #footer><el-button @click="teeDetailDialog.visible=false">关闭</el-button></template>
         </el-dialog>
 
         <el-dialog v-model="teeResultDialog.visible" title="下载TEE结果" width="620px">
@@ -501,7 +549,9 @@ export default {
       statusPollTimer: null,
       pollingInFlight: false,
       pollAbortController: null,
-      teeDialog: { visible: false, row: null, file: null, submitting: false }, teeResultDialog: { visible: false, row: null, keyFile: null, processing: false }
+      teeDialog: { visible: false, row: null, file: null, useDefaultWeight: false, currentWeightLabel: '资产默认权重', submitting: false },
+      teeDetailDialog: { visible: false, row: null, loading: false, attempts: [] },
+      teeResultDialog: { visible: false, row: null, keyFile: null, processing: false }
     }
   },
   async created() {
@@ -634,7 +684,7 @@ export default {
                   processingPre: false,
                   processingMpc: false,
                   viewingMpcResult: false
-                  ,teeSubmitting: false, teeContractSubmitting: false, teeContractVerified: false, teeResultReady: false, teeRequested: false
+                  ,teeSubmitting: false, teeContractSubmitting: false, teeContractVerified: false, teeResultReady: false, teeRequested: false, teeStatus: '', teeBuyerWeightName: ''
                 }))
             return { rows, total: response.data.pagination?.total || rows.length }
           } catch (error) { console.warn('加载买家交易失败:', address, error?.message || error); return { rows: [], total: 0 } }
@@ -673,30 +723,84 @@ export default {
       return this.normalizePcType(row?.pc_type) === 'MPC'
     },
     isTeeRow(row) { return this.normalizePcType(row?.pc_type) === 'TEE' },
-    isTeeRetryable(row) { const step = String(row?.teeStep || '').toUpperCase(); return step === 'FAILED' || step.endsWith('_FAILED') },
-    getTeeActionLabel(row) { if (row.teeSubmitting) return '处理中'; if (this.isTeeRetryable(row)) return '请求交付'; if (!row.teeRequested) return '请求交付'; if (row.teeResultReady) return '已完成'; return '处理中' },
-    getTeePhaseLabel(row) {
+    // TEE 交付：买方只负责“请求交付”（可上传权重），真正链路由卖方“执行交付”触发。
+    isTeeRunning(row) {
       const step = String(row?.teeStep || '').toUpperCase()
-      if (step === 'VM_CREATING' || step === 'REQUESTED') return '虚机创建中'
-      if (step === 'VM_STARTING') return '虚机启动中'
-      if (['SERVICE_DEPLOYING', 'VM_RUNNING', 'DATA_KEY_NEGOTIATING', 'DATA_UPLOADING', 'WEIGHT_KEY_NEGOTIATING', 'WEIGHT_UPLOADING', 'WAITING_DATA', 'WAITING_WEIGHT', 'CONTRACT_VERIFYING', 'CONTRACT_VERIFIED'].includes(step)) return '环境配置中'
-      if (step === 'COMPUTING') return '计算中'
-      if (['RESULT_READY', 'COMPLETED'].includes(step)) return '完成'
-      if (step.endsWith('_FAILED') || step === 'FAILED') return '失败'
-      return ''
+      if (step === 'REQUESTED') return false
+      return ['VM_CREATING', 'VM_STARTING', 'SERVICE_DEPLOYING', 'VM_RUNNING', 'DATA_KEY_NEGOTIATING', 'DATA_UPLOADING', 'WEIGHT_KEY_NEGOTIATING', 'WEIGHT_UPLOADING', 'WAITING_DATA', 'WAITING_WEIGHT', 'CONTRACT_VERIFYING', 'CONTRACT_VERIFIED', 'COMPUTING'].includes(step)
     },
-    async openTeeAction(row) {
-      return this.requestTeeDelivery(row)
+    isTeeSuccess(row) {
+      const step = String(row?.teeStep || '').toUpperCase()
+      return Boolean(row?.teeResultReady) || row?.teeStatus === 'SUCCESS' || ['RESULT_READY', 'COMPLETED'].includes(step)
     },
-    async requestTeeDelivery(row) {
-      if (!row || (row.teeRequested && !this.isTeeRetryable(row)) || row.teeSubmitting) return
-      row.teeSubmitting = true
+    isTeeFailed(row) {
+      const step = String(row?.teeStep || '').toUpperCase()
+      return row?.teeStatus === 'FAILED' || step === 'FAILED' || step.endsWith('_FAILED')
+    },
+    canBuyerRequestTee(row) {
+      if (!row || row.teeSubmitting) return false
+      // 交付进行中不可再次请求；成功/失败后可重新请求。
+      return !this.isTeeRunning(row)
+    },
+    getTeeActionLabel(row) {
+      if (row.teeSubmitting) return '提交中'
+      if (this.isTeeRunning(row)) return '交付中'
+      if (row.teeRequested && !this.isTeeSuccess(row) && !this.isTeeFailed(row)) return '修改请求'
+      return '请求交付'
+    },
+    getTeePhaseLabel(row) {
+      if (!row?.teeRequested) return '待请求交付'
+      if (this.isTeeRunning(row)) return '交付中'
+      if (this.isTeeSuccess(row)) return '交付成功'
+      if (this.isTeeFailed(row)) return '交付失败'
+      return '待卖方执行交付'
+    },
+    openTeeAction(row) {
+      return this.openTeeDialog(row)
+    },
+    openTeeDialog(row) {
+      const weightName = row?.teeBuyerWeightName || ''
+      this.teeDialog = {
+        visible: true,
+        row,
+        file: null,
+        useDefaultWeight: false,
+        currentWeightLabel: weightName ? `买方已上传 ${weightName}` : '资产默认权重',
+        submitting: false
+      }
+    },
+    onTeeWeightChange(event) {
+      this.teeDialog.file = event.target.files?.[0] || null
+      if (this.teeDialog.file) this.teeDialog.useDefaultWeight = false
+      event.target.value = ''
+    },
+    async submitTeeRequest() {
+      const row = this.teeDialog.row
+      if (!row) return
+      this.teeDialog.submitting = true
       try {
-        await teeApi.request({ transactionId: String(row.transaction_id), buyerAddress: row.buyer_address, sellerAddress: row.seller_address, assetId: row.asset_id, vmCpu: 8, vmMemoryMb: 4096 })
-        row.teeRequested = true; row.teeStep = 'VM_CREATING'
-        teeApi.confirm(String(row.transaction_id)).catch((e) => console.warn('[TEE] 后台自动交付失败', e))
-        this.$message.success('TEE 交付已提交，服务器将自动完成')
-      } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE 交付申请失败') } finally { row.teeSubmitting = false }
+        const response = await teeApi.request({
+          transactionId: String(row.transaction_id),
+          buyerAddress: row.buyer_address,
+          sellerAddress: row.seller_address,
+          assetId: row.asset_id,
+          vmCpu: 8,
+          vmMemoryMb: 4096,
+          weightFile: this.teeDialog.file || null,
+          useDefaultWeight: this.teeDialog.useDefaultWeight && !this.teeDialog.file
+        })
+        row.teeRequested = true
+        row.teeStep = 'REQUESTED'
+        row.teeStatus = 'PENDING'
+        row.teeResultReady = false
+        row.teeBuyerWeightName = response?.weightSource === 'BUYER_UPLOADED' ? (response?.weightFileName || this.teeDialog.file?.name || 'weight.csv') : ''
+        this.teeDialog.visible = false
+        this.$message.success('交付申请已提交，等待卖方执行交付')
+      } catch (e) {
+        this.$message.error(e.response?.data?.message || e.message || 'TEE 交付申请失败')
+      } finally {
+        this.teeDialog.submitting = false
+      }
     },
     async getTeeResult(row) {
       try {
@@ -725,21 +829,6 @@ export default {
         this.$message.success('TEE 明文结果已下载')
       } catch (error) { this.$message.error(error.response?.data?.message || error.message || 'TEE 结果解密失败') } finally { row.teeDownloading = false }
     },
-    async submitTeeDataRequest() {
-      const row = this.teeDialog.row
-      if (!row) return
-      this.teeDialog.submitting = true
-      try {
-        const tx = String(row.transaction_id)
-        if (!row.teeRequested) {
-          await teeApi.request({ transactionId: tx, buyerAddress: row.buyer_address, sellerAddress: row.seller_address, assetId: row.asset_id, vmCpu: 8, vmMemoryMb: 4096 })
-          row.teeRequested = true; row.teeStep = 'VM_CREATING'; teeApi.confirm(tx).catch((e) => console.warn('[TEE] VM后台准备失败', e)); this.teeDialog.visible = false; this.$message.success('交付申请已提交，TEE环境正在准备'); return
-        }
-        if (!this.teeDialog.file) return this.$message.error('请选择 weight.csv')
-        await this.submitTeeWeight()
-        this.teeDialog.visible = false
-      } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE交付申请失败') } finally { this.teeDialog.submitting = false }
-    },
     async verifyTeeContract(row) {
       row.teeContractSubmitting = true
       try {
@@ -753,20 +842,31 @@ export default {
         row.teeContractVerified = true; row.teeStatus = '等待卖方数据'; this.$message.success('TEE 合约校验通过')
       } catch (e) { this.$message.error(e.response?.data?.message || e.message || '合约校验失败') } finally { row.teeContractSubmitting = false }
     },
-    openTeeDialog(row) { this.teeDialog = { visible: true, row, file: null, submitting: false } },
-    async submitTeeWeight() {
-      const row = this.teeDialog.row
-      if (!row || !this.teeDialog.file) return this.$message.error('请选择 weight.csv')
-      this.teeDialog.submitting = true
+    async openTeeDeliveryDetail(row) {
+      if (!row?.transaction_id) return
+      this.teeDetailDialog = { visible: true, row, loading: true, attempts: [] }
       try {
-        const tx = String(row.transaction_id); const kp = await generateEcKeyPair(); const pem = await publicKeyPem(kp.publicKey)
-        const key = await teeApi.receiveKey({ transactionId: tx, ecPublicKey: pem, fileType: 'weight', role: 'buyer', name: 'weight.csv' })
-        const sm4 = await decryptEnvelope(key.envelope || key, kp.privateKey); const iv = b64(crypto.getRandomValues(new Uint8Array(16)))
-        const encrypted = encryptSm4(new Uint8Array(await this.teeDialog.file.arrayBuffer()), b64(sm4), iv)
-        row.teeWeightKey = { key: b64(sm4), iv }; const keyBlob = new Blob([JSON.stringify({ version: 1, transactionId: tx, algorithm: 'SM4-CBC', key: b64(sm4) }, null, 2)], { type: 'application/json' }); const keyUrl = URL.createObjectURL(keyBlob); const keyLink = document.createElement('a'); keyLink.href = keyUrl; keyLink.download = `tee-result-key-${tx}.json`; keyLink.click(); URL.revokeObjectURL(keyUrl)
-        const result = await teeApi.receiveFile({ transactionId: tx, fileType: 'weight', name: 'weight.csv', iv, ciphertext: encrypted.ciphertext, role: 'buyer' })
-        row.teeStatus = result.result?.computed ? '结果已生成' : '计算中'; row.teeResultReady = Boolean(result.result?.computed); this.teeDialog.visible = false; this.$message.success('权重已提交')
-      } catch (e) { this.$message.error(e.response?.data?.message || e.message || 'TEE权重上传失败') } finally { this.teeDialog.submitting = false }
+        // 打开时拉取一次，不做轮询。
+        const response = await teeApi.attempts(row.transaction_id)
+        this.teeDetailDialog.attempts = Array.isArray(response?.attempts) ? response.attempts : []
+      } catch (e) {
+        this.$message.error(e.response?.data?.message || e.message || '加载交付详情失败')
+      } finally {
+        this.teeDetailDialog.loading = false
+      }
+    },
+    formatTeeTime(value) {
+      if (!value) return '-'
+      const date = new Date(String(value).replace(' ', 'T'))
+      if (!Number.isFinite(date.getTime())) return String(value)
+      const pad = (n) => String(n).padStart(2, '0')
+      return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+    },
+    teeAttemptStatusText(status) {
+      const value = String(status || '').toUpperCase()
+      if (value === 'SUCCESS') return '成功'
+      if (value === 'FAILED') return '失败'
+      return '进行中'
     },
     async confirmTeeResult() {
       if (!this.teeResultDialog.keyFile) return this.$message.error('请选择结果密钥文件')
@@ -860,7 +960,16 @@ export default {
     async refreshTeeStatus(row, signal) {
       if (row.teeStatusRefreshing) return
       row.teeStatusRefreshing = true
-      try { const r = await teeApi.status(row.transaction_id, signal); const s = r.step || r.status; row.teeRequested = true; row.teeStep = s; row.teeStatus = ''; row.teeResultReady = s === 'RESULT_READY' || r.resultStatus === 'READY' } catch (e) { row.teeStatus = '' } finally { row.teeStatusRefreshing = false }
+      try {
+        const r = await teeApi.status(row.transaction_id, signal)
+        row.teeRequested = true
+        row.teeStep = r.step || ''
+        row.teeStatus = String(r.status || '').toUpperCase()
+        row.teeResultReady = row.teeStatus === 'SUCCESS' || r.resultStatus === 'READY'
+        row.teeBuyerWeightName = r.buyerWeightFileName || ''
+      } catch (e) {
+        if (e?.response?.status === 404) { row.teeRequested = false; row.teeStep = ''; row.teeStatus = '' }
+      } finally { row.teeStatusRefreshing = false }
     },
 
     async handleBuyerPageChange(page) {
@@ -880,12 +989,9 @@ export default {
       }
 
       if (this.isTeeRow(row)) {
-        // 买家还没点过“请求交付”时后端没有 job，必然 404。
-        if (!row.teeRequested) {
-          return false
-        }
-        const step = String(row.teeStep || '').toUpperCase()
-        return !['RESULT_READY', 'COMPLETED', 'FAILED'].includes(step) && !step.endsWith('_FAILED')
+        // 未请求时后端没有 job；已成功/失败后不再变化，无需轮询。
+        if (!row.teeRequested) return false
+        return !this.isTeeSuccess(row) && !this.isTeeFailed(row)
       }
 
       if (this.isMpcRow(row)) {
@@ -1005,9 +1111,10 @@ export default {
     getBuyerDeliveryStatus(row) {
       if (this.isTeeRow(row)) {
         if (!row.teeRequested) return 'WAIT_BUYER'
-        if (row.teeResultReady || row.teeStep === 'RESULT_READY') return 'COMPLETED'
-        if (row.teeStep === 'FAILED') return 'FAILED'
-        return 'PROCESSING'
+        if (this.isTeeRunning(row)) return 'PROCESSING'
+        if (this.isTeeSuccess(row)) return 'COMPLETED'
+        if (this.isTeeFailed(row)) return 'FAILED'
+        return 'WAIT_SELLER'
       }
       if (this.isMpcRow(row)) {
         const currentStatus = String(this.getCurrentStatus(row) || '').toLowerCase()
@@ -1089,7 +1196,7 @@ export default {
     },
 
     getCurrentStatusText(row) {
-      if (this.isTeeRow(row)) return this.getTeePhaseLabel(row) || (this.getBuyerDeliveryStatus(row) === 'WAIT_BUYER' ? '待买方操作' : this.getBuyerDeliveryStatus(row) === 'WAIT_SELLER' ? '待卖方操作' : this.getBuyerDeliveryStatus(row) === 'COMPLETED' ? '已完成' : this.getBuyerDeliveryStatus(row) === 'FAILED' ? '失败' : '计算中')
+      if (this.isTeeRow(row)) return this.getTeePhaseLabel(row)
       const currentStatus = String(this.getCurrentStatus(row) || '').toUpperCase()
       const labelMap = {
         WAIT_BUYER: '待买方操作',

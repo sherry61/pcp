@@ -18,6 +18,21 @@ axios.interceptors.request.use(
     if (token) {
       config.headers.Authorization = `Bearer ${token}`; // 将令牌添加到请求头
     }
+
+    // 混合内容（Mixed Content）修复：
+    // 页面以 https 打开时，浏览器会直接拦截发往 http://10.112.191.163:3000 的请求，
+    // 请求根本不会发出（后端日志无记录），前端只看到登录失败。
+    // 这里统一改写为同源代理路径 /node-api（见 vue.config.js 的 devServer.proxy）。
+    const API_ORIGIN = 'http://10.112.191.163:3000';
+    if (
+      typeof window !== 'undefined' &&
+      window.location.protocol === 'https:' &&
+      typeof config.url === 'string' &&
+      config.url.startsWith(API_ORIGIN)
+    ) {
+      config.url = '/node-api' + config.url.slice(API_ORIGIN.length);
+    }
+
     return config;
   },
   (error) => {
