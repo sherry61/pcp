@@ -3357,10 +3357,10 @@ app.post('/api/save-digital-contract', (req, res) => {
 app.get('/api/seller-pending-transactions/:seller_address', (req, res) => {
     const seller_address = req.params.seller_address;
 
-    // 查询卖方待确认的交易
+    // 查询卖方待确认的交易（排除卖家已软删除的过期交易）
     const query = `
         SELECT * FROM transactions
-        WHERE seller_address = ? AND status = '待确认'`;
+        WHERE seller_address = ? AND status = '待确认' AND is_deleted = 0`;
 
     db.query(query, [seller_address], (err, results) => {
         if (err) {
@@ -3369,6 +3369,48 @@ app.get('/api/seller-pending-transactions/:seller_address', (req, res) => {
         }
 
         res.status(200).json({ pendingTransactions: results });
+    });
+});
+
+// 软删除：卖家移除已过期的待确认交易（仅标记，保留记录，前端不再显示）
+app.post('/api/seller-delete-transaction', (req, res) => {
+    const { transaction_id, seller_address } = req.body || {};
+
+    if (!transaction_id || !seller_address) {
+        return res.status(400).json({ message: '缺少必要的参数' });
+    }
+
+    const query = `
+        SELECT transaction_id, status, expiration_time
+        FROM transactions
+        WHERE transaction_id = ? AND seller_address = ? AND status = '待确认' AND is_deleted = 0`;
+
+    db.query(query, [transaction_id, seller_address], (err, rows) => {
+        if (err) {
+            console.error('查询待删除交易失败:', err);
+            return res.status(500).json({ error: '服务器内部错误' });
+        }
+        if (!rows || rows.length === 0) {
+            return res.status(404).json({ message: '未找到可删除的待确认交易' });
+        }
+
+        const expirationTime = rows[0].expiration_time;
+        const expired = expirationTime && new Date(expirationTime).getTime() <= Date.now();
+        if (!expired) {
+            return res.status(400).json({ message: '仅可删除已过期的交易' });
+        }
+
+        db.query(
+            'UPDATE transactions SET is_deleted = 1, deleted_at = NOW() WHERE transaction_id = ?',
+            [transaction_id],
+            (updateErr) => {
+                if (updateErr) {
+                    console.error('软删除交易失败:', updateErr);
+                    return res.status(500).json({ error: '服务器内部错误' });
+                }
+                res.status(200).json({ message: '过期交易已移除' });
+            }
+        );
     });
 });
 

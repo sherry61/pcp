@@ -14,8 +14,17 @@
 
         <!-- ✅ 卖家申请列表：字段按你图里那张 -->
         <div class="apply-list" v-if="awaitingAssets.length">
-          <div class="apply-card" v-for="a in awaitingAssets" :key="a.transaction_id + '-' + a.file_hash">
-            <div class="row"><span class="k">交易ID:</span><span class="v">{{ a.transaction_id }}</span></div>
+          <div class="apply-card" :class="{ 'is-expired': isTransactionExpired(a) }" v-for="a in awaitingAssets" :key="a.transaction_id + '-' + a.file_hash">
+            <div class="card-head">
+              <span class="k">交易ID:</span>
+              <span class="v">{{ a.transaction_id }}</span>
+              <button
+                v-if="isTransactionExpired(a)"
+                class="card-close"
+                title="移除该过期交易"
+                @click="deleteTransaction(a)"
+              >✕</button>
+            </div>
             <div class="row"><span class="k">价格:</span><span class="v">{{ a.price }} RMB</span></div>
             <div class="row">
               <span class="k">资产ID:</span>
@@ -284,6 +293,40 @@ export default {
       const timestamp = this.getExpirationTimestamp(value);
       if (timestamp === null) return '未设置';
       return new Date(timestamp).toLocaleString('zh-CN', { hour12: false });
+    },
+
+    async deleteTransaction(asset) {
+      try {
+        await this.$confirm(
+          `确定移除交易 #${asset.transaction_id} 吗？移除后不再显示（记录会保留）。`,
+          '移除过期交易',
+          {
+            confirmButtonText: '移除',
+            cancelButtonText: '取消',
+            type: 'warning',
+          }
+        );
+      } catch (e) {
+        return; // 用户取消
+      }
+
+      try {
+        const res = await axios.post('http://10.112.191.163:3000/api/seller-delete-transaction', {
+          transaction_id: asset.transaction_id,
+          seller_address: asset.seller_address,
+        });
+        if (res.status === 200) {
+          this.awaitingAssets = this.awaitingAssets.filter(
+            (a) => a.transaction_id !== asset.transaction_id
+          );
+          this.$message.success('已移除该过期交易');
+        } else {
+          this.$message.error(res.data?.message || '移除失败');
+        }
+      } catch (error) {
+        console.error('移除过期交易失败:', error);
+        this.$message.error(error.response?.data?.message || '移除失败，请稍后重试');
+      }
     },
 
     async confirmTransaction(asset) {
@@ -627,6 +670,44 @@ export default {
   padding: 18px;
   border: 1px solid #e7ecf3;
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+}
+
+.apply-card.is-expired {
+  border-color: #fecdca;
+  background: #fffbfa;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.card-head .v {
+  flex: 1;
+  min-width: 0;
+}
+
+.card-close {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  border: none;
+  border-radius: 50%;
+  background: #f2f4f7;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.card-close:hover {
+  background: #fee4e2;
+  color: #d92d20;
 }
 
 .row {
