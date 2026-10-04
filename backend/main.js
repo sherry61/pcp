@@ -19,6 +19,7 @@ const FormData = require('form-data');
 const { registerFlRoutes, registerHeRoutes, registerPreRoutes } = require('./pcp');
 const { registerMpcRoutes } = require('./mpc');
 const { registerTeeRoutes, createTeeClient } = require('./tee');
+const alipay = require('./config/alipay');
 const logger = require('./logger');
 
 logger.patchConsole();
@@ -2900,6 +2901,80 @@ app.post('/api/update-owner', (req, res) => {
 });
 
 
+// 统一的交易写入逻辑：/api/save-transaction 与支付成功回调共用
+function insertTransaction(payload, cb) {
+    const {
+        asset_id,
+        owner_id,
+        buyer_address,
+        seller_id,
+        seller_address,
+        quantity,
+        quality,
+        processing_type,
+        expiration_time,
+        model_file_hash,
+        pc_type,
+        price
+    } = payload || {};
+
+    const ownerId = owner_id || null;
+    const sellerId = seller_id || null;
+    const safeQuality = (typeof quality === 'string' && quality.trim() !== '') ? quality : null;
+    const formattedExpirationTime = (expiration_time && typeof expiration_time === 'string')
+        ? expiration_time.replace('T', ' ') + ':00'
+        : null;
+
+    const query = `
+        INSERT INTO transactions (
+            asset_id,
+            owner_id,
+            buyer_address,
+            seller_id,
+            seller_address,
+            status,
+            price,
+            quantity,
+            quality,
+            processing_type,
+            expiration_time,
+            model_file_hash,
+            pc_type
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+    const values = [
+        asset_id,
+        ownerId,
+        buyer_address,
+        sellerId,
+        seller_address,
+        '待确认',
+        (price !== undefined && price !== null && price !== '') ? String(price) : null,
+        quantity,
+        safeQuality,
+        processing_type,
+        formattedExpirationTime,
+        model_file_hash,
+        pc_type || null
+    ];
+
+    db.query(query, values, (err, results) => {
+        if (err) {
+            console.error('插入交易数据失败:', err);
+            return cb(err);
+        }
+        const transactionId = results.insertId;
+        // 拍卖获胜者提交权益申请后，移出“待处理获拍”列表，但保留交易历史。
+        db.query(`UPDATE asset_registrations
+                  SET auction_status = 'APPLIED', txperm = 0
+                  WHERE file_hash = ? AND trade_mode = 'auction' AND auction_status = 'CLOSED'`,
+          [asset_id], (auctionErr) => {
+            if (auctionErr) console.error('更新拍卖申请状态失败:', auctionErr);
+            cb(null, transactionId);
+          });
+    });
+}
+
 app.post('/api/save-transaction', (req, res) => {
     const {
         asset_id,
@@ -2918,66 +2993,214 @@ app.post('/api/save-transaction', (req, res) => {
     console.log("后端接收到的 quality 值是：", quality);
     console.log("后端接收到的 expiration_time 值是：", expiration_time);
 
-    const ownerId = owner_id || null;
-    const sellerId = seller_id || null;
-    const safeQuality = (typeof quality === 'string' && quality.trim() !== '') ? quality : null;
-
     // 检查请求体是否缺少必要参数
     if (!asset_id || !buyer_address || !seller_address) {
         return res.status(400).json({ message: '缺少必要的参数' });
     }
 
-    // 转换 expiration_time 为 MySQL DATETIME 格式
-    const formattedExpirationTime = (expiration_time && typeof expiration_time === 'string')
-        ? expiration_time.replace('T', ' ') + ':00'
-        : null;
-
-    const query = `
-        INSERT INTO transactions (
-            asset_id,
-            owner_id,
-            buyer_address,
-            seller_id,
-            seller_address,
-            status,
-            quantity,
-            quality,
-            processing_type,
-            expiration_time,
-            model_file_hash,
-            pc_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-
-    const values = [
+    insertTransaction({
         asset_id,
-        ownerId,
+        owner_id,
         buyer_address,
-        sellerId,
+        seller_id,
         seller_address,
-        '待确认',
         quantity,
-        safeQuality,
+        quality,
         processing_type,
-        formattedExpirationTime,
+        expiration_time,
         model_file_hash,
-        pc_type || null
-    ];
-
-    db.query(query, values, (err, results) => {
+        pc_type
+    }, (err, transactionId) => {
         if (err) {
-            console.error('插入交易数据失败:', err);
             return res.status(500).json({ error: '服务器内部错误' });
         }
-        const transactionId = results.insertId;
-        // 拍卖获胜者提交权益申请后，移出“待处理获拍”列表，但保留交易历史。
-        db.query(`UPDATE asset_registrations
-                  SET auction_status = 'APPLIED', txperm = 0
-                  WHERE file_hash = ? AND trade_mode = 'auction' AND auction_status = 'CLOSED'`,
-          [asset_id], (auctionErr) => {
-            if (auctionErr) console.error('更新拍卖申请状态失败:', auctionErr);
-            res.status(201).json({ message: '交易已成功创建', transactionId });
-          });
+        res.status(201).json({ message: '交易已成功创建', transactionId });
     });
+});
+
+
+// ================= 支付宝沙箱支付（当面付扫码） =================
+
+// 解析资产价格：优先用库里的价格，查不到则回退到前端传入的 amount
+function resolveAssetPrice(assetId, fallback, cb) {
+    db.query('SELECT price FROM asset_registrations WHERE file_hash = ? LIMIT 1', [assetId], (err, rows) => {
+        if (!err && rows && rows[0] && rows[0].price !== null && Number(rows[0].price) > 0) {
+            return cb(null, Number(rows[0].price));
+        }
+        const f = Number(fallback);
+        cb(null, Number.isFinite(f) && f > 0 ? f : null);
+    });
+}
+
+// 支付确认成功后：写入交易表，并把订单置为 PAID（幂等，防止重复入账）
+function finalizeOrderPaid(outTradeNo, alipayResult, cb) {
+    db.query("UPDATE alipay_orders SET status='PROCESSING' WHERE out_trade_no=? AND status='PENDING'",
+        [outTradeNo], (cerr, cres) => {
+            if (cerr) return cb(cerr);
+            if (!cres || cres.affectedRows === 0) {
+                return db.query('SELECT status, transaction_id FROM alipay_orders WHERE out_trade_no=? LIMIT 1',
+                    [outTradeNo], (e2, r2) => {
+                        if (e2 || !r2 || !r2.length) return cb(e2 || new Error('订单不存在'));
+                        cb(null, r2[0].transaction_id);
+                    });
+            }
+            db.query('SELECT * FROM alipay_orders WHERE out_trade_no=? LIMIT 1', [outTradeNo], (err, rows) => {
+                if (err || !rows || !rows.length) return cb(err || new Error('订单不存在'));
+                const order = rows[0];
+                let payload = {};
+                try {
+                    payload = typeof order.payload === 'string' ? JSON.parse(order.payload) : (order.payload || {});
+                } catch (e) {
+                    payload = {};
+                }
+                payload.price = order.amount;
+                insertTransaction(payload, (ierr, txId) => {
+                    if (ierr) {
+                        // 回滚认领状态，允许后续重试
+                        db.query("UPDATE alipay_orders SET status='PENDING' WHERE out_trade_no=?", [outTradeNo], () => {});
+                        return cb(ierr);
+                    }
+                    const tradeNo = alipayResult && (alipayResult.tradeNo || alipayResult.trade_no) || null;
+                    db.query(`UPDATE alipay_orders
+                              SET status='PAID', trade_no=?, transaction_id=?, paid_at=NOW(), raw_notify=?
+                              WHERE out_trade_no=?`,
+                        [tradeNo, txId, alipayResult ? JSON.stringify(alipayResult) : null, outTradeNo],
+                        (uerr) => {
+                            if (uerr) console.error('更新订单状态失败:', uerr);
+                            cb(null, txId);
+                        });
+                });
+            });
+        });
+}
+
+// 创建支付订单并返回二维码
+app.post('/api/create-payment', (req, res) => {
+    if (!alipay.enabled) {
+        return res.status(503).json({ message: '支付宝支付未配置' });
+    }
+    const b = req.body || {};
+    const { asset_id, buyer_address, seller_address, subject } = b;
+    if (!asset_id || !buyer_address || !seller_address) {
+        return res.status(400).json({ message: '缺少必要的参数' });
+    }
+
+    resolveAssetPrice(asset_id, b.amount, (perr, amount) => {
+        if (perr) return res.status(500).json({ message: '价格查询失败' });
+        if (!amount) return res.status(400).json({ message: '无法确定支付金额' });
+
+        const outTradeNo = 'ALI' + Date.now() + Math.floor(Math.random() * 1000);
+        const payload = {
+            asset_id,
+            owner_id: b.owner_id,
+            buyer_address,
+            seller_id: b.seller_id,
+            seller_address,
+            quantity: b.quantity,
+            quality: b.quality,
+            processing_type: b.processing_type,
+            expiration_time: b.expiration_time,
+            model_file_hash: b.model_file_hash,
+            pc_type: b.pc_type
+        };
+        const finalSubject = (subject && String(subject).trim()) || ('数字资产购买-' + asset_id);
+
+        db.query(`INSERT INTO alipay_orders
+                  (out_trade_no, asset_id, owner_id, buyer_address, seller_id, seller_address, amount, subject, status, payload)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
+            [outTradeNo, asset_id, payload.owner_id || null, buyer_address, payload.seller_id || null,
+             seller_address, amount.toFixed(2), finalSubject, JSON.stringify(payload)],
+            (err) => {
+                if (err) {
+                    console.error('创建支付订单失败:', err);
+                    return res.status(500).json({ message: '创建订单失败' });
+                }
+                const bizContent = {
+                    out_trade_no: outTradeNo,
+                    total_amount: amount.toFixed(2),
+                    subject: finalSubject,
+                    timeout_express: '10m'
+                };
+                if (alipay.notifyUrl) bizContent.notify_url = alipay.notifyUrl;
+
+                alipay.sdk.exec('alipay.trade.precreate', { bizContent }).then((result) => {
+                    if (result && result.code === '10000' && result.qrCode) {
+                        return res.status(201).json({
+                            message: '订单已创建',
+                            out_trade_no: outTradeNo,
+                            qr_code: result.qrCode,
+                            amount: amount.toFixed(2)
+                        });
+                    }
+                    console.error('支付宝下单失败:', result);
+                    res.status(502).json({ message: '支付宝下单失败', detail: result && (result.subMsg || result.msg) });
+                }).catch((e) => {
+                    console.error('支付宝下单异常:', e);
+                    res.status(502).json({ message: '支付宝下单异常', detail: e.message });
+                });
+            });
+    });
+});
+
+// 查询支付状态：本地未支付的会主动向支付宝查单
+app.get('/api/payment-status/:outTradeNo', (req, res) => {
+    const outTradeNo = req.params.outTradeNo;
+    db.query('SELECT * FROM alipay_orders WHERE out_trade_no=? LIMIT 1', [outTradeNo], (err, rows) => {
+        if (err) return res.status(500).json({ message: '查询订单失败' });
+        if (!rows || !rows.length) return res.status(404).json({ message: '订单不存在' });
+        const order = rows[0];
+        if (order.status === 'PAID') {
+            return res.json({ status: 'PAID', transaction_id: order.transaction_id });
+        }
+        if (!alipay.enabled) {
+            return res.json({ status: order.status });
+        }
+        alipay.sdk.exec('alipay.trade.query', { bizContent: { out_trade_no: outTradeNo } }).then((result) => {
+            const tradeStatus = result && (result.tradeStatus || result.trade_status);
+            if (tradeStatus === 'TRADE_SUCCESS' || tradeStatus === 'TRADE_FINISHED') {
+                finalizeOrderPaid(outTradeNo, result, (ferr, txId) => {
+                    if (ferr) {
+                        console.error('确认支付失败:', ferr);
+                        return res.status(500).json({ message: '确认支付失败' });
+                    }
+                    res.json({ status: 'PAID', transaction_id: txId });
+                });
+            } else {
+                res.json({ status: order.status, trade_status: tradeStatus || null });
+            }
+        }).catch((e) => {
+            console.error('查单异常:', e);
+            res.status(502).json({ message: '查单异常', detail: e.message });
+        });
+    });
+});
+
+// 支付宝异步回调（正式上线需要公网地址；沙箱内网演示可不启用）
+app.post('/api/payment-notify', (req, res) => {
+    if (!alipay.enabled) return res.status(503).send('fail');
+    const params = req.body || {};
+    try {
+        const ok = typeof alipay.sdk.checkNotifySign === 'function' ? alipay.sdk.checkNotifySign(params) : false;
+        if (!ok) {
+            console.warn('支付回调验签失败');
+            return res.send('fail');
+        }
+        const tradeStatus = params.trade_status;
+        if (tradeStatus === 'TRADE_SUCCESS' || tradeStatus === 'TRADE_FINISHED') {
+            finalizeOrderPaid(params.out_trade_no, params, (e) => {
+                if (e) {
+                    console.error('回调处理失败:', e);
+                    return res.send('fail');
+                }
+                res.send('success');
+            });
+        } else {
+            res.send('success');
+        }
+    } catch (e) {
+        console.error('回调异常:', e);
+        res.send('fail');
+    }
 });
 
 

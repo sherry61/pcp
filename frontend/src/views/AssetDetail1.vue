@@ -296,6 +296,40 @@
       </div>
     </div>
 
+    <!-- 支付宝扫码支付弹窗 -->
+    <div v-if="showPaymentModal" class="modal" @click.self="closePaymentModal">
+      <div class="modal-content payment-modal">
+        <div class="modal-header">
+          <h2>扫码支付</h2>
+          <button class="close-btn" @click="closePaymentModal">✕</button>
+        </div>
+
+        <div class="payment-body">
+          <div v-if="paymentLoading" class="payment-loading">
+            <span class="spinner"></span>
+            <span>正在创建支付订单…</span>
+          </div>
+
+          <template v-else>
+            <div class="payment-amount">
+              <span class="payment-amount-label">应付金额</span>
+              <span class="payment-amount-value">¥ {{ paymentAmount }}</span>
+            </div>
+
+            <div class="payment-qr-wrap" :class="{ 'is-paid': paymentStatus === 'PAID' }">
+              <img v-if="paymentQr" :src="paymentQr" alt="支付宝支付二维码" class="payment-qr" />
+              <div v-if="paymentStatus === 'PAID'" class="payment-qr-mask">✓ 已支付</div>
+              <div v-else-if="paymentStatus === 'EXPIRED'" class="payment-qr-mask expired">已超时</div>
+            </div>
+          </template>
+        </div>
+
+        <div class="modal-buttons payment-actions">
+          <button @click="closePaymentModal">取消支付</button>
+        </div>
+      </div>
+    </div>
+
     <!-- 申请成功弹窗 -->
     <div v-if="showConfirmModal" class="modal" @click.self="closeConfirmModal">
       <div class="modal-content" style="width: 400px; padding: 20px; text-align: center;">
@@ -316,6 +350,7 @@ import AppHeader from '@/components/AppHeader.vue';
 import AppSidebar from '@/components/AppSidebar.vue';
 import Chart from 'chart.js/auto';
 import axios from 'axios';
+import QRCode from 'qrcode';
 import { provinceAndCityData } from 'element-china-area-data';
 
 export default {
@@ -382,6 +417,15 @@ export default {
       showPurchaseModal: false, // 控制购买弹窗
       showConfirmModal: false,//控制申请成功弹窗
       insufficientBalance: false,
+      // ===== 支付宝扫码支付相关状态 =====
+      showPaymentModal: false,
+      paymentLoading: false,
+      paymentQr: '',
+      paymentOrderNo: '',
+      paymentAmount: '0.00',
+      paymentStatus: 'PENDING',
+      paymentPollingTimer: null,
+      paymentDeadline: 0,
       certificates: [],
       selectedCertificate: '', // 用户选择的证书
       defaultTradeCert: null,
@@ -798,21 +842,83 @@ if (!certAddr) {
 
   console.log('即将发送的请求体:', JSON.stringify(requestBody, null, 2)); // ⭐⭐
 
-  try {
-    const response = await axios.post('http://10.112.191.163:3000/api/save-transaction', requestBody);
+  // 改为：先创建支付订单并展示二维码，付款成功后由后端写入交易
+  this.closePurchaseModal();
+  await this.startPayment(requestBody);
+},
 
-    if (response.status === 201 && response.data.message === '交易已成功创建') {
-      this.transactionId = response.data.transactionId;
-      this.openConfirmModal();
+// ===== 支付宝扫码支付 =====
+async startPayment(requestBody) {
+  this.paymentLoading = true;
+  this.showPaymentModal = true;
+  this.paymentQr = '';
+  this.paymentOrderNo = '';
+  this.paymentStatus = 'PENDING';
+  this.paymentAmount = Number(this.asset.price || 1200).toFixed(2);
+
+  try {
+    const response = await axios.post('http://10.112.191.163:3000/api/create-payment', {
+      ...requestBody,
+      owner_id: this.asset.user_id,
+      amount: this.asset.price || 1200,
+      subject: `数字资产购买-${this.asset.asset_name || this.asset.file_hash}`,
+    });
+
+    if (response.status === 201 && response.data.qr_code) {
+      this.paymentOrderNo = response.data.out_trade_no;
+      this.paymentAmount = response.data.amount || this.paymentAmount;
+      this.paymentQr = await QRCode.toDataURL(response.data.qr_code, { width: 220, margin: 1 });
+      this.paymentDeadline = Date.now() + 10 * 60 * 1000;
+      this.startPaymentPolling();
     } else {
-      alert('申请失败，请重试。');
+      this.showPaymentModal = false;
+      alert('创建支付订单失败，请重试。');
     }
   } catch (error) {
-    console.error('申请失败:', error);
-    alert('网络错误，请稍后重试。');
+    console.error('创建支付失败:', error);
+    this.showPaymentModal = false;
+    alert(error.response?.data?.message || '创建支付订单失败，请稍后重试。');
+  } finally {
+    this.paymentLoading = false;
   }
+},
 
-  this.closePurchaseModal();
+startPaymentPolling() {
+  this.stopPaymentPolling();
+  this.paymentPollingTimer = setInterval(async () => {
+    if (!this.paymentOrderNo) return;
+    if (Date.now() > this.paymentDeadline) {
+      this.stopPaymentPolling();
+      this.paymentStatus = 'EXPIRED';
+      return;
+    }
+    try {
+      const res = await axios.get(`http://10.112.191.163:3000/api/payment-status/${this.paymentOrderNo}`);
+      if (res.data && res.data.status === 'PAID') {
+        this.paymentStatus = 'PAID';
+        this.stopPaymentPolling();
+        this.transactionId = res.data.transaction_id;
+        setTimeout(() => {
+          this.showPaymentModal = false;
+          this.openConfirmModal();
+        }, 800);
+      }
+    } catch (error) {
+      console.error('查询支付状态失败:', error);
+    }
+  }, 3000);
+},
+
+stopPaymentPolling() {
+  if (this.paymentPollingTimer) {
+    clearInterval(this.paymentPollingTimer);
+    this.paymentPollingTimer = null;
+  }
+},
+
+closePaymentModal() {
+  this.stopPaymentPolling();
+  this.showPaymentModal = false;
 }
 ,
 
@@ -897,6 +1003,7 @@ if (!certAddr) {
   },
   beforeUnmount() {
     if (this.auctionTimer) window.clearInterval(this.auctionTimer);
+    this.stopPaymentPolling();
   }
 };
 </script>
@@ -1429,6 +1536,117 @@ body {
 }
 
 .modal-buttons button:last-child:hover {
+  background-color: #e5e7eb;
+}
+
+/* ===== 支付宝扫码支付弹窗 ===== */
+.payment-modal {
+  width: 380px;
+  padding: 24px 24px 20px;
+  text-align: center;
+}
+
+.payment-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.payment-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 64px 0;
+  color: #6b7280;
+  font-size: 15px;
+}
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid #dbe1ea;
+  border-top-color: #1677ff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.payment-amount {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 18px;
+}
+
+.payment-amount-label {
+  font-size: 13px;
+  color: #909399;
+  letter-spacing: 1px;
+}
+
+.payment-amount-value {
+  font-size: 28px;
+  font-weight: 700;
+  color: #1677ff;
+  line-height: 1.2;
+}
+
+.payment-qr-wrap {
+  position: relative;
+  width: 216px;
+  height: 216px;
+  padding: 5px;
+  background: #fff;
+  border: 1px solid #eef0f4;
+  border-radius: 14px;
+  box-shadow: 0 8px 22px rgba(22, 119, 255, 0.1);
+}
+
+.payment-qr {
+  width: 100%;
+  height: 100%;
+  display: block;
+  border-radius: 9px;
+}
+
+.payment-qr-wrap.is-paid .payment-qr {
+  filter: blur(1px);
+  opacity: 0.3;
+}
+
+.payment-qr-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  font-weight: 700;
+  color: #16a34a;
+  background: rgba(255, 255, 255, 0.55);
+  border-radius: 14px;
+}
+
+.payment-qr-mask.expired {
+  color: #dc2626;
+}
+
+.payment-actions {
+  margin-top: 20px;
+}
+
+.payment-actions button:first-child {
+  background-color: #f3f4f6;
+  color: #374151;
+}
+
+.payment-actions button:first-child:hover {
   background-color: #e5e7eb;
 }
 
