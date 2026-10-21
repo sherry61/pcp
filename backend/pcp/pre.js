@@ -28,7 +28,7 @@ function buildPreContractPayload({ transaction, businessContractId }) {
   return {
     idempotency_key: `${sourceContractId}-pre-afgh`,
     buyer_id: buyerId,
-    source_contract_id: sourceContractId,
+    trade_contract_id: sourceContractId,
     seller_ids: [sellerId],
     pre_scheme: 'AFGH_PRE',
     pre_params: {

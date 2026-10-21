@@ -204,7 +204,7 @@ async function runPreDecryptHelper({ encryptedZipBuffer, privateScalarHex }) {
           cwd: path.resolve(__dirname, '../..'),
           env: {
             ...process.env,
-            PCC_PRE_ROOT: process.env.PCC_PRE_ROOT || '/home/super/tr/pcc'
+            PCC_PRE_ROOT: process.env.PCC_PRE_ROOT || '/home/super/tr/pcc-engine'
           },
           // stdout 只承载结果元数据，解密 ZIP 通过临时文件传递。
           maxBuffer: 1024 * 1024
@@ -307,7 +307,7 @@ async function runPrePublishHelper({ transactionId, buyerPublicKey, sourceArchiv
           cwd: path.resolve(__dirname, '../..'),
           env: {
             ...process.env,
-            PCC_PRE_ROOT: process.env.PCC_PRE_ROOT || '/home/super/tr/pcc'
+            PCC_PRE_ROOT: process.env.PCC_PRE_ROOT || '/home/super/tr/pcc-engine'
           },
           // stdout 只承载密钥元数据，密文 ZIP 通过临时文件传递。
           maxBuffer: 1024 * 1024
@@ -381,7 +381,7 @@ function normalizePcType(value) {
 function extractContractStatus(payload) {
   const data = payload?.data || payload || {};
   return {
-    contractId: data.contract_id || payload?.contract_id || null,
+    contractId: data.pcc_contract_id || payload?.pcc_contract_id || null,
     status: data.status || payload?.status || null,
     contractParams: data.contract_params || payload?.contract_params || null
   };
@@ -910,14 +910,14 @@ function registerHeRoutes({
           const contractResp = await heClient.post('/he/contract', contractPayload);
           contractResponse = contractResp?.data || null;
           pcpContractId = firstDefined(
-            contractResp?.data?.data?.contract_id,
-            contractResp?.data?.contract_id
+            contractResp?.data?.data?.pcc_contract_id,
+            contractResp?.data?.pcc_contract_id
           );
 
           if (!pcpContractId) {
             return res.status(502).json({
               success: false,
-              message: 'PCP /he/contract 未返回 contract_id'
+              message: 'PCP /he/contract 未返回 pcc_contract_id'
             });
           }
         }
@@ -1033,7 +1033,7 @@ function registerHeRoutes({
               heResendThrottle.set(resendKey, Date.now());
               try {
                 const resendResp = await client.post('/tokens/resend', {
-                  contract_id: record.pcp_contract_id,
+                  pcc_contract_id: record.pcp_contract_id,
                   attempt_id: firstDefined(attemptData.attempt_id, record.current_attempt_id),
                   receiver_id: transaction.buyer_address,
                   result_role: 'he_result'
@@ -1526,12 +1526,12 @@ function registerPreRoutes({
     });
     const contractResp = await client.post('/pre/contract', contractPayload);
     const pcpContractId = firstDefined(
-      contractResp?.data?.data?.contract_id,
-      contractResp?.data?.contract_id
+      contractResp?.data?.data?.pcc_contract_id,
+      contractResp?.data?.pcc_contract_id
     );
 
     if (!pcpContractId) {
-      throw new Error('PCP /pre/contract 未返回 contract_id');
+      throw new Error('PCP /pre/contract 未返回 pcc_contract_id');
     }
 
     const saved = await upsertPreRecord(
@@ -1665,7 +1665,7 @@ function registerPreRoutes({
               preResendThrottle.set(resendKey, Date.now());
               try {
                 const resendResp = await client.post('/tokens/resend', {
-                  contract_id: record.pcp_contract_id,
+                  pcc_contract_id: record.pcp_contract_id,
                   attempt_id: firstDefined(attemptData.attempt_id, record.current_attempt_id),
                   receiver_id: transaction.buyer_address,
                   result_role: 'pre_result'

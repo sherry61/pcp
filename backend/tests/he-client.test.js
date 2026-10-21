@@ -18,7 +18,7 @@ test('buildHeContractPayload maps transaction and business contract data to new 
   assert.deepEqual(payload, {
     idempotency_key: 'CONTRACT-001-he-PAILLIER_ADD',
     buyer_id: 'buyer_addr',
-    source_contract_id: 'CONTRACT-001',
+    trade_contract_id: 'CONTRACT-001',
     seller_ids: ['seller_addr#file1', 'seller_addr#file2'],
     he_compute_mode: 'PAILLIER_ADD',
     csv_format: 'SINGLE_CIPHER_COLUMN'

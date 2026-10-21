@@ -23,7 +23,7 @@ test('buildPreContractPayload maps transaction and contract data to PCP /pre/con
   assert.deepEqual(payload, {
     idempotency_key: 'CONTRACT-001-pre-afgh',
     buyer_id: 'buyer_addr',
-    source_contract_id: 'CONTRACT-001',
+    trade_contract_id: 'CONTRACT-001',
     seller_ids: ['seller_addr'],
     pre_scheme: 'AFGH_PRE',
     pre_params: {

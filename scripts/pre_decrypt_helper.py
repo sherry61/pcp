@@ -41,7 +41,7 @@ def _build_plain_zip(entries: dict[str, bytes]) -> bytes:
 
 
 def main() -> None:
-    pcc_root = os.environ.get("PCC_PRE_ROOT", "/home/super/tr/pcc")
+    pcc_root = os.environ.get("PCC_PRE_ROOT", "/home/super/tr/pcc-engine")
     if pcc_root not in sys.path:
         sys.path.insert(0, pcc_root)
 

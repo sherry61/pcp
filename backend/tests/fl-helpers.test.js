@@ -30,7 +30,7 @@ test('buildFlContractPayload maps buyer, sellers, and training params to PCP /fl
   });
 
   assert.equal(payload.buyer_id, 'buyer_addr');
-  assert.equal(payload.source_contract_id, 'CONTRACT-001');
+  assert.equal(payload.trade_contract_id, 'CONTRACT-001');
   assert.deepEqual(payload.seller_ids, ['seller_a']);
   assert.match(payload.idempotency_key, /^fl-contract-CONTRACT-001-/);
   assert.deepEqual(payload.training_params, {

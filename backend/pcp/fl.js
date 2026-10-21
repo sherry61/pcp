@@ -151,7 +151,7 @@ function buildFlContractPayload({
   return {
     idempotency_key: `fl-contract-${requireNonEmpty(businessContractId, 'businessContractId')}-${Date.now()}`,
     buyer_id: buyerId,
-    source_contract_id: requireNonEmpty(businessContractId, 'businessContractId'),
+    trade_contract_id: requireNonEmpty(businessContractId, 'businessContractId'),
     seller_ids: normalizedSellerIds,
     training_params: {
       max_epochs: normalizeIntegerOrDefault(maxEpochs, 10),

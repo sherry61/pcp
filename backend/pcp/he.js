@@ -31,7 +31,7 @@ function buildHeContractPayload({
   return {
     idempotency_key: `${sourceContractId}-he-${heComputeMode}`,
     buyer_id: buyerId,
-    source_contract_id: sourceContractId,
+    trade_contract_id: sourceContractId,
     seller_ids: buildHeLogicalSellerIds(sellerId, sellerFileCount),
     he_compute_mode: heComputeMode,
     csv_format: 'SINGLE_CIPHER_COLUMN'

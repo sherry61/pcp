@@ -111,7 +111,7 @@ function assertFlPcType(digitalContract) {
 function extractContractStatus(payload) {
   const data = payload?.data || payload || {};
   return {
-    contractId: data.contract_id || payload?.contract_id || null,
+    contractId: data.pcc_contract_id || payload?.pcc_contract_id || null,
     status: data.status || payload?.status || null,
     contractParams: data.contract_params || payload?.contract_params || null
   };
@@ -490,7 +490,7 @@ function registerFlRoutes({
 
         try {
           const resendResp = await client.post('/tokens/resend', {
-            contract_id: record.pcp_contract_id,
+            pcc_contract_id: record.pcp_contract_id,
             attempt_id: attemptId,
             receiver_id: receiverId,
             result_role: resultRole
@@ -522,7 +522,7 @@ function registerFlRoutes({
 
       try {
         const resendResp = await client.post('/tokens/resend', {
-          contract_id: record.pcp_contract_id,
+          pcc_contract_id: record.pcp_contract_id,
           attempt_id: attemptId,
           receiver_id: receiverId,
           result_role: resultRole,
@@ -934,7 +934,7 @@ function registerFlRoutes({
         baseUrl: getPcpFlBaseUrl()
       });
       const resendResp = await client.post('/tokens/resend', {
-        contract_id: record.pcp_contract_id,
+        pcc_contract_id: record.pcp_contract_id,
         attempt_id: 'CONTRACT_MATERIAL',
         receiver_id: sellerId,
         result_role: 'fl_bottom_model'
@@ -1079,14 +1079,14 @@ function registerFlRoutes({
           headers: form.getHeaders()
         });
         const pcpContractId = firstDefined(
-          contractResp?.data?.data?.contract_id,
-          contractResp?.data?.contract_id
+          contractResp?.data?.data?.pcc_contract_id,
+          contractResp?.data?.pcc_contract_id
         );
 
         if (!pcpContractId) {
           return res.status(502).json({
             success: false,
-            message: 'PCP /fl/contract 未返回 contract_id'
+            message: 'PCP /fl/contract 未返回 pcc_contract_id'
           });
         }
 
@@ -1323,7 +1323,7 @@ function registerFlRoutes({
           const attemptResp = await client.post(
             `/fl/${encodeURIComponent(existing.pcp_contract_id)}/attempts`,
             {
-              idempotency_key: `${existing.pcp_contract_id}-attempt-${Date.now()}`
+              idempotency_key: `${existing.pcp_contract_id}-attempt`
             }
           );
           currentAttemptId = firstDefined(
@@ -1339,6 +1339,26 @@ function registerFlRoutes({
           currentEpoch = 1;
         }
 
+        if (!currentAttemptId) {
+          const missingAttempt = new Error('PCC 未返回 FL attempt 编号');
+          missingAttempt.statusCode = 502;
+          throw missingAttempt;
+        }
+
+        const persistedSellerResults = mapFlRecordRow(existing)?.seller_result_packages || {};
+        if (persistedSellerResults.__attempt_id !== currentAttemptId) {
+          await upsertFlRecord(mergeFlRecordInput(existing, {
+            transactionId,
+            businessContractId: digitalContract.contract_id,
+            pcpContractId: existing.pcp_contract_id,
+            currentEpoch,
+            sellerResultPackages: {
+              ...persistedSellerResults,
+              __attempt_id: currentAttemptId
+            }
+          }));
+        }
+
         let zipBundle;
         let metadataPayload;
 
@@ -1346,7 +1366,7 @@ function registerFlRoutes({
           metadataPayload = {
             ...(nativeEpochBundle.bundleMetadata || {}),
             schema_version: 'fl-epoch-input-v1',
-            contract_id: existing.pcp_contract_id,
+            pcc_contract_id: existing.pcp_contract_id,
             attempt_id: currentAttemptId,
             epoch_id: Number(currentEpoch),
             seller_id: sellerId,
