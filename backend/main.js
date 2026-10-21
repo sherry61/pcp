@@ -72,18 +72,16 @@ const DATA_CATALOG_PLATFORM_DID =
   process.env.DATA_CATALOG_PLATFORM_DID || 'did:web:data.web';
 const DATA_CATALOG_PLATFORM_URL =
   process.env.DATA_CATALOG_PLATFORM_URL || 'http://10.112.191.163';
-const PAM_WEB_BASE_URL =
-  process.env.PAM_WEB_BASE_URL || 'http://10.112.191.163:5174';
-const PAM_API_BASE_URL =
-  process.env.PAM_API_BASE_URL || 'http://10.112.191.163:8140';
-const PAM_VIEW_CLIENT_ID =
-  process.env.PAM_VIEW_CLIENT_ID || 'pam-web-dev-viewer-20260622';
-const PAM_VIEW_CLIENT_SECRET =
-  process.env.PAM_VIEW_CLIENT_SECRET || 'fAuslY49H9rKCIghfdY72NVu4WNDadR8-AEA_QBLr2I';
-const PAM_VIEW_SCOPE =
-  process.env.PAM_VIEW_SCOPE || 'dashboard';
-const PAM_VIEW_SESSION_ENDPOINT =
-  process.env.PAM_VIEW_SESSION_ENDPOINT || '/web/view-sessions';
+const HUB_WEB_ORIGIN =
+  process.env.HUB_WEB_ORIGIN || 'http://10.112.191.163:15140';
+const HUB_API_BASE_URL =
+  process.env.HUB_API_BASE_URL || 'http://127.0.0.1:18140';
+const HUB_TRADING_TOKEN =
+  process.env.HUB_TRADING_TOKEN || '';
+const PAM_TRADING_AUTHORIZE_PATH =
+  process.env.PAM_TRADING_AUTHORIZE_PATH || '/api/pam/authorize';
+const PAM_ENTRY_COOKIE = 'pam_trade_entry';
+const PAM_ENTRY_COOKIE_TTL_SECONDS = 300;
 
 const VM_HOST_BASE_URL = 'http://10.112.14.6:8000';
 const VM_TOKEN =
@@ -146,86 +144,53 @@ function buildDataCatalogKey(identifier) {
   return `DC_${digest.slice(0, 32)}`;
 }
 
-function signPamViewSessionRequest(method, pathWithQuery, timestampMs, nonceValue, requestBody, secret) {
-  const bodyHash = crypto.createHash('sha256').update(requestBody).digest('hex');
-  const signingPayload = [
-    method.toUpperCase(),
-    pathWithQuery,
-    String(timestampMs),
-    nonceValue,
-    bodyHash
-  ].join('\n');
-
-  return crypto
-    .createHmac('sha256', secret)
-    .update(signingPayload)
-    .digest('hex');
+function parseCookies(req) {
+  const header = req.headers.cookie || '';
+  const cookies = {};
+  header.split(';').forEach((part) => {
+    const index = part.indexOf('=');
+    if (index < 0) return;
+    const key = part.slice(0, index).trim();
+    if (!key) return;
+    const value = part.slice(index + 1).trim();
+    try {
+      cookies[key] = decodeURIComponent(value);
+    } catch (error) {
+      cookies[key] = value;
+    }
+  });
+  return cookies;
 }
 
-async function createPamEntryUrl({ scope = PAM_VIEW_SCOPE, eventId = '', contractId = '' } = {}) {
-  if (!PAM_VIEW_CLIENT_SECRET) {
-    throw new Error('PAM_VIEW_CLIENT_SECRET 未配置');
+async function hubApiFetch(pathname, options = {}) {
+  if (!HUB_TRADING_TOKEN) {
+    throw new Error('HUB_TRADING_TOKEN 未配置，无法访问审计平台');
   }
-
-  const payload = {
-    scope,
-    access_ttl_seconds: 900,
-    refresh_idle_ttl_seconds: 2592000
-  };
-  if (eventId) {
-    payload.event_id = eventId;
-  }
-  if (contractId) {
-    payload.contract_id = contractId;
-  }
-
-  const requestUrl = new URL(PAM_VIEW_SESSION_ENDPOINT, `${PAM_API_BASE_URL.replace(/\/$/, '')}/`);
-  const pathWithQuery = `${requestUrl.pathname}${requestUrl.search}`;
-  const body = Buffer.from(JSON.stringify(payload));
-  const timestamp = Date.now();
-  const nonce = crypto.randomUUID();
-  const signature = signPamViewSessionRequest(
-    'POST',
-    pathWithQuery,
-    timestamp,
-    nonce,
-    body,
-    PAM_VIEW_CLIENT_SECRET
-  );
-
-  const response = await fetch(requestUrl, {
-    method: 'POST',
+  const url = new URL(pathname, `${HUB_API_BASE_URL.replace(/\/$/, '')}/`);
+  const response = await fetch(url, {
+    method: options.method || 'GET',
     headers: {
-      'content-type': 'application/json',
-      'x-client-id': PAM_VIEW_CLIENT_ID,
-      'x-timestamp': String(timestamp),
-      'x-nonce': nonce,
-      'x-signature': signature
+      'x-trading-token': HUB_TRADING_TOKEN,
+      ...(options.body ? { 'content-type': 'application/json' } : {}),
+      ...(options.headers || {})
     },
-    body
+    body: options.body
   });
-
   const result = await response.json().catch(() => ({}));
-  if (!response.ok || result.code !== 0 || !result.data?.access_token || !result.data?.refresh_token) {
-    throw new Error(result.message || `PAM view session request failed: HTTP ${response.status}`);
+  if (!response.ok) {
+    throw new Error(result.detail || `审计平台请求失败: HTTP ${response.status}`);
   }
+  return result;
+}
 
-  const data = result.data;
-  const hash = new URLSearchParams({
-    access_token: data.access_token,
-    refresh_token: data.refresh_token,
-    access_expires_at: data.access_expires_at || '',
-    refresh_expires_at: data.refresh_expires_at || '',
-    scope: data.scope || scope
-  });
-  if (data.event_id) {
-    hash.set('event_id', data.event_id);
+function buildPamEntryUrl(pccContractId = '') {
+  const base = `${HUB_WEB_ORIGIN.replace(/\/$/, '')}/entry/start`;
+  const query = new URLSearchParams();
+  if (pccContractId) {
+    query.set('pcc_contract_id', pccContractId);
   }
-  if (data.contract_id) {
-    hash.set('contract_id', data.contract_id);
-  }
-
-  return `${PAM_WEB_BASE_URL.replace(/\/$/, '')}/audit#${hash.toString()}`;
+  const suffix = query.toString();
+  return suffix ? `${base}?${suffix}` : base;
 }
 
 // 把 db.query 封装成 Promise，方便用 async/await
@@ -1549,8 +1514,8 @@ app.post('/api/login', (req, res) => {
     });
 });
 
-app.get('/api/pam-entry-url', async (req, res) => {
-    const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.headers.token || req.query.token;
+app.all('/api/pam/entry-start', (req, res) => {
+    const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.body?.token || req.query.token;
 
     if (!token) {
         return res.status(401).json({ error: '缺少登录令牌' });
@@ -1558,17 +1523,71 @@ app.get('/api/pam-entry-url', async (req, res) => {
 
     try {
         jwt.verify(token, secretKey);
+    } catch (error) {
+        return res.status(401).json({ error: '登录已过期，请重新登录' });
+    }
 
-        const url = await createPamEntryUrl({
-            scope: String(req.query.scope || PAM_VIEW_SCOPE),
-            eventId: String(req.query.event_id || ''),
-            contractId: String(req.query.contract_id || '')
+    if (!HUB_WEB_ORIGIN || !HUB_TRADING_TOKEN) {
+        return res.status(503).json({ error: '审计平台跳转未配置，请联系管理员' });
+    }
+
+    const pccContractId = String(req.body?.pcc_contract_id || req.query.pcc_contract_id || '').trim();
+
+    res.cookie(PAM_ENTRY_COOKIE, token, {
+        httpOnly: true,
+        sameSite: 'lax',
+        path: '/',
+        maxAge: PAM_ENTRY_COOKIE_TTL_SECONDS * 1000
+    });
+
+    const entryUrl = buildPamEntryUrl(pccContractId);
+
+    if (req.method === 'GET') {
+        return res.redirect(303, entryUrl);
+    }
+
+    res.json({ message: '审计平台跳转地址已生成', entry_url: entryUrl });
+});
+
+app.get(PAM_TRADING_AUTHORIZE_PATH, async (req, res) => {
+    const requestId = String(req.query.request_id || '').trim();
+    if (!requestId) {
+        return res.status(400).send('缺少 request_id');
+    }
+
+    const token = parseCookies(req)[PAM_ENTRY_COOKIE];
+    if (!token) {
+        return res.status(401).send('缺少交易交接凭据，请重新从交易系统进入');
+    }
+
+    let claims;
+    try {
+        claims = jwt.verify(token, secretKey);
+    } catch (error) {
+        return res.status(401).send('交易登录已过期，请重新登录');
+    }
+
+    try {
+        const entry = await hubApiFetch(`/hub/web/requests/${encodeURIComponent(requestId)}`);
+        if (entry.mode !== 'reader') {
+            return res.status(403).send('本次交接的角色不被允许');
+        }
+
+        const subject = `trade:${claims.username || claims.id}`;
+        const launch = await hubApiFetch('/hub/web/launches', {
+            method: 'POST',
+            body: JSON.stringify({ request_id: requestId, subject })
         });
 
-        res.json({ message: '获取审计跳转地址成功', url });
+        if (!launch.launch_url) {
+            throw new Error('审计平台未返回跳转地址');
+        }
+
+        res.clearCookie(PAM_ENTRY_COOKIE, { path: '/' });
+        return res.redirect(303, launch.launch_url);
     } catch (error) {
-        console.error('获取 PAM 跳转地址失败:', error);
-        res.status(500).json({ error: error.message || '获取审计跳转地址失败' });
+        console.error('PAM 授权回调失败:', error);
+        return res.status(502).send(error.message || '审计平台授权失败');
     }
 });
 

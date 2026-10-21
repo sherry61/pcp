@@ -20,21 +20,30 @@ type Service struct {
 	Dir     string // 工作目录
 	Port    string // 端口号
 	Env     map[string]string
-	Mute    bool // true: 不转发该服务的 stdout/stderr（用于刷屏的噪音服务）
+	EnvFile string // 可选：key=value 本地密钥文件（gitignore），在 Env 之后合并
+	Mute    bool   // true: 不转发该服务的 stdout/stderr（用于刷屏的噪音服务）
 }
 
+// goBin 显式指定 Go 工具链，避免依赖启动者登录 shell 的 PATH：
+// root 登录会走 /usr/local/go（较新），普通用户默认 /usr/bin/go（1.13），二者 -mod 默认行为不同。
+const goBin = "/usr/local/go/bin/go"
+
 func main() {
+	// 统一为 -mod=mod：Go 1.16+ 默认 -mod=readonly，遇到不完整的 go.mod 会直接退出；
+	// 设为 mod 后会自动补齐 go.mod/go.sum，并在 go.mod 漂移时自愈。
+	os.Setenv("GOFLAGS", "-mod=mod")
+
 	// 服务清单。消费者依据：本仓库前端/后端调用、frontend/vue.config.js 代理，
 	// 以及服务间调用（autocert→CA8090/8091、eth-peer→hardhat8545、mint→eth-peer3010、
 	// mpc-flask→mpc-server28091）。逐项对应见各项上方注释。
 	//
-	// 注意：backend 通过 PCC_BASE_URL 依赖 127.0.0.1:8130，但本文件未启动该服务；
-	// 若 PCC 由其他方式单独运行可忽略。
+	// 注意：PCC 由部署方单独运行（当前网关 http://10.112.191.163:15130），本文件不启动它。
+	// backend 的 PCC/Hub 接入地址与凭据来自 backend/.env.pam（本地密钥文件，已被 .gitignore 忽略）。
 	services := []Service{
 		// gosdk(8848): 前端 PRE 接口 /pre/*（BuyPermission / TransferFrom / En-Transfer 等）。
 		{
 			Name:    "gosdk",
-			Command: "go",
+			Command: goBin,
 			Args:    []string{"run", "main.go"},
 			Dir:     "/home/super/r/GoSDK/cmd",
 			Port:    "8848",
@@ -46,10 +55,13 @@ func main() {
 			Args:    []string{"/home/super/fqh/backend/main.js"},
 			Dir:     "/home/super/fqh/backend",
 			Port:    "3000",
+			EnvFile: "/home/super/fqh/backend/.env.pam",
 			Env: map[string]string{
-				"PCC_CLIENT_ID":     "trading-system",
-				"PCC_CLIENT_SECRET": "replace-with-trading-system-signing-secret",
-				"PCC_BASE_URL":      "http://127.0.0.1:8130",
+				"PCC_CLIENT_ID":    "trading-system",
+				"PCP_BASE_URL":     "http://10.112.191.163:15130",
+				"HUB_WEB_ORIGIN":   "http://10.112.191.163:15140",
+				"HUB_API_BASE_URL": "http://127.0.0.1:18140",
+				"PCC_PRE_ROOT":     "/home/super/tr/pcc-engine",
 			},
 		},
 		// chainmaker-ca(8090): 前端 /api/ca 代理 + autocert 的 /api/ca/gencert。
@@ -79,7 +91,7 @@ func main() {
 		// certaddr(9092): 前端 /cert-to-addr + autocert 调用。
 		{
 			Name:    "certaddr",
-			Command: "go",
+			Command: goBin,
 			Args:    []string{"run", "cmccert.go"},
 			Dir:     "/home/super/r/chainmaker/chainmaker-go/tools/cmc/address",
 			Port:    "9092",
@@ -87,7 +99,7 @@ func main() {
 		// autocert(9081): 前端 /generate 代理（自动申请证书），内部调 CA 8090/8091。
 		{
 			Name:    "autocert",
-			Command: "go",
+			Command: goBin,
 			Args:    []string{"run", "autocert.go"},
 			Dir:     "/home/super/fqh/autocert",
 			Port:    "9081",
@@ -97,7 +109,7 @@ func main() {
 		/*
 			{
 				Name:    "gosdk2",
-				Command: "go",
+				Command: goBin,
 				Args:    []string{"run", "main.go"},
 				Dir:     "/home/super/r/GoSDK2/cmd",
 				Port:    "8849",
@@ -122,7 +134,7 @@ func main() {
 		// mint-gosdk(8009): 前端/后端调用 /pre/Mint、CB-In/Out、BurnToken。
 		{
 			Name:    "mint-gosdk",
-			Command: "go",
+			Command: goBin,
 			Args:    []string{"run", "main.go"},
 			Dir:     "/home/super/lihuihao/otherwork/mint_service/GoSDK/cmd",
 			Port:    "8009",
@@ -212,7 +224,14 @@ func startService(service Service) error {
 		}()
 	}
 
-	cmd.Env = mergeEnv(os.Environ(), service.Env)
+	overrides := make(map[string]string, len(service.Env)+8)
+	for key, value := range service.Env {
+		overrides[key] = value
+	}
+	for key, value := range loadEnvFile(service.EnvFile) {
+		overrides[key] = value // 本地密钥文件优先于内置默认值
+	}
+	cmd.Env = mergeEnv(os.Environ(), overrides)
 
 	if err := cmd.Start(); err != nil {
 		logf("[失败] %-18s 启动命令失败: %v", service.Name, err)
@@ -231,6 +250,42 @@ func startService(service Service) error {
 	}
 	logf("[退出] %-18s 正常停止", service.Name)
 	return nil
+}
+
+// loadEnvFile 读取简单的 key=value 本地密钥文件（支持 # 注释、可选的 export 前缀和引号）。
+// 文件不存在或不可读时返回空 map，不影响服务启动。
+func loadEnvFile(path string) map[string]string {
+	values := map[string]string{}
+	if strings.TrimSpace(path) == "" {
+		return values
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return values
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		key := strings.TrimSpace(parts[0])
+		value := strings.Trim(strings.TrimSpace(parts[1]), "\"'")
+		if key == "" {
+			continue
+		}
+		values[key] = value
+	}
+
+	return values
 }
 
 func mergeEnv(base []string, overrides map[string]string) []string {

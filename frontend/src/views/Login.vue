@@ -83,12 +83,16 @@ export default {
 },
   methods: {
     async fetchPamEntryUrl(token) {
-      const response = await axios.get("http://10.112.191.163:3000/api/pam-entry-url", {
-        headers: {
-          Authorization: `Bearer ${token}`
+      const response = await axios.post(
+        "http://10.112.191.163:3000/api/pam/entry-start",
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
         }
-      });
-      return response.data?.url;
+      );
+      return response.data?.entry_url;
     },
 
     async login() {
