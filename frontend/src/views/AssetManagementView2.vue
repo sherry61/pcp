@@ -2042,63 +2042,58 @@ updatePurchasedAssetsPagination() {
     },*/
     // 授权操作
   async confirmAuthorization() {
-    if (this.selectedAsset && this.authorizationData.targetAddress) {
-      const asset = this.selectedAsset;
-      // 用户点击确认后立即收起输入弹窗，链上授权在后台继续执行。
+    if (!this.selectedAsset) {
+      this.$message?.warning('请选择资产');
+      return;
+    }
+
+    const targetAddress = String(this.authorizationData.targetAddress || '').trim();
+    if (!targetAddress) {
+      this.$message?.warning('请填写托管码');
+      return;
+    }
+
+    const asset = this.selectedAsset;
+    const indivisible = this.isIndivisible(asset.industry);
+    const authorizationQuantity = indivisible ? 1 : this.authorizationData.authorizationQuantity;
+    let owner;
+
+    try {
+      owner = await this.getOwnerOfAsset(asset.fileHash);
+    } catch (error) {
+      this.errorMessage = '获取资产拥有者失败，请稍后再试。';
+      this.$message?.error(this.errorMessage);
+      return;
+    }
+
+    const payload = indivisible
+      ? { owner, to: targetAddress, tokenId: asset.fileHash, isApproval: 'true' }
+      : { to: targetAddress, amount: authorizationQuantity.toString() };
+    const apiUrl = indivisible
+      ? 'http://10.112.191.163:8848/pre/SetApproval'
+      : 'http://10.112.191.163:8848/pre/En-Approve';
+
+    try {
+      const response = await axios.post(apiUrl, payload);
+      if (!(response.status === 200 && (response.data.code === 0 || response.data.code === '0'))) {
+        throw new Error(response.data.message || '链上授权失败');
+      }
+
+      await axios.post('http://10.112.191.163:3000/api/update-agent', {
+        file_hash: asset.fileHash,
+        agent_addr: targetAddress,
+        agent_count: authorizationQuantity
+      });
+
+      asset.agentAddr = targetAddress;
+      asset.isProxied = 1;
       this.closeAuthorizationModal();
-      let owner;
-
-      // 获取资产的拥有者
-      try {
-        owner = await this.getOwnerOfAsset(asset.fileHash); // 获取资产拥有者
-      } catch (error) {
-        this.errorMessage = '获取资产拥有者失败，请稍后再试。';
-        return;
-      }
-
-      // 判断资产是可分割的还是不可分割的
-      let authorizationQuantity = this.isIndivisible(asset.industry) ? 1 : this.authorizationData.authorizationQuantity;
-
-      // 构建请求参数
-      const payload = this.isIndivisible(asset.industry)
-        ? {
-            owner: owner, // 资产拥有者
-            to: this.authorizationData.targetAddress, // 被授权地址
-            tokenId: asset.fileHash,  // 资产的 tokenId
-            isApproval: 'true',  // 授权为 true
-          }
-        : {
-            to: this.authorizationData.targetAddress, // 目标地址
-            amount: authorizationQuantity.toString(), // 授权数量
-          };
-
-      // 判断资产是可分割的还是不可分割的，选择正确的调用接口
-      const apiUrl = this.isIndivisible(asset.industry)
-        ? 'http://10.112.191.163:8848/pre/SetApproval' // 不可分割资产
-        : 'http://10.112.191.163:8848/pre/En-Approve'; // 可分割资产
-
-      try {
-        const response = await axios.post(apiUrl, payload);
-
-        if (response.status === 200 && (response.data.code === 0 || response.data.code === '0')) {
-          console.log('授权成功:', response);
-          await axios.post('http://10.112.191.163:3000/api/update-agent', {
-            file_hash: asset.fileHash,
-            agent_addr: this.authorizationData.targetAddress,
-            agent_count: authorizationQuantity
-          });
-          asset.agentAddr = this.authorizationData.targetAddress;
-          asset.isProxied = 1;
-          this.showAuthorizationSuccessModal = true; // 显示授权成功弹窗
-        } else {
-          this.errorMessage = '授权失败，错误信息: ' + response.data.message;
-        }
-      } catch (error) {
-        console.error('授权失败:', error);
-        this.errorMessage = '授权失败，请稍后再试。';
-      }
-    } else {
-      this.errorMessage = '请填写所有必填字段';
+      this.showAuthorizationSuccessModal = true;
+      this.$message?.success('代理托管已设置');
+    } catch (error) {
+      console.error('授权失败:', error);
+      this.errorMessage = '授权失败：' + (error?.response?.data?.message || error.message || '请稍后再试');
+      this.$message?.error(this.errorMessage);
     }
   },
 
@@ -2873,8 +2868,9 @@ body {
   display: none;
 }
 
-.styled-table td:hover::after {
+.styled-table td[data-fulltext]:hover::after {
   display: block;
+  pointer-events: none;
 }
 
 /* 表头样式 */
