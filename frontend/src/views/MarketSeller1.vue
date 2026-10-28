@@ -49,6 +49,16 @@
               <span class="k">资产交付方法:</span>
               <span class="v">{{ a.pc_type_label || "未选择" }}</span>
             </div>
+            <template v-if="normalizePcType(a.pc_type) === 'TEE'">
+              <div class="row">
+                <span class="k">模型哈希:</span>
+                <span class="v mono" :title="a.model_file_hash">{{ abbreviateHash(a.model_file_hash) }}</span>
+              </div>
+              <div class="row">
+                <span class="k">约定交付次数:</span>
+                <span class="v">{{ a.delivery_limit }} 次</span>
+              </div>
+            </template>
 
             <div class="actions">
               <button
@@ -58,6 +68,13 @@
                 @click="confirmTransaction(a)"
               >
                 {{ isTransactionExpired(a) ? '交易已过期' : '确认交易' }}
+              </button>
+              <button
+                class="btn reject"
+                :disabled="a.status !== '待确认'"
+                @click="confirmTransaction(a, false)"
+              >
+                拒绝交易
               </button>
             </div>
           </div>
@@ -114,6 +131,12 @@ export default {
 
     normalizePcType(value) {
       return String(value || "").trim().toUpperCase();
+    },
+
+    abbreviateHash(value) {
+      const hash = String(value || '');
+      if (!hash) return '未生成';
+      return hash.length > 24 ? `${hash.slice(0, 12)}…${hash.slice(-12)}` : hash;
     },
 
     buildUsageControlVerifyPayload({
@@ -251,6 +274,8 @@ export default {
               quantity: tx.quantity,
               expiration_time: tx.expiration_time,
               pc_type: tx.pc_type || "",
+              model_file_hash: tx.model_file_hash || "",
+              delivery_limit: tx.delivery_limit,
               pc_type_label: ({
                 HE: "同态加密",
                 PRE: "代理重加密",
@@ -329,11 +354,23 @@ export default {
       }
     },
 
-    async confirmTransaction(asset) {
+    async confirmTransaction(asset, isAgree = true) {
   let isPostChainStep = false;
   try {
-    const isAgree = true;
     const pcType = this.normalizePcType(asset.pc_type);
+
+    if (!isAgree) {
+      const response = await axios.post('http://10.112.191.163:3000/api/seller-confirm-transaction', {
+        seller_address: asset.seller_address,
+        transaction_id: asset.transaction_id,
+        isAgree: false,
+      });
+      if (response.status === 200 && response.data.status === '已拒绝') {
+        this.$message.success('已拒绝该交易申请');
+        await this.fetchPendingAssets();
+      }
+      return;
+    }
 
     if (this.isTransactionExpired(asset)) {
       this.$message.error('交易已过期，不能确认');
@@ -379,9 +416,15 @@ export default {
     this.$message.success('交易已在数据库中确认');
     asset.status = '已确认';
 
+    if (pcType === 'TEE' && !response.data.contractCreated) {
+      this.$message.error('TEE 数字合约未生成，请联系管理员检查');
+      return;
+    }
+
     
 
-    try {
+    if (pcType !== 'TEE') {
+      try {
   const tx        = transactionInfo;
   const assetInfo = assetDetailRes.data || {};
 
@@ -442,6 +485,9 @@ export default {
   console.error("保存数字合约失败:", err);
   this.$message.error("数字合约保存失败");
 }
+    } else {
+      this.$message.success('TEE 数字合约已生成');
+    }
 
     // --- Step 3: 处理所有链上交易（所有权和使用权）---
     isPostChainStep = true;
@@ -637,6 +683,11 @@ export default {
   background: #007bff;
   color: #fff;
 }
+.btn.reject {
+  background: #fff;
+  color: #d92d20;
+  border: 1px solid #fda29b;
+}
 .pc-row {
   align-items: center;
 }
@@ -737,6 +788,7 @@ export default {
 .actions {
   display: flex;
   justify-content: flex-end;
+  gap: 10px;
   padding-top: 6px;
 }
 .empty {

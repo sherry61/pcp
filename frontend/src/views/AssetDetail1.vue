@@ -240,6 +240,35 @@
               <div v-else class="no-permissions">暂无权限可选</div>
             </div>
 
+            <div v-if="isTeeAsset" class="form-row asset-data-schema-section">
+              <label>资产数据格式：</label>
+              <div class="asset-data-schema-card" v-loading="teeSchemaLoading">
+                <div v-if="teeSchemaLoading" class="schema-loading-placeholder">正在读取资产字段…</div>
+                <el-alert
+                  v-else-if="teeSchemaError"
+                  title="资产数据格式加载失败"
+                  :description="teeSchemaError"
+                  type="warning"
+                  :closable="false"
+                  show-icon
+                />
+                <template v-else-if="teeAssetSchema">
+                  <div class="schema-meta-row">
+                    <div class="schema-summary">字段数量：<strong>{{ teeAssetFields.length }}</strong></div>
+                    <el-button
+                      size="small"
+                      plain
+                      :loading="teeTemplateDownloading"
+                      @click="downloadTeeDataFormatTemplate"
+                    >下载格式模板</el-button>
+                  </div>
+                  <div class="schema-fields">
+                    <el-tag v-for="field in teeAssetFields" :key="field" size="small" effect="plain">{{ field }}</el-tag>
+                  </div>
+                </template>
+              </div>
+            </div>
+
 
             <!-- 过期时间输入框（当选择非“所有权”的权限时显示） -->
 <div class="form-row" v-if="showExpirationInput">
@@ -267,12 +296,15 @@
               <div class="form-control">{{ getPcTypeLabel(selectedPcType || asset.pc_type) }}</div>
             </div>
 
-            <!-- TEE 资产：计算模型选择（当前仅“加权计算模型”，前端 mock） -->
+            <!-- TEE 交易在申请阶段提交模型哈希来源。 -->
             <div class="form-row" v-if="isTeeAsset">
-              <label for="purchase-model"><strong>模型选择：</strong></label>
-              <select id="purchase-model" v-model="selectedModel" class="form-control">
-                <option value="weighted_calc">加权计算模型</option>
-              </select>
+              <label for="purchase-model"><strong>计算模型文件：</strong></label>
+              <input id="purchase-model" type="file" accept=".c" class="form-control file-control"
+                @change="onTeeModelChange">
+              <small class="form-help">
+                仅支持 .c 文件。后端只进行流式 SHA-256 计算，不保存文件内容。
+              </small>
+              <small v-if="teeModelFile" class="selected-file">已选择：{{ teeModelFile.name }}</small>
             </div>
 
             <!-- 交易地点暂仅用于前端申请信息展示，不提交后端或上链。 -->
@@ -352,6 +384,8 @@ import Chart from 'chart.js/auto';
 import axios from 'axios';
 import QRCode from 'qrcode';
 import { provinceAndCityData } from 'element-china-area-data';
+import teeContractTerms from '@/utils/teeContractTerms';
+import teeApi from '@/utils/teeApi';
 
 export default {
   name: 'AssetDetail',
@@ -432,8 +466,11 @@ export default {
       transactionId: null, // 保存返回的交易ID
 
       selectedPcType: '',
-      // TEE 资产购买时选择的计算模型（当前仅“加权计算模型”，前端 mock）
-      selectedModel: 'weighted_calc',
+      teeModelFile: null,
+      teeSchemaLoading: false,
+      teeSchemaError: '',
+      teeAssetSchema: null,
+      teeTemplateDownloading: false,
       bidPrice: null,
       bidSubmitting: false,
       auctionTimer: null,
@@ -492,11 +529,18 @@ export default {
   isTeeAsset() {
     const pcType = String(this.selectedPcType || (this.asset && this.asset.pc_type) || '').trim().toUpperCase();
     return pcType === 'TEE';
+  },
+
+  teeAssetFields() {
+    if (!this.teeAssetSchema) return [];
+    const fields = Array.isArray(this.teeAssetSchema.fields) ? this.teeAssetSchema.fields : [];
+    return [this.teeAssetSchema.identifierField, ...fields].filter(Boolean);
   }
 
   },
 
  async mounted() {
+  window.addEventListener('keydown', this.handleDevPaymentShortcut);
   const token = localStorage.getItem('token');
   if (token) {
       try {
@@ -677,10 +721,8 @@ export default {
       // 清除之前的错误提示
       this.errorMessage = '';
 
-      // 验证输入是否为有效数字且大于0
-      if (this.purchaseQuantity < 0) {
-        this.errorMessage = '购买数量必须大于等于0';
-        this.purchaseQuantity = 1; // 自动修正为最小值
+      if (!Number.isSafeInteger(this.purchaseQuantity) || this.purchaseQuantity < 1) {
+        this.errorMessage = '购买数量必须为大于 0 的整数';
       }
     },
 
@@ -713,6 +755,11 @@ async openPurchaseModal() {
   this.expirationTime = '';
   this.purchaseQuantity = 1;
   this.purchaseTradeLocation = this.asset.trade_location ? String(this.asset.trade_location).split('-') : [];
+  this.teeModelFile = null;
+  this.teeSchemaLoading = false;
+  this.teeSchemaError = '';
+  this.teeAssetSchema = null;
+  this.teeTemplateDownloading = false;
   this.errorMessage = '';
 
   // 优先读 permissions；没有的话再读平铺字段
@@ -736,6 +783,7 @@ async openPurchaseModal() {
 
   // 显示弹窗
   this.showPurchaseModal = true;
+  if (this.isTeeAsset) this.loadTeeAssetSchema();
 },
 
 
@@ -748,6 +796,55 @@ async openPurchaseModal() {
     },
     closeConfirmModal() {
       this.showConfirmModal = false;
+    },
+
+    onTeeModelChange(event) {
+      const file = event.target.files?.[0] || null;
+      if (file && !/\.c$/i.test(file.name || '')) {
+        alert('计算模型文件必须为 .c 文件');
+        event.target.value = '';
+        this.teeModelFile = null;
+        return;
+      }
+      this.teeModelFile = file;
+    },
+
+    async loadTeeAssetSchema() {
+      const assetId = String(this.asset.file_hash || '').trim();
+      if (!assetId) return;
+      this.teeSchemaLoading = true;
+      this.teeSchemaError = '';
+      this.teeAssetSchema = null;
+      try {
+        const response = await teeApi.assetMaterials(this.asset.file_hash);
+        if (!response?.weightSchema?.fields?.length) throw new Error('当前资产尚未提供可用的数据字段');
+        this.teeAssetSchema = response.weightSchema;
+      } catch (error) {
+        this.teeSchemaError = error.response?.data?.message || error.message || '无法读取资产数据格式';
+      } finally {
+        this.teeSchemaLoading = false;
+      }
+    },
+
+    async downloadTeeDataFormatTemplate() {
+      const assetId = String(this.asset.file_hash || '').trim();
+      if (!assetId || this.teeTemplateDownloading) return;
+      this.teeTemplateDownloading = true;
+      try {
+        const blob = await teeApi.dataFormatTemplate(assetId);
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'asset-data-format-template.csv';
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        alert(error.response?.data?.message || error.message || '格式模板下载失败');
+      } finally {
+        this.teeTemplateDownloading = false;
+      }
     },
 
     async fetchCertificates() {
@@ -790,6 +887,11 @@ async openPurchaseModal() {
     async confirmPurchase() {
   if (this.insufficientBalance) return;
 
+  if (!Number.isSafeInteger(this.purchaseQuantity) || this.purchaseQuantity < 1) {
+    this.errorMessage = '购买数量必须为大于 0 的整数';
+    return;
+  }
+
  let certAddr = this.defaultTradeCert?.address;
 
 if (!certAddr) {
@@ -818,6 +920,15 @@ if (!certAddr) {
     return;
   }
 
+  const teeTerms = teeContractTerms.validateTeeTerms({
+    pcType: this.selectedPcType,
+    file: this.teeModelFile
+  });
+  if (!teeTerms.valid) {
+    alert(teeTerms.message);
+    return;
+  }
+
   if (this.showExpirationInput && this.expirationTime) {
     const expirationTimestamp = new Date(this.expirationTime).getTime();
     if (!Number.isFinite(expirationTimestamp) || expirationTimestamp <= Date.now()) {
@@ -843,8 +954,17 @@ if (!certAddr) {
   console.log('即将发送的请求体:', JSON.stringify(requestBody, null, 2)); // ⭐⭐
 
   // 改为：先创建支付订单并展示二维码，付款成功后由后端写入交易
+  let paymentPayload = requestBody;
+  if (this.isTeeAsset) {
+    const formData = new FormData();
+    Object.entries(requestBody).forEach(([key, value]) => {
+      if (value !== undefined && value !== null) formData.append(key, String(value));
+    });
+    formData.append('modelFile', this.teeModelFile);
+    paymentPayload = formData;
+  }
   this.closePurchaseModal();
-  await this.startPayment(requestBody);
+  await this.startPayment(paymentPayload);
 },
 
 // ===== 支付宝扫码支付 =====
@@ -857,12 +977,21 @@ async startPayment(requestBody) {
   this.paymentAmount = Number(this.asset.price || 1200).toFixed(2);
 
   try {
-    const response = await axios.post('http://10.112.191.163:3000/api/create-payment', {
-      ...requestBody,
-      owner_id: this.asset.user_id,
-      amount: this.asset.price || 1200,
-      subject: `数字资产购买-${this.asset.asset_name || this.asset.file_hash}`,
-    });
+    let payload;
+    if (requestBody instanceof FormData) {
+      payload = requestBody;
+      payload.append('owner_id', String(this.asset.user_id ?? ''));
+      payload.append('amount', String(this.asset.price || 1200));
+      payload.append('subject', `数字资产购买-${this.asset.asset_name || this.asset.file_hash}`);
+    } else {
+      payload = {
+        ...requestBody,
+        owner_id: this.asset.user_id,
+        amount: this.asset.price || 1200,
+        subject: `数字资产购买-${this.asset.asset_name || this.asset.file_hash}`,
+      };
+    }
+    const response = await axios.post('http://10.112.191.163:3000/api/create-payment', payload);
 
     if (response.status === 201 && response.data.qr_code) {
       this.paymentOrderNo = response.data.out_trade_no;
@@ -913,6 +1042,19 @@ stopPaymentPolling() {
   if (this.paymentPollingTimer) {
     clearInterval(this.paymentPollingTimer);
     this.paymentPollingTimer = null;
+  }
+},
+
+async handleDevPaymentShortcut(event) {
+  if (!event.ctrlKey || !event.shiftKey || String(event.key).toLowerCase() !== 'y') return;
+  if (!this.showPaymentModal || !this.paymentOrderNo) return;
+  event.preventDefault();
+  try {
+    await axios.post(`http://10.112.191.163:3000/api/dev/payment-success/${this.paymentOrderNo}`);
+    console.log('[dev] 已跳过支付', this.paymentOrderNo);
+  } catch (error) {
+    console.error('[dev] 跳过支付失败:', error);
+    alert('跳过支付失败：' + (error.response?.data?.message || error.message));
   }
 },
 
@@ -1002,6 +1144,7 @@ closePaymentModal() {
     }
   },
   beforeUnmount() {
+    window.removeEventListener('keydown', this.handleDevPaymentShortcut);
     if (this.auctionTimer) window.clearInterval(this.auctionTimer);
     this.stopPaymentPolling();
   }
@@ -1453,6 +1596,64 @@ body {
 .form-control:focus {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+}
+
+.file-control {
+  padding: 7px 10px;
+}
+
+.form-help,
+.selected-file {
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.selected-file {
+  color: #2563eb;
+}
+
+.asset-data-schema-card {
+  padding: 10px 12px;
+  border: 1px solid #dcdfe6;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.schema-meta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 7px;
+}
+
+.schema-summary {
+  margin: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.schema-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+}
+
+.schema-fields :deep(.el-tag) {
+  color: #4b5563;
+  border-color: #dcdfe6;
+  background: #f8f9fb;
+  font-size: 12px;
+  height: 24px;
+  line-height: 22px;
+}
+
+.schema-loading-placeholder {
+  color: #909399;
+  font-size: 12px;
+  line-height: 24px;
 }
 
 /* ===== 权益勾选：改小、紧凑一些 ===== */

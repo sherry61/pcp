@@ -19,6 +19,8 @@ const FormData = require('form-data');
 const { registerFlRoutes, registerHeRoutes, registerPreRoutes } = require('./pcp');
 const { registerMpcRoutes } = require('./mpc');
 const { registerTeeRoutes, createTeeClient } = require('./tee');
+const { createModelHashStorage } = require('./tee/modelHashStorage');
+const { validateTeeTransactionProposal, buildTeeDigitalContract } = require('./tee/contractFinalization');
 const alipay = require('./config/alipay');
 const logger = require('./logger');
 
@@ -36,6 +38,39 @@ const secretKey = process.env.JWT_SECRET || '123456'; // 你原来用到的 JWT 
 // multer（下面很多路由会用到）
 const storage = multer.memoryStorage();
 const upload = multer({ storage });
+
+const TEE_MODEL_MAX_BYTES = Math.max(1, Number(process.env.TEE_MODEL_MAX_BYTES || 10 * 1024 * 1024));
+const teeModelUpload = multer({ storage: createModelHashStorage({ maxBytes: TEE_MODEL_MAX_BYTES }) });
+const acceptTeeModelUpload = (req, res, next) => {
+    teeModelUpload.single('modelFile')(req, res, (error) => {
+        if (!error) return next();
+        return res.status(400).json({ message: error.message || 'TEE 计算模型上传失败' });
+    });
+};
+// 交付阶段的模型必须只在当前请求内存中短暂存在；购买申请阶段的
+// createModelHashStorage 只保留哈希，不能用于这里的加密转发。
+const teeDeliveryModelUpload = multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: TEE_MODEL_MAX_BYTES },
+    fileFilter: (req, file, callback) => {
+        if (/\.c$/i.test(String(file?.originalname || ''))) return callback(null, true);
+        const error = new Error('计算模型必须为 .c 文件');
+        error.code = 'INVALID_MODEL_FILE';
+        error.statusCode = 400;
+        return callback(error);
+    }
+});
+const acceptTeeDeliveryModelUpload = (req, res, next) => {
+    teeDeliveryModelUpload.single('modelFile')(req, res, (error) => {
+        if (!error) return next();
+        const tooLarge = error.code === 'LIMIT_FILE_SIZE';
+        return res.status(400).json({
+            success: false,
+            code: tooLarge ? 'MODEL_TOO_LARGE' : (error.code || 'INVALID_MODEL_FILE'),
+            message: tooLarge ? `计算模型不能超过 ${TEE_MODEL_MAX_BYTES} 字节` : (error.message || '计算模型上传失败')
+        });
+    });
+};
 
 // 远端地址与证书路径（尽量都集中在上面）
 const REMOTE_EXPORT_URL = 'http://10.112.14.6:8083/api/export-result'
@@ -640,12 +675,30 @@ app.use(express.urlencoded({ extended: true, limit: '50mb' })); // 解析 applic
 
 // MySQL连接配置；通过 MAIN_DB_NAME 切换测试库/正式库。
 const MAIN_DB_NAME = process.env.MAIN_DB_NAME || 'r01_prod';
-const db = mysql.createConnection({
+const MAIN_DB_CONFIG = {
     host: 'localhost',
     user: 'root',
     password: '123456',
     database: MAIN_DB_NAME
-});
+};
+const db = mysql.createConnection(MAIN_DB_CONFIG);
+
+function withMainDbTransaction(work) {
+  const connection = mysql.createConnection(MAIN_DB_CONFIG);
+  const query = (sql, params = []) => new Promise((resolve, reject) => {
+    connection.query(sql, params, (error, results) => error ? reject(error) : resolve(results));
+  });
+  const begin = () => new Promise((resolve, reject) => connection.beginTransaction((error) => error ? reject(error) : resolve()));
+  const commit = () => new Promise((resolve, reject) => connection.commit((error) => error ? reject(error) : resolve()));
+  const rollback = () => new Promise((resolve) => connection.rollback(() => resolve()));
+  const end = () => new Promise((resolve) => connection.end(() => resolve()));
+
+  return begin()
+    .then(() => work({ query, connection }))
+    .then(async (result) => { await commit(); return result; })
+    .catch(async (error) => { await rollback(); throw error; })
+    .finally(end);
+}
 
 db.connect(err => {
     if (err) {
@@ -883,7 +936,9 @@ registerMpcRoutes({
 registerTeeRoutes({
   app,
   upload,
+  modelUpload: acceptTeeDeliveryModelUpload,
   dbQuery,
+  withDbTransaction: withMainDbTransaction,
   // The existing VM integration already has the service credential. Prefer an
   // explicitly configured TEE token, but reuse it so TEE create/start works
   // in current deployments without a second manual secret configuration.
@@ -2933,6 +2988,7 @@ function insertTransaction(payload, cb) {
         processing_type,
         expiration_time,
         model_file_hash,
+        delivery_limit,
         pc_type,
         price
     } = payload || {};
@@ -2940,6 +2996,7 @@ function insertTransaction(payload, cb) {
     const ownerId = owner_id || null;
     const sellerId = seller_id || null;
     const safeQuality = (typeof quality === 'string' && quality.trim() !== '') ? quality : null;
+    const safeDeliveryLimit = delivery_limit ?? 10;
     const formattedExpirationTime = (expiration_time && typeof expiration_time === 'string')
         ? expiration_time.replace('T', ' ') + ':00'
         : null;
@@ -2958,8 +3015,9 @@ function insertTransaction(payload, cb) {
             processing_type,
             expiration_time,
             model_file_hash,
+            delivery_limit,
             pc_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
     const values = [
         asset_id,
@@ -2974,6 +3032,7 @@ function insertTransaction(payload, cb) {
         processing_type,
         formattedExpirationTime,
         model_file_hash,
+        safeDeliveryLimit,
         pc_type || null
     ];
 
@@ -2994,7 +3053,7 @@ function insertTransaction(payload, cb) {
     });
 }
 
-app.post('/api/save-transaction', (req, res) => {
+app.post('/api/save-transaction', acceptTeeModelUpload, (req, res) => {
     const {
         asset_id,
         owner_id,
@@ -3005,12 +3064,25 @@ app.post('/api/save-transaction', (req, res) => {
         quality,
         processing_type,
         expiration_time,
-        model_file_hash,
         pc_type
     } = req.body;
 
     console.log("后端接收到的 quality 值是：", quality);
     console.log("后端接收到的 expiration_time 值是：", expiration_time);
+
+    let proposal;
+    try {
+        proposal = validateTeeTransactionProposal({
+            pcType: pc_type,
+            modelFileHash: req.file?.modelHash,
+            purchaseQuantity: quantity
+        });
+        if (req.file && proposal.pcType !== 'TEE') {
+            return res.status(400).json({ message: '只有 TEE 交易可以上传计算模型' });
+        }
+    } catch (error) {
+        return res.status(400).json({ message: error.message });
+    }
 
     // 检查请求体是否缺少必要参数
     if (!asset_id || !buyer_address || !seller_address) {
@@ -3027,8 +3099,9 @@ app.post('/api/save-transaction', (req, res) => {
         quality,
         processing_type,
         expiration_time,
-        model_file_hash,
-        pc_type
+        model_file_hash: proposal.modelFileHash,
+        delivery_limit: proposal.pcType === 'TEE' ? proposal.deliveryLimit : 10,
+        pc_type: proposal.pcType
     }, (err, transactionId) => {
         if (err) {
             return res.status(500).json({ error: '服务器内部错误' });
@@ -3094,7 +3167,7 @@ function finalizeOrderPaid(outTradeNo, alipayResult, cb) {
 }
 
 // 创建支付订单并返回二维码
-app.post('/api/create-payment', (req, res) => {
+app.post('/api/create-payment', acceptTeeModelUpload, (req, res) => {
     if (!alipay.enabled) {
         return res.status(503).json({ message: '支付宝支付未配置' });
     }
@@ -3102,6 +3175,20 @@ app.post('/api/create-payment', (req, res) => {
     const { asset_id, buyer_address, seller_address, subject } = b;
     if (!asset_id || !buyer_address || !seller_address) {
         return res.status(400).json({ message: '缺少必要的参数' });
+    }
+
+    let proposal;
+    try {
+        proposal = validateTeeTransactionProposal({
+            pcType: b.pc_type,
+            modelFileHash: req.file?.modelHash,
+            purchaseQuantity: b.quantity
+        });
+        if (req.file && proposal.pcType !== 'TEE') {
+            return res.status(400).json({ message: '只有 TEE 交易可以上传计算模型' });
+        }
+    } catch (error) {
+        return res.status(400).json({ message: error.message });
     }
 
     resolveAssetPrice(asset_id, b.amount, (perr, amount) => {
@@ -3119,8 +3206,9 @@ app.post('/api/create-payment', (req, res) => {
             quality: b.quality,
             processing_type: b.processing_type,
             expiration_time: b.expiration_time,
-            model_file_hash: b.model_file_hash,
-            pc_type: b.pc_type
+            model_file_hash: proposal.modelFileHash,
+            delivery_limit: proposal.pcType === 'TEE' ? proposal.deliveryLimit : 10,
+            pc_type: proposal.pcType
         };
         const finalSubject = (subject && String(subject).trim()) || ('数字资产购买-' + asset_id);
 
@@ -3191,6 +3279,23 @@ app.get('/api/payment-status/:outTradeNo', (req, res) => {
             console.error('查单异常:', e);
             res.status(502).json({ message: '查单异常', detail: e.message });
         });
+    });
+});
+
+// 开发/测试环境：跳过支付宝扫码，直接把订单置为已支付并写入交易
+app.post('/api/dev/payment-success/:outTradeNo', (req, res) => {
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_PAYMENT !== '1') {
+        return res.status(403).json({ message: 'dev endpoint disabled' });
+    }
+    const outTradeNo = String(req.params.outTradeNo || '').trim();
+    if (!outTradeNo) {
+        return res.status(400).json({ message: '缺少订单号' });
+    }
+    finalizeOrderPaid(outTradeNo, { tradeNo: `DEV${Date.now()}`, dev_skip: true }, (err, txId) => {
+        if (err) {
+            return res.status(500).json({ message: '跳过支付失败', error: err.message });
+        }
+        res.json({ status: 'PAID', transaction_id: txId });
     });
 });
 
@@ -3433,44 +3538,87 @@ app.post('/api/seller-delete-transaction', (req, res) => {
     });
 });
 
-app.post('/api/seller-confirm-transaction', (req, res) => {
-    const { seller_address, transaction_id, isAgree } = req.body;
-
-    // 检查请求体是否缺少必要参数
+app.post('/api/seller-confirm-transaction', async (req, res) => {
+    const { seller_address, transaction_id, isAgree } = req.body || {};
     if (!transaction_id || typeof isAgree !== 'boolean' || !seller_address) {
         return res.status(400).json({ message: '缺少必要的参数' });
     }
 
-    // 获取当前交易的状态，如果卖方是正确的地址并且交易是待确认状态，才允许更新
-    const getTransactionQuery = `
-        SELECT * FROM transactions
-        WHERE transaction_id = ? AND seller_address = ? AND status = '待确认'`;
-
-    db.query(getTransactionQuery, [transaction_id, seller_address], (err, results) => {
-        if (err) {
-            console.error('查询交易失败:', err);
-            return res.status(500).json({ error: '服务器内部错误' });
-        }
-
-        if (results.length === 0) {
-            return res.status(404).json({ message: '未找到待确认交易' });
-        }
-
-        // 更新交易状态
-        const newStatus = isAgree ? '已确认' : '已拒绝';
-        const updateQuery = `
-            UPDATE transactions
-            SET status = ?
-            WHERE transaction_id = ?`;
-
-        db.query(updateQuery, [newStatus, transaction_id], (updateErr, updateResults) => {
-            if (updateErr) {
-                console.error('更新交易状态失败:', updateErr);
-                return res.status(500).json({ error: '服务器内部错误' });
+    try {
+        const result = await withMainDbTransaction(async ({ query }) => {
+            const rows = await query(
+              `SELECT t.*, ar.asset_name, ar.description
+               FROM transactions t
+               LEFT JOIN asset_registrations ar ON ar.file_hash = t.asset_id
+               WHERE t.transaction_id = ? AND t.seller_address = ? AND t.status = '待确认'
+               FOR UPDATE`,
+              [transaction_id, seller_address]
+            );
+            if (!rows.length) {
+                const error = new Error('未找到待确认交易');
+                error.statusCode = 404;
+                throw error;
             }
-            res.status(200).json({ message: '交易状态已更新', status: newStatus });
+
+            const transaction = rows[0];
+            const newStatus = isAgree ? '已确认' : '已拒绝';
+            let contract = null;
+
+            if (isAgree && String(transaction.pc_type || '').trim().toUpperCase() === 'TEE') {
+                const expirationValue = transaction.expiration_time;
+                const expirationMs = expirationValue instanceof Date
+                  ? expirationValue.getTime()
+                  : (expirationValue ? new Date(String(expirationValue).replace(' ', 'T')).getTime() : null);
+                if (Number.isFinite(expirationMs) && expirationMs <= Date.now()) {
+                    const error = new Error('数字合约已过期，不能确认交易');
+                    error.statusCode = 409;
+                    error.code = 'CONTRACT_EXPIRED';
+                    throw error;
+                }
+
+                contract = buildTeeDigitalContract({
+                    transaction,
+                    asset: { asset_name: transaction.asset_name, description: transaction.description }
+                });
+                const existing = await query(
+                  'SELECT id FROM digital_contracts WHERE transaction_id = ? LIMIT 1 FOR UPDATE',
+                  [transaction_id]
+                );
+                if (existing.length) {
+                    const error = new Error('该交易的数字合约已经存在');
+                    error.statusCode = 409;
+                    throw error;
+                }
+
+                await query(
+                  `INSERT INTO digital_contracts
+                   (contract_id, transaction_id, contract_name, product_name, token_id,
+                    contract_description, seller_address, buyer_address, operations,
+                    expiration_time, quantity_limit, processing_type, pc_type,
+                    model_file_hash, delivery_limit)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                  [
+                    contract.contract_id, contract.transaction_id, contract.contract_name,
+                    contract.product_name, contract.token_id, contract.contract_description,
+                    contract.seller_address, contract.buyer_address, contract.operations,
+                    contract.expiration_time, contract.quantity_limit, contract.processing_type,
+                    contract.pc_type, contract.model_file_hash, contract.delivery_limit
+                  ]
+                );
+            }
+
+            await query('UPDATE transactions SET status = ? WHERE transaction_id = ?', [newStatus, transaction_id]);
+            return { status: newStatus, contractCreated: Boolean(contract), contractId: contract?.contract_id || null };
         });
-    });
+
+        return res.status(200).json({ message: '交易状态已更新', ...result });
+    } catch (error) {
+        console.error('确认交易失败:', error.message);
+        return res.status(error.statusCode || 500).json({
+            message: error.message || '服务器内部错误',
+            ...(error.code && { code: error.code })
+        });
+    }
 });
 
 app.get('/api/buyer-transaction-status/:buyer_address', (req, res) => {

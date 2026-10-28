@@ -41,22 +41,23 @@
               </template>
             </el-table-column>
 
-            <el-table-column label="操作" min-width="432" align="center" header-align="center">
+            <el-table-column label="操作" min-width="500" align="center" header-align="center">
               <template #default="{ row }">
                 <div class="action-cell">
-                  <el-button
-                    v-if="isHeRow(row)"
-                    size="small"
-                    type="primary"
-                    :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerHeDeliveryDisabled(row) }]"
-                    :loading="row.checkingHe"
-                    :disabled="isSellerHeDeliveryDisabled(row) || isDeliveryExpired(row)"
-                    @click="openHeDelivery(row)"
-                  >
-                    {{ getSellerHeActionLabel(row) }}
-                  </el-button>
-                  <template v-if="isTeeRow(row)">
+                  <div class="action-slot action-slot-primary">
                     <el-button
+                      v-if="isHeRow(row)"
+                      size="small"
+                      type="primary"
+                      :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerHeDeliveryDisabled(row) }]"
+                      :loading="row.checkingHe"
+                      :disabled="isSellerHeDeliveryDisabled(row) || isDeliveryExpired(row)"
+                      @click="openHeDelivery(row)"
+                    >
+                      {{ getSellerHeActionLabel(row) }}
+                    </el-button>
+                    <el-button
+                      v-if="isTeeRow(row)"
                       size="small"
                       type="primary"
                       class="action-btn-primary"
@@ -67,57 +68,63 @@
                       {{ getSellerTeeActionLabel(row) }}
                     </el-button>
                     <el-button
+                      v-if="isFlRow(row)"
                       size="small"
-                      class="action-btn-secondary"
-                      :loading="row.teeDetailLoading"
-                      @click="openTeeDeliveryDetail(row)"
+                      type="primary"
+                      :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerFlDeliveryDisabled(row) }]"
+                      :loading="row.processingFl || row.uploadingFlBatch || row.checkingFl"
+                      :disabled="isSellerFlDeliveryDisabled(row) || isDeliveryExpired(row)"
+                      @click="openFlDeliveryDialog(row)"
+                    >
+                      {{ getSellerFlDeliveryActionLabel(row) }}
+                    </el-button>
+                    <el-button
+                      v-if="isPreRow(row)"
+                      size="small"
+                      type="primary"
+                      :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerPreDeliveryDisabled(row) }]"
+                      :loading="row.processingPre || row.checkingPre"
+                      :disabled="isSellerPreDeliveryDisabled(row) || isDeliveryExpired(row)"
+                      @click="openPreDelivery(row)"
+                    >
+                      {{ getSellerPreActionLabel(row) }}
+                    </el-button>
+                    <el-button
+                      v-if="isMpcRow(row)"
+                      size="small"
+                      type="primary"
+                      :class="['action-btn-primary', { 'action-btn-disabled-primary': !canOpenMpcSellerDialog(row) }]"
+                      :disabled="!canOpenMpcSellerDialog(row) || isDeliveryExpired(row)"
+                      @click="openMpcSellerDialog(row)"
+                    >
+                      {{ getSellerMpcActionLabel(row) }}
+                    </el-button>
+                  </div>
+
+                  <div class="action-slot action-slot-detail">
+                    <el-button
+                      size="small"
+                      class="action-btn-secondary action-btn-detail"
+                      :disabled="!canOpenDeliveryDetail(row)"
+                      @click="openDeliveryDetail(row)"
                     >
                       交付详情
                     </el-button>
-                  </template>
-                  <el-button
-                    v-if="isFlRow(row)"
-                    size="small"
-                    type="primary"
-                    :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerFlDeliveryDisabled(row) }]"
-                    :loading="row.processingFl || row.uploadingFlBatch || row.checkingFl"
-                    :disabled="isSellerFlDeliveryDisabled(row) || isDeliveryExpired(row)"
-                    @click="openFlDeliveryDialog(row)"
-                  >
-                    {{ getSellerFlDeliveryActionLabel(row) }}
-                  </el-button>
-                  <el-button
-                    v-if="isPreRow(row)"
-                    size="small"
-                    type="primary"
-                    :class="['action-btn-primary', { 'action-btn-disabled-primary': isSellerPreDeliveryDisabled(row) }]"
-                    :loading="row.processingPre || row.checkingPre"
-                    :disabled="isSellerPreDeliveryDisabled(row) || isDeliveryExpired(row)"
-                    @click="openPreDelivery(row)"
-                  >
-                    {{ getSellerPreActionLabel(row) }}
-                  </el-button>
-                  <el-button
-                    v-if="isMpcRow(row)"
-                    size="small"
-                    type="primary"
-                    :class="['action-btn-primary', { 'action-btn-disabled-primary': !canOpenMpcSellerDialog(row) }]"
-                    :disabled="!canOpenMpcSellerDialog(row) || isDeliveryExpired(row)"
-                    @click="openMpcSellerDialog(row)"
-                  >
-                    {{ getSellerMpcActionLabel(row) }}
-                  </el-button>
-                  <el-button
-                    v-if="isFlRow(row)"
-                    size="small"
-                    type="warning"
-                    class="action-btn-secondary"
-                    :loading="row.downloadingFlGradient"
-                    :disabled="!getLatestSellerGradientPackage(row) || isDeliveryExpired(row)"
-                    @click="downloadFlSellerGradient(row)"
-                  >
-                    下载结果
-                  </el-button>
+                  </div>
+
+                  <div class="action-slot action-slot-result">
+                    <el-button
+                      v-if="isFlRow(row)"
+                      size="small"
+                      type="warning"
+                      class="action-btn-secondary action-btn-result"
+                      :loading="row.downloadingFlGradient"
+                      :disabled="!getLatestSellerGradientPackage(row) || isDeliveryExpired(row)"
+                      @click="downloadFlSellerGradient(row)"
+                    >
+                      下载结果
+                    </el-button>
+                  </div>
                 </div>
               </template>
             </el-table-column>
@@ -345,32 +352,32 @@
           </template>
         </el-dialog>
 
-        <el-dialog v-model="teeDetailDialog.visible" title="交付详情" width="780px">
+        <el-dialog v-model="teeDetailDialog.visible" title="交付详情" width="min(960px, 94vw)">
           <div v-if="teeDetailDialog.row" class="dialog-body">
             <div class="dialog-row"><span class="dialog-label">交易ID</span><span>{{ teeDetailDialog.row.transaction_id }}</span></div>
-            <el-table :data="teeDetailDialog.attempts" border size="small" v-loading="teeDetailDialog.loading" style="width:100%;margin-top:12px">
-              <el-table-column prop="attemptNo" label="序号" width="70" align="center" />
-              <el-table-column label="交付状态" width="110" align="center">
-                <template #default="{ row }">
-                  <el-tag :type="row.status==='SUCCESS' ? 'success' : (row.status==='FAILED' ? 'danger' : 'primary')" effect="plain">{{ teeAttemptStatusText(row.status) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="权重来源" width="110" align="center">
-                <template #default="{ row }">{{ row.weightSource==='BUYER_UPLOADED' ? '买方上传' : '资产默认' }}</template>
-              </el-table-column>
-              <el-table-column label="开始时间" min-width="160" align="center">
-                <template #default="{ row }">{{ formatTeeTime(row.startedAt) }}</template>
-              </el-table-column>
-              <el-table-column label="完成时间" min-width="160" align="center">
-                <template #default="{ row }">{{ formatTeeTime(row.finishedAt) }}</template>
-              </el-table-column>
-              <el-table-column label="失败原因" min-width="180" show-overflow-tooltip>
-                <template #default="{ row }">{{ row.errorMessage || '-' }}</template>
-              </el-table-column>
-            </el-table>
-            <div v-if="!teeDetailDialog.loading && !teeDetailDialog.attempts.length" class="dialog-hint">暂无交付记录</div>
+            <TeeDeliveryProgress
+              :key="`${teeDetailDialog.row.transaction_id}-${teeDetailDialog.visible}`"
+              :row="teeDetailDialog.row"
+              :attempts="teeDetailDialog.attempts"
+              :loading="teeDetailDialog.loading"
+              :process-events="teeDetailDialog.processEvents"
+              :process-loading="teeDetailDialog.processLoading"
+              @load-process-events="loadTeeProcessEvents"
+            />
           </div>
           <template #footer><el-button @click="teeDetailDialog.visible=false">关闭</el-button></template>
+        </el-dialog>
+
+        <el-dialog v-model="genericDetailDialog.visible" title="交付详情" width="min(560px, 92vw)">
+          <div v-if="genericDetailDialog.data" class="dialog-body">
+            <div class="dialog-row"><span class="dialog-label">交易ID</span><span class="dialog-value">{{ genericDetailDialog.data.transactionId }}</span></div>
+            <div class="dialog-row"><span class="dialog-label">交付方式</span><span>{{ genericDetailDialog.data.method }}</span></div>
+            <div class="dialog-row"><span class="dialog-label">当前状态</span><span>{{ genericDetailDialog.data.status }}</span></div>
+            <div v-if="genericDetailDialog.data.reference" class="dialog-row"><span class="dialog-label">交付记录</span><span class="dialog-value">{{ genericDetailDialog.data.reference }}</span></div>
+            <div v-if="genericDetailDialog.data.error" class="dialog-row"><span class="dialog-label">异常说明</span><span class="dialog-value">{{ genericDetailDialog.data.error }}</span></div>
+            <div class="dialog-hint">当前交付方式暂未提供服务调用明细，仅展示后端已有的状态信息。</div>
+          </div>
+          <template #footer><el-button @click="genericDetailDialog.visible=false">关闭</el-button></template>
         </el-dialog>
 
         <div v-if="contractInfo.visible" class="modal" @click.self="closeContractInfo">
@@ -415,6 +422,16 @@
                   <label>卖家名称</label>
                   <span class="value">{{ contractInfo.data.seller_name }}</span>
                 </div>
+                <template v-if="contractInfo.data.pc_type === 'TEE'">
+                  <div class="contract-item">
+                    <label>计算模型 SHA-256</label>
+                    <span class="value code">{{ contractInfo.data.model_file_hash || '-' }}</span>
+                  </div>
+                  <div class="contract-item">
+                    <label>约定交付次数</label>
+                    <span class="value">{{ formatDeliveryLimit(contractInfo.data.delivery_limit) }}</span>
+                  </div>
+                </template>
               </div>
             </div>
 
@@ -435,18 +452,21 @@
 import axios from 'axios'
 import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
+import TeeDeliveryProgress from '@/components/TeeDeliveryProgress.vue'
 import heConfig from '@/utils/heDeliveryConfig'
 import heCrypto from '@/utils/heCrypto'
 import heCsv from '@/utils/heCsv'
 import flCrypto from '@/utils/flCrypto'
 import preCrypto from '@/utils/preCrypto'
 import teeApi from '@/utils/teeApi'
+import teeProgress from '@/utils/teeProgress'
+import deliveryUi from '@/utils/deliveryUi'
 
 const API_BASE = 'http://10.112.191.163:3000'
 
 export default {
   name: 'DeliverySellerPage',
-  components: { AppHeader, AppSidebar },
+  components: { AppHeader, AppSidebar, TeeDeliveryProgress },
   data() {
     return {
       username: '',
@@ -508,7 +528,8 @@ export default {
 
     contractVerifyTime: '',
     teeDialog: { visible: false, row: null, submitting: false, loading: false, info: null },
-    teeDetailDialog: { visible: false, row: null, loading: false, attempts: [] }
+    teeDetailDialog: { visible: false, row: null, loading: false, attempts: [], processLoading: false, processEvents: [] },
+    genericDetailDialog: { visible: false, data: null }
     }
   },
   computed: {
@@ -627,7 +648,27 @@ export default {
                   flBottomModelDownloaded: false,
                   downloadingFlBottom: false,
                   downloadingFlGradient: false,
-                  teeRequested: false, teeStep: '', teeStatus: '', teeResultReady: false, teeCurrentAttemptId: null, teeBuyerWeightName: '', teeDelivering: false, teeDetailLoading: false
+                  teeRequested: false,
+                  teeStep: '',
+                  teeStatus: '',
+                  teeResultReady: false,
+                  teeCurrentAttemptId: null,
+                  teeBuyerWeightName: '',
+                  teeDelivering: false,
+                  teeDetailLoading: false,
+                  teeVmId: '',
+                  teeVmStatus: '',
+                  teeRemoteAttestation: null,
+                  teeCleanupStatus: '',
+                  teeCleanupScheduledAt: '',
+                  teeCleanupStartedAt: '',
+                  teeCleanupFinishedAt: '',
+                  teeCleanupError: '',
+                  teeDeliveryLimit: null,
+                  teeSuccessfulDeliveries: null,
+                  teeRemainingDeliveries: null,
+                  teeDeliveryLimitReached: false,
+                  teeContractExpired: false
                 }))
             return { rows, total: response.data.pagination?.total || rows.length }
           } catch (error) { console.error(`加载卖家交易失败: ${address}`, error); return { rows: [], total: 0 } }
@@ -684,9 +725,41 @@ export default {
         row.teeResultReady = row.teeStatus === 'SUCCESS' || response.resultStatus === 'READY'
         row.teeCurrentAttemptId = response.currentAttemptId ?? null
         row.teeBuyerWeightName = response.buyerWeightFileName || ''
+        row.teeVmId = response.vmId || ''
+        row.teeVmStatus = response.vmStatus || ''
+        row.teeRemoteAttestation = response.remoteAttestation || null
+        row.teeCleanupStatus = response.cleanupStatus || ''
+        row.teeCleanupScheduledAt = response.cleanupScheduledAt || ''
+        row.teeCleanupStartedAt = response.cleanupStartedAt || ''
+        row.teeCleanupFinishedAt = response.cleanupFinishedAt || ''
+        row.teeCleanupError = response.cleanupError || ''
+        row.teeDeliveryLimit = response.deliveryLimit ?? null
+        row.teeSuccessfulDeliveries = response.successfulDeliveries ?? null
+        row.teeRemainingDeliveries = response.remainingDeliveries ?? null
+        row.teeDeliveryLimitReached = Boolean(response.deliveryLimitReached)
+        row.teeContractExpired = Boolean(response.contractExpired)
+        if (this.canSellerDeliverTee(row)) {
+          this.showTeeNotice(row, deliveryUi.TEE_NOTICE_STAGES.SELLER_ACTION_REQUIRED)
+        }
       } catch (error) {
         if (error?.response?.status === 404) {
-          row.teeRequested = false; row.teeStep = ''; row.teeStatus = ''; row.teeCurrentAttemptId = null
+          row.teeRequested = false
+          row.teeStep = ''
+          row.teeStatus = ''
+          row.teeCurrentAttemptId = null
+          row.teeVmId = ''
+          row.teeVmStatus = ''
+          row.teeRemoteAttestation = null
+          row.teeCleanupStatus = ''
+          row.teeCleanupScheduledAt = ''
+          row.teeCleanupStartedAt = ''
+          row.teeCleanupFinishedAt = ''
+          row.teeCleanupError = ''
+          row.teeDeliveryLimit = null
+          row.teeSuccessfulDeliveries = null
+          row.teeRemainingDeliveries = null
+          row.teeDeliveryLimitReached = false
+          row.teeContractExpired = false
         }
       }
     },
@@ -756,7 +829,7 @@ export default {
     isTeeRunning(row) {
       const step = String(row?.teeStep || '').toUpperCase()
       if (step === 'REQUESTED') return false
-      return ['VM_CREATING', 'VM_STARTING', 'SERVICE_DEPLOYING', 'VM_RUNNING', 'DATA_KEY_NEGOTIATING', 'DATA_UPLOADING', 'WEIGHT_KEY_NEGOTIATING', 'WEIGHT_UPLOADING', 'WAITING_DATA', 'WAITING_WEIGHT', 'CONTRACT_VERIFYING', 'CONTRACT_VERIFIED', 'COMPUTING'].includes(step)
+      return ['VM_CREATING', 'VM_STARTING', 'SERVICE_DEPLOYING', 'VM_RUNNING', 'WAITING_MODEL', 'MODEL_KEY_NEGOTIATING', 'MODEL_UPLOADING', 'MODEL_RECEIVED', 'MODEL_READY', 'CONTRACT_KEY_NEGOTIATING', 'DATA_KEY_NEGOTIATING', 'DATA_UPLOADING', 'WEIGHT_KEY_NEGOTIATING', 'WEIGHT_UPLOADING', 'WAITING_DATA', 'WAITING_WEIGHT', 'CONTRACT_VERIFYING', 'CONTRACT_VERIFIED', 'COMPUTING'].includes(step)
     },
     isTeeSuccess(row) {
       const step = String(row?.teeStep || '').toUpperCase()
@@ -769,13 +842,16 @@ export default {
     canSellerDeliverTee(row) {
       if (!row || row.teeDelivering) return false
       if (!row.teeRequested) return false
+      if (row.teeContractExpired || row.teeDeliveryLimitReached) return false
       // current_attempt_id 非空说明买方上一次请求已交付过，需买方重新请求。
       if (row.teeCurrentAttemptId != null) return false
       if (this.isTeeRunning(row)) return false
       return true
     },
     getSellerTeeActionLabel(row) {
+      if (String(row?.teeStep || '').toUpperCase() === 'WAITING_MODEL') return '等待买方上传'
       if (row.teeDelivering || this.isTeeRunning(row)) return '交付中'
+      if (row.teeContractExpired) return '合约已过期'
       if (!row.teeRequested) return '待买方请求'
       if (this.isTeeSuccess(row)) return '交付成功'
       if (this.isTeeFailed(row)) return '交付失败'
@@ -783,8 +859,11 @@ export default {
       return '执行交付'
     },
     getSellerTeeStatusText(row) {
-      if (!row?.teeRequested) return '待买方请求交付'
+      if (String(row?.teeStep || '').toUpperCase() === 'WAITING_MODEL') return '等待买方上传模型'
+      if (['MODEL_KEY_NEGOTIATING', 'MODEL_UPLOADING', 'MODEL_READY', 'CONTRACT_KEY_NEGOTIATING', 'CONTRACT_VERIFYING'].includes(String(row?.teeStep || '').toUpperCase())) return '正在校验计算授权'
       if (this.isTeeRunning(row)) return '交付中'
+      if (row?.teeContractExpired) return '合约已过期'
+      if (!row?.teeRequested) return '待买方请求交付'
       if (this.isTeeSuccess(row)) return '交付成功'
       if (this.isTeeFailed(row)) return '交付失败'
       if (row.teeCurrentAttemptId != null) return '待买方重新请求'
@@ -822,16 +901,67 @@ export default {
     },
     async openTeeDeliveryDetail(row) {
       if (!row?.transaction_id) return
-      this.teeDetailDialog = { visible: true, row, loading: true, attempts: [] }
+      this.teeDetailDialog = { visible: true, row, loading: true, attempts: [], processLoading: false, processEvents: [] }
       try {
-        // 打开时拉取一次，不做轮询。
-        const response = await teeApi.attempts(row.transaction_id)
+        const [response] = await Promise.all([
+          teeApi.attempts(row.transaction_id),
+          this.refreshTeeStatus(row)
+        ])
         this.teeDetailDialog.attempts = Array.isArray(response?.attempts) ? response.attempts : []
       } catch (e) {
         this.$message.error(e.response?.data?.message || e.message || '加载交付详情失败')
       } finally {
         this.teeDetailDialog.loading = false
       }
+    },
+    showTeeNotice(row, stage) {
+      if (typeof window === 'undefined' || !row?.transaction_id) return
+      const transactionId = String(row.transaction_id)
+      const notice = deliveryUi.getTeeNotice(stage, transactionId)
+      if (!notice) return
+      const claimed = deliveryUi.claimTeeNotice(window.sessionStorage, {
+        role: 'seller',
+        transactionId,
+        stage
+      })
+      if (claimed) this.$notify({ ...notice, customClass: 'tee-stage-notice' })
+    },
+    canOpenDeliveryDetail(row) {
+      return deliveryUi.canOpenDeliveryDetail(this.normalizePcType(row?.pc_type), row)
+    },
+    openDeliveryDetail(row) {
+      if (!this.canOpenDeliveryDetail(row)) return
+      if (this.isTeeRow(row)) {
+        this.openTeeDeliveryDetail(row)
+        return
+      }
+
+      const record = this.isHeRow(row)
+        ? row.heRecord
+        : (this.isFlRow(row)
+          ? row.flRecord
+          : (this.isPreRow(row) ? row.preRecord : row.mpcRecord))
+      const reference = this.isMpcRow(row)
+        ? record?.remote_task_id
+        : (record?.pcp_contract_id || record?.current_attempt_id)
+      this.genericDetailDialog = {
+        visible: true,
+        data: {
+          transactionId: String(row.transaction_id || ''),
+          method: this.getDeliveryMethodLabel(row),
+          status: this.getStatusText(row),
+          reference: reference ? String(reference) : '',
+          error: String(record?.last_error || '')
+        }
+      }
+    },
+    async loadTeeProcessEvents({ force = false } = {}) {
+      if (this.teeDetailDialog.processLoading || (!force && this.teeDetailDialog.processEvents.length)) return
+      this.teeDetailDialog.processLoading = true
+      try {
+        const response = await teeApi.events(this.teeDetailDialog.row.transaction_id)
+        this.teeDetailDialog.processEvents = teeProgress.formatTeeProcessEvents(response?.events)
+      } catch (e) { this.$message.error(e.response?.data?.message || e.message || '加载执行过程失败') } finally { this.teeDetailDialog.processLoading = false }
     },
     formatTeeTime(value) {
       if (!value) return '-'
@@ -2223,6 +2353,9 @@ async verifyContract(assetRow) {
           token_id: assetId,
           product_name: assetInfo.asset_name || '未知产品',
           delivery_method_label: this.getDeliveryMethodLabel(transaction),
+          pc_type: this.normalizePcType(tx.pc_type || transaction.pc_type),
+          model_file_hash: tx.model_file_hash || null,
+          delivery_limit: tx.delivery_limit ?? null,
           seller_name: tx.seller_name || tx.seller_username || tx.seller_address || '未知卖家',
           buyer_name: tx.buyer_name || tx.buyer_username || tx.buyer_address || '未知买家',
           seller_id: tx.seller_address ?? 'unknown-seller',
@@ -2252,6 +2385,12 @@ async verifyContract(assetRow) {
       this.contractInfo.data = null
     },
 
+    formatDeliveryLimit(value) {
+      if (value === null || value === undefined || value === '') return '-'
+      const parsed = Number(value)
+      return Number.isSafeInteger(parsed) && parsed > 0 ? `${parsed} 次` : '-'
+    },
+
     formatDate(dateString) {
       if (!dateString) return '-'
       try {
@@ -2272,6 +2411,8 @@ async verifyContract(assetRow) {
 
 <style scoped>
 .delivery {
+  --delivery-font-family: Arial, sans-serif;
+  --el-font-family: var(--delivery-font-family);
   --page-bg: #ffffff;
   --surface: #ffffff;
   --surface-soft: #f5f7fa;
@@ -2297,6 +2438,7 @@ async verifyContract(assetRow) {
   flex-direction: column;
   min-height: 100vh;
   background: #f5f7fa;
+  font-family: var(--delivery-font-family);
 }
 
 .main-content {
@@ -2399,11 +2541,22 @@ async verifyContract(assetRow) {
 }
 
 .action-cell {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(3, 112px);
   align-items: center;
   justify-content: center;
   gap: 8px;
-  flex-wrap: wrap;
+  width: 100%;
+}
+
+.action-slot {
+  min-width: 0;
+}
+
+.action-slot :deep(.el-button) {
+  width: 112px;
+  margin-left: 0;
+  white-space: nowrap;
 }
 
 .action-cell :deep(.el-button) {
@@ -2450,8 +2603,43 @@ async verifyContract(assetRow) {
   background: #ecf5ff;
 }
 
+.action-cell :deep(.action-btn-detail) {
+  border-color: var(--accent-primary);
+  background: #ecf5ff;
+  color: #337ecc;
+}
+
+.action-cell :deep(.action-btn-detail:hover) {
+  border-color: var(--accent-primary-hover);
+  background: #d9ecff;
+  color: #2568b0;
+}
+
+.action-cell :deep(.action-btn-result) {
+  border-color: #67c23a;
+  background: #67c23a;
+  color: #fff;
+}
+
+.action-cell :deep(.action-btn-result:hover) {
+  border-color: #85ce61;
+  background: #85ce61;
+  color: #fff;
+}
+
 .action-cell :deep(.el-button.is-disabled) {
   border-color: var(--border-soft);
+}
+
+.action-cell :deep(.action-btn-detail.el-button.is-disabled),
+.action-cell :deep(.action-btn-result.el-button.is-disabled),
+.action-cell :deep(.action-btn-detail.el-button.is-disabled:hover),
+.action-cell :deep(.action-btn-result.el-button.is-disabled:hover) {
+  border-color: #dcdfe6;
+  background: #f5f7fa;
+  color: #a8abb2;
+  opacity: 1;
+  cursor: not-allowed;
 }
 
 .action-cell :deep(.action-btn-disabled-primary.el-button.is-disabled) {
@@ -2732,5 +2920,6 @@ async verifyContract(assetRow) {
   .dialog-hint {
     margin-left: 0;
   }
+
 }
 </style>

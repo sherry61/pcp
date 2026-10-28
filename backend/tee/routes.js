@@ -1,12 +1,50 @@
 const { createTeeClient } = require('./client');
 const { TEE_DELIVERY_METHOD } = require('./constants');
-const { cleanupRemoteVms } = require('./hostVmCleanup');
+const { cleanupRemoteVms, cleanupRemoteVm } = require('./hostVmCleanup');
+const { createExportCleanupScheduler } = require('./exportCleanupScheduler');
+const { validateDecryptedResult } = require('./protocol');
+const { loadTeeEntitlement, loadTeeVerificationContract, assertTeeDeliveryAllowed } = require('./entitlementRepository');
+const {
+  saveAttemptResultArchive,
+  loadAttemptResultArchive,
+  hasAttemptResultArchive
+} = require('./attemptResultArchive');
+const {
+  DEFAULT_MODEL_MAX_BYTES,
+  validateModelUpload,
+  encryptModelPayload,
+  buildEncryptedContractPayload
+} = require('./modelContractProtocol');
+const { extractWeightSchema, validateWeightCsv, buildWeightTemplate, buildDataFormatTemplate } = require('./csvSchema');
+const {
+  resolveBoundVmId,
+  assertVmBindingAvailable,
+  summarizeAttestation,
+  isRemoteResultReady,
+  uploadFilesOnce,
+  waitForRemoteResult
+} = require('./orchestration');
 
-function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient() }) {
+function registerTeeRoutes({ app, upload, modelUpload = null, dbQuery, withDbTransaction = null, teeClient = createTeeClient(), exportCleanupScheduler = null }) {
   if (!app || typeof dbQuery !== 'function') throw new Error('registerTeeRoutes requires app and dbQuery');
+  const cleanupScheduler = exportCleanupScheduler || createExportCleanupScheduler({ dbQuery, cleanupVm: cleanupRemoteVm });
+  void cleanupScheduler.restore().catch((error) => console.error('[TEE cleanup restore]', error.message));
   const vmSetupInFlight = new Set();
   // 防止卖方在极短时间内重复点击“执行交付”而重复创建 attempt。
   const deliveryStarting = new Set();
+  const modelProcessingInFlight = new Set();
+  const acceptModelUpload = typeof modelUpload === 'function' ? modelUpload : (req, res, next) => next();
+  // 仅回收“任务本身已明确不在运行”的遗留占位；状态仍为 RUNNING/VM_RUNNING
+  // 的任务不做猜测，避免后端重启时误释放远端仍在执行的计算。
+  void dbQuery(
+    `UPDATE tee_delivery_attempts a
+       LEFT JOIN delivery_secure_jobs j ON j.transaction_id = a.transaction_id
+        SET a.status = 'FAILED', a.step = 'FAILED',
+            a.error_message = COALESCE(a.error_message, '服务重启后释放遗留交付占位'),
+            a.finished_at = COALESCE(a.finished_at, NOW())
+      WHERE a.status = 'RUNNING'
+        AND (j.transaction_id IS NULL OR UPPER(COALESCE(j.status, '')) NOT IN ('RUNNING', 'VM_RUNNING'))`
+  ).catch((error) => console.warn('[TEE attempt reconciliation]', error.message));
   // The supplied TEE service keeps the active SM4 file key globally.  We
   // cannot change that remote implementation, so every key-request/file-upload
   // sequence must be serialized on this platform process.
@@ -19,14 +57,14 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     try { return await task(); } finally { release(); }
   };
 
-  const getJob = async (transactionId) => {
-    const rows = await dbQuery('SELECT * FROM delivery_secure_jobs WHERE transaction_id = ? LIMIT 1', [String(transactionId)]);
+  const getJob = async (transactionId, query = dbQuery) => {
+    const rows = await query('SELECT * FROM delivery_secure_jobs WHERE transaction_id = ? LIMIT 1', [String(transactionId)]);
     return rows[0] || null;
   };
-  const updateJob = async (transactionId, fields) => {
+  const updateJob = async (transactionId, fields, query = dbQuery) => {
     const keys = Object.keys(fields);
     if (!keys.length) return;
-    await dbQuery(`UPDATE delivery_secure_jobs SET ${keys.map((key) => `${key} = ?`).join(', ')} WHERE transaction_id = ?`, [...keys.map((key) => fields[key]), String(transactionId)]);
+    await query(`UPDATE delivery_secure_jobs SET ${keys.map((key) => `${key} = ?`).join(', ')} WHERE transaction_id = ?`, [...keys.map((key) => fields[key]), String(transactionId)]);
   };
 
   // ===== 交付尝试（交付详情数据源）=====
@@ -62,34 +100,37 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
   };
   // 每轮交付开始前清空上一轮运行态，避免 /get-result 返回上一轮密文、密钥串轮。
   // 结果文件按 attempt 分目录保留，无需删除历史轮次。
-  const resetJobForAttempt = async (transactionId) => {
+  const resetJobForAttempt = async (transactionId, query = dbQuery) => {
     await updateJob(transactionId, {
       vm_id: null, vm_status: null, qemu_pid: null, step: 'VM_CREATING', status: 'RUNNING', last_error: null,
       contract_status: null, data_file_status: null, weight_file_status: null, result_status: null,
       encrypted_result: null, weight_key_envelope: null,
+      attestation_json: null,
+      cleanup_status: null, cleanup_scheduled_at: null, cleanup_started_at: null,
+      cleanup_finished_at: null, cleanup_error: null,
       weight_public_key_pem: null, weight_private_key_pem: null,
       buyer_public_key_pem: null, buyer_private_key_pem: null,
       data_public_key_pem: null, data_private_key_pem: null
-    });
+    }, query);
   };
-  const nextAttemptNo = async (transactionId) => {
-    const rows = await dbQuery('SELECT COALESCE(MAX(attempt_no), 0) AS max_no FROM tee_delivery_attempts WHERE transaction_id = ?', [String(transactionId)]);
+  const nextAttemptNo = async (transactionId, query = dbQuery) => {
+    const rows = await query('SELECT COALESCE(MAX(attempt_no), 0) AS max_no FROM tee_delivery_attempts WHERE transaction_id = ?', [String(transactionId)]);
     return Number(rows[0]?.max_no || 0) + 1;
   };
-  const createAttempt = async (transactionId, job, triggeredBy) => {
-    await resetJobForAttempt(transactionId);
-    const attemptNo = await nextAttemptNo(transactionId);
+  const createAttempt = async (transactionId, job, triggeredBy, query = dbQuery) => {
+    await resetJobForAttempt(transactionId, query);
+    const attemptNo = await nextAttemptNo(transactionId, query);
     const weightSource = job?.buyer_weight_file_path ? 'BUYER_UPLOADED' : 'ASSET_DEFAULT';
     let weightFileName = job?.buyer_weight_file_path ? job.buyer_weight_file_name : null;
     if (!weightFileName && job?.asset_id) {
-      const material = (await dbQuery('SELECT weight_file_name FROM tee_asset_materials WHERE asset_id = ? LIMIT 1', [String(job.asset_id)]))[0];
+      const material = (await query('SELECT weight_file_name FROM tee_asset_materials WHERE asset_id = ? LIMIT 1', [String(job.asset_id)]))[0];
       weightFileName = material?.weight_file_name || null;
     }
-    const inserted = await dbQuery(
+    const inserted = await query(
       'INSERT INTO tee_delivery_attempts (transaction_id, asset_id, attempt_no, status, step, weight_source, weight_file_name, triggered_by) VALUES (?,?,?,?,?,?,?,?)',
       [String(transactionId), job?.asset_id || null, attemptNo, 'RUNNING', 'VM_CREATING', weightSource, weightFileName, triggeredBy || null]
     );
-    await updateJob(transactionId, { current_attempt_id: inserted.insertId });
+    await updateJob(transactionId, { current_attempt_id: inserted.insertId }, query);
     return { attemptId: inserted.insertId, attemptNo, weightSource, weightFileName };
   };
   const summarizeRemote = (body) => {
@@ -123,7 +164,12 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
       throw error;
     }
   };
-  const fail = (res, error, fallback = 'TEE 请求失败') => res.status(error.statusCode && error.statusCode >= 400 ? error.statusCode : 502).json({ success: false, message: error.message || fallback, remote: error.response?.data });
+  const fail = (res, error, fallback = 'TEE 请求失败') => res.status(error.statusCode && error.statusCode >= 400 ? error.statusCode : 502).json({
+    success: false,
+    message: error.message || fallback,
+    ...(error.code && { code: error.code }),
+    remote: error.response?.data
+  });
 
   // Files are uploaded once during asset registration and reused by every TEE delivery.
   // Keep them outside the database; only metadata and hashes are stored in MySQL.
@@ -141,9 +187,15 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     const secret = crypto.diffieHellman({ privateKey, publicKey: eph });
     const material = Buffer.concat([secret, unb64(envelope.salt), Buffer.from('HENC2-P256-AES256GCM')]);
     const aesKey = crypto.createHash('sha256').update(material).digest();
-    const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, unb64(envelope.nonce));
-    decipher.setAuthTag(unb64(envelope.tag));
-    return Buffer.concat([decipher.update(unb64(envelope.ciphertext)), decipher.final()]);
+    try {
+      const decipher = crypto.createDecipheriv('aes-256-gcm', aesKey, unb64(envelope.nonce));
+      decipher.setAuthTag(unb64(envelope.tag));
+      return Buffer.concat([decipher.update(unb64(envelope.ciphertext)), decipher.final()]);
+    } finally {
+      secret.fill(0);
+      material.fill(0);
+      aesKey.fill(0);
+    }
   };
   const encryptSm4 = (plain, key) => {
     const padded = Buffer.alloc(Math.ceil(Math.max(1, plain.length) / 16) * 16); plain.copy(padded);
@@ -154,7 +206,7 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     const ciphertext = sm4.encrypt(Array.from(padded), Array.from(key), { mode: 'cbc', iv: Array.from(iv), padding: 'none', output: 'array' });
     return { iv: b64(iv), ciphertext: b64(Buffer.from(ciphertext)) };
   };
-  const decryptAndValidateResult = (result, key) => {
+  const decryptAndValidateResult = (result, key, expectedVmId) => {
     if (!result?.iv || !result?.ciphertext) throw new Error('TEE 返回结果缺少 iv 或 ciphertext');
     const decipher = crypto.createDecipheriv('sm4-cbc', key, unb64(result.iv));
     decipher.setAutoPadding(false);
@@ -162,7 +214,7 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     let end = raw.length;
     while (end && raw[end - 1] === 0) end -= 1;
     const text = new TextDecoder('utf-8', { fatal: true }).decode(raw.subarray(0, end));
-    return JSON.parse(text);
+    return validateDecryptedResult(JSON.parse(text), expectedVmId);
   };
   const resultRoot = process.env.TEE_RESULT_DIR || path.resolve(__dirname, '../storage/tee-results');
   const resultPollIntervalMs = Math.max(1000, Number(process.env.TEE_RESULT_POLL_MS || 5000));
@@ -177,6 +229,23 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     if (!job?.current_attempt_id) return null;
     const rows = await dbQuery('SELECT attempt_no FROM tee_delivery_attempts WHERE id = ? LIMIT 1', [Number(job.current_attempt_id)]);
     return rows[0]?.attempt_no ?? null;
+  };
+  const buildCurrentResultKeyInfo = (job) => {
+    if (!job?.buyer_private_key_pem || !job?.weight_key_envelope) return null;
+    let weightKeyEnvelope;
+    try {
+      weightKeyEnvelope = typeof job.weight_key_envelope === 'string'
+        ? JSON.parse(job.weight_key_envelope)
+        : job.weight_key_envelope;
+    } catch (_) {
+      return null;
+    }
+    if (!weightKeyEnvelope) return null;
+    return {
+      algorithm: 'ECDH-P256 + SM4-CBC',
+      privateKeyPem: job.buyer_private_key_pem,
+      weightKeyEnvelope
+    };
   };
   const persistEncryptedResult = async (transactionId, vmId, result, attemptNo = null) => {
     const resolvedAttemptNo = attemptNo == null ? await getCurrentAttemptNo(transactionId).catch(() => null) : attemptNo;
@@ -195,6 +264,18 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     fs.writeFileSync(temp, payload, { encoding: 'utf8', mode: 0o644 });
     fs.renameSync(temp, target);
     bestEffortChmod(target, 0o644);
+    if (resolvedAttemptNo != null) {
+      const job = await getJob(transactionId);
+      const keyInfo = buildCurrentResultKeyInfo(job);
+      if (!keyInfo) throw new Error('TEE 本轮结果缺少可归档的解密材料');
+      saveAttemptResultArchive({
+        rootDir: resultRoot,
+        transactionId,
+        attemptNo: resolvedAttemptNo,
+        result,
+        keyInfo
+      });
+    }
     await updateJob(transactionId, { encrypted_result: JSON.stringify(result), result_status: 'READY', step: 'RESULT_READY', last_error: null });
     return target;
   };
@@ -227,10 +308,39 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     }
     return null;
   };
+  const isCurrentAttempt = (attempt, job) => (
+    attempt?.id != null && job?.current_attempt_id != null &&
+    String(attempt.id) === String(job.current_attempt_id)
+  );
+  const resolveAttemptResultBundle = async (attempt, job) => {
+    if (!attempt?.transactionId || attempt?.attemptNo == null) return null;
+    const archived = loadAttemptResultArchive({
+      rootDir: resultRoot,
+      transactionId: attempt.transactionId,
+      attemptNo: attempt.attemptNo
+    });
+    if (archived) return archived;
+    // 兼容升级前尚未生成下载包的“当前一轮”；历史轮次绝不使用当前结果兜底。
+    if (!isCurrentAttempt(attempt, job)) return null;
+    const result = await getPersistedEncryptedResult(attempt.transactionId, job);
+    const keyInfo = buildCurrentResultKeyInfo(job);
+    if (!result || !keyInfo) return null;
+    return { transactionId: String(attempt.transactionId), attemptNo: Number(attempt.attemptNo), result, keyInfo };
+  };
+  const attemptResultAvailable = async (attempt, job) => {
+    if (String(attempt?.status || '').toUpperCase() !== 'SUCCESS') return false;
+    if (hasAttemptResultArchive({
+      rootDir: resultRoot,
+      transactionId: attempt.transactionId,
+      attemptNo: attempt.attemptNo
+    })) return true;
+    if (!isCurrentAttempt(attempt, job)) return false;
+    try { return Boolean(await resolveAttemptResultBundle(attempt, job)); } catch (_) { return false; }
+  };
   const validateAndPersistResult = async (transactionId, vmId, result, key) => {
     const startedAt = Date.now();
     try {
-      const parsed = decryptAndValidateResult(result, key);
+      const parsed = decryptAndValidateResult(result, key, vmId);
       await persistEncryptedResult(transactionId, vmId, result);
       await recordTeeEvent(transactionId, 'RESULT_VALIDATE_AND_PERSIST', 'SUCCESS', startedAt, {
         code: parsed.code, message: 'encrypted result persisted after local validation', vmId,
@@ -243,24 +353,16 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     }
   };
   const waitForResult = async (transactionId, vmId) => {
-    const deadline = Date.now() + resultPollTimeoutMs;
-    let attempts = 0;
-    while (Date.now() < deadline) {
-      const startedAt = Date.now();
-      try {
-        const result = await teeClient.getResult(vmId);
-        await recordTeeEvent(transactionId, 'GET_RESULT_POLL', 'SUCCESS', startedAt, result);
-        return result;
-      } catch (error) {
-        const remote = error.response?.data || { message: error.message };
-        const pending = error.statusCode === 404 || remote.error === 'no_result' || remote.code === 404;
-        await recordTeeEvent(transactionId, 'GET_RESULT_POLL', pending ? 'PENDING' : 'FAILED', startedAt, remote);
-        if (!pending) throw error;
+    return waitForRemoteResult({
+      getStatus: () => teeClient.getResultStatus(vmId),
+      getResult: () => callTeeStage(transactionId, 'GET_RESULT', () => teeClient.getResult(vmId)),
+      isReady: isRemoteResultReady,
+      intervalMs: resultPollIntervalMs,
+      timeoutMs: resultPollTimeoutMs,
+      onStatus: async (status) => {
+        await recordTeeEvent(transactionId, 'RESULT_STATUS_POLL', isRemoteResultReady(status) ? 'SUCCESS' : 'PENDING', null, status);
       }
-      attempts += 1;
-      await new Promise((resolve) => setTimeout(resolve, resultPollIntervalMs));
-    }
-    throw new Error(`TEE 结果轮询超时（${attempts} 次，${resultPollTimeoutMs}ms）`);
+    });
   };
   const createServerKeyPair = () => crypto.generateKeyPairSync('ec', { namedCurve: 'prime256v1', publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs8', format: 'pem' } });
 
@@ -279,55 +381,56 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
       const keyResp = await callTeeStage(transactionId, `${fileType.toUpperCase()}_KEY`, () => teeClient.receiveKey({ vmId, ecPublicKey: pair.publicKey, fileType }));
       const privateKey = crypto.createPrivateKey(pair.privateKey);
       const sm4Key = decryptEnvelope(keyResp.envelope || keyResp, privateKey);
-      const encrypted = encryptSm4(require('fs').readFileSync(filePath), sm4Key);
-      const result = await callTeeStage(transactionId, `${fileType.toUpperCase()}_UPLOAD`, () => teeClient.receiveFile({ vmId, fileType, name: `${fileType}.csv`, ...encrypted }));
-      if (fileType === 'weight') {
-        weightSm4Key = sm4Key;
-        await updateJob(transactionId, {
-          weight_key_envelope: JSON.stringify(keyResp.envelope || keyResp),
-          weight_private_key_pem: pair.privateKey,
-          weight_public_key_pem: pair.publicKey,
-          buyer_private_key_pem: pair.privateKey,
-          buyer_public_key_pem: pair.publicKey
-        });
-      } else {
-        await updateJob(transactionId, {
-          data_private_key_pem: pair.privateKey,
-          data_public_key_pem: pair.publicKey
-        });
+      let retainForResult = false;
+      try {
+        const encrypted = encryptSm4(require('fs').readFileSync(filePath), sm4Key);
+        const result = await callTeeStage(transactionId, `${fileType.toUpperCase()}_UPLOAD`, () => teeClient.receiveFile({ vmId, fileType, name: `${fileType}.csv`, ...encrypted }));
+        if (fileType === 'weight') {
+          weightSm4Key = sm4Key;
+          retainForResult = true;
+          await updateJob(transactionId, {
+            weight_key_envelope: JSON.stringify(keyResp.envelope || keyResp),
+            weight_private_key_pem: pair.privateKey,
+            weight_public_key_pem: pair.publicKey,
+            buyer_private_key_pem: pair.privateKey,
+            buyer_public_key_pem: pair.publicKey
+          });
+        } else {
+          await updateJob(transactionId, {
+            data_private_key_pem: pair.privateKey,
+            data_public_key_pem: pair.publicKey
+          });
+        }
+        return result;
+      } finally {
+        if (!retainForResult) sm4Key.fill(0);
       }
-      return result;
     };
-    await updateJob(transactionId, { step: 'DATA_KEY_NEGOTIATING' });
-    await upload('data', material.data_file_path);
-    await updateJob(transactionId, { step: 'WEIGHT_KEY_NEGOTIATING' });
-    let result;
     try {
-      result = await upload('weight', weightFilePath);
-    } catch (error) {
-      // Some v2 deployments keep the key-flow state per role/kind. Repair the
-      // data phase once before retrying weight, instead of leaving the job failed.
-      if (String(error.message || '').includes('weight_key_before_data')) {
-        await updateJob(transactionId, { step: 'DATA_KEY_NEGOTIATING', last_error: error.message });
-        await upload('data', material.data_file_path);
-        await updateJob(transactionId, { step: 'WEIGHT_KEY_NEGOTIATING' });
-        result = await upload('weight', weightFilePath);
-      } else throw error;
-    }
-    let computed = Boolean(result?.computed || result?.result?.computed);
-    if (computed) {
-      // Fetch and validate while the exclusive key-flow lease is still held.
-      // This catches a remote key overwrite before the job is marked ready.
-      const encryptedResult = await callTeeStage(transactionId, 'GET_RESULT', () => teeClient.getResult(vmId));
-      await validateAndPersistResult(transactionId, vmId, encryptedResult, weightSm4Key);
-    } else {
-      await updateJob(transactionId, { step: 'COMPUTING', result_status: 'PENDING', last_error: null });
+      const result = await uploadFilesOnce({
+        uploadData: async () => {
+          await updateJob(transactionId, { step: 'DATA_KEY_NEGOTIATING' });
+          return upload('data', material.data_file_path);
+        },
+        uploadWeight: async () => {
+          await updateJob(transactionId, { step: 'WEIGHT_KEY_NEGOTIATING' });
+          return upload('weight', weightFilePath);
+        }
+      });
+      await updateJob(transactionId, {
+        step: 'COMPUTING',
+        result_status: 'PENDING',
+        last_error: null
+      });
+      // Even when the weight upload reports ready, confirm through the documented
+      // status endpoint before retrieving the encrypted result exactly once.
       const encryptedResult = await waitForResult(transactionId, vmId);
       await validateAndPersistResult(transactionId, vmId, encryptedResult, weightSm4Key);
-      computed = true;
+      await updateJob(transactionId, { step: 'RESULT_READY', result_status: 'READY', last_error: null });
+      return result;
+    } finally {
+      if (weightSm4Key) weightSm4Key.fill(0);
     }
-    await updateJob(transactionId, { step: computed ? 'RESULT_READY' : 'COMPUTING', result_status: computed ? 'READY' : 'PENDING', last_error: null });
-    return result;
   });
 
   app.post('/api/privacy/tee/assets/materials', upload?.fields([
@@ -341,9 +444,14 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     const weightFile = files.weightFile?.[0];
     if (!dataFile && !weightFile) return res.status(400).json({ success: false, message: '至少上传 data.csv 或 weight.csv' });
     try {
+      const existing = (await dbQuery('SELECT * FROM tee_asset_materials WHERE asset_id = ? LIMIT 1', [assetId]))[0] || {};
+      const dataBuffer = dataFile?.buffer || (existing.data_file_path ? fs.readFileSync(existing.data_file_path) : null);
+      const weightBuffer = weightFile?.buffer || (existing.weight_file_path ? fs.readFileSync(existing.weight_file_path) : null);
+      if (!dataBuffer && weightBuffer) throw Object.assign(new Error('请先上传 data.csv，再上传对应的 weight.csv'), { statusCode: 400 });
+      if (dataBuffer && weightBuffer) validateWeightCsv(weightBuffer, extractWeightSchema(dataBuffer));
+
       const dir = path.join(materialRoot, assetId.replace(/[^a-zA-Z0-9._-]/g, '_'));
       fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
-      const existing = (await dbQuery('SELECT * FROM tee_asset_materials WHERE asset_id = ? LIMIT 1', [assetId]))[0] || {};
       const fields = { seller_address: req.body?.sellerAddress || existing.seller_address || null, status: 'PENDING' };
       for (const [kind, file] of [['data', dataFile], ['weight', weightFile]]) {
         if (!file) continue;
@@ -371,9 +479,43 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
   });
 
   app.get('/api/privacy/tee/assets/:assetId/materials', async (req, res) => {
-    const row = (await dbQuery('SELECT asset_id,seller_address,data_file_name,data_file_hash,data_file_size,weight_file_name,weight_file_hash,weight_file_size,status,created_at,updated_at FROM tee_asset_materials WHERE asset_id = ? LIMIT 1', [String(req.params.assetId)]))[0];
-    if (!row) return res.status(404).json({ success: false, message: '未找到 TEE 资产文件' });
-    res.json({ success: true, material: row });
+    try {
+      const row = (await dbQuery('SELECT asset_id,seller_address,data_file_path,data_file_name,data_file_hash,data_file_size,weight_file_name,weight_file_hash,weight_file_size,status,created_at,updated_at FROM tee_asset_materials WHERE asset_id = ? LIMIT 1', [String(req.params.assetId)]))[0];
+      if (!row) return res.status(404).json({ success: false, message: '未找到 TEE 资产文件' });
+      const weightSchema = row.data_file_path ? extractWeightSchema(fs.readFileSync(row.data_file_path)) : null;
+      const { data_file_path: ignoredPath, ...material } = row;
+      res.json({
+        success: true,
+        material,
+        weightSchema: weightSchema ? { ...weightSchema, templateHasHeader: true, templateFileName: 'weight-template.csv' } : null
+      });
+    } catch (error) { fail(res, error, '读取 TEE 权重结构失败'); }
+  });
+
+  app.get('/api/privacy/tee/assets/:assetId/weight-template', async (req, res) => {
+    try {
+      const row = (await dbQuery('SELECT data_file_path FROM tee_asset_materials WHERE asset_id = ? LIMIT 1', [String(req.params.assetId)]))[0];
+      if (!row?.data_file_path) return res.status(404).json({ success: false, message: '当前资产没有可用的 data.csv' });
+      const template = buildWeightTemplate(extractWeightSchema(fs.readFileSync(row.data_file_path)));
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="weight-template.csv"');
+      res.send(`\uFEFF${template}`);
+    } catch (error) { fail(res, error, '生成权重模板失败'); }
+  });
+
+  app.get('/api/privacy/tee/assets/:assetId/data-format-template', async (req, res) => {
+    try {
+      const row = (await dbQuery('SELECT data_file_path FROM tee_asset_materials WHERE asset_id = ? LIMIT 1', [String(req.params.assetId)]))[0];
+      if (!row?.data_file_path || !fs.existsSync(row.data_file_path)) {
+        return res.status(404).json({ success: false, message: '当前资产尚未提供数据文件' });
+      }
+      const template = buildDataFormatTemplate(extractWeightSchema(fs.readFileSync(row.data_file_path)));
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="asset-data-format-template.csv"');
+      return res.send(`\uFEFF${template}`);
+    } catch (error) {
+      return fail(res, error, '生成资产数据格式模板失败');
+    }
   });
 
   // 买方请求交付：只落库 + 可选保存买方权重文件，不创建 VM、不调用海光主机。
@@ -382,6 +524,8 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     const transactionId = String(body.transactionId || '').trim();
     if (!transactionId) return res.status(400).json({ success: false, message: '缺少 transactionId' });
     try {
+      const entitlement = await loadTeeEntitlement(dbQuery, transactionId);
+      assertTeeDeliveryAllowed(entitlement);
       const existing = await getJob(transactionId);
       if (existing && String(existing.status).toUpperCase() === 'RUNNING') {
         return res.status(409).json({ success: false, message: '当前交付正在进行中，请等待完成后再请求' });
@@ -389,6 +533,7 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
       const assetId = String(body.assetId || existing?.asset_id || '').trim();
       const material = assetId ? (await dbQuery('SELECT data_file_path,weight_file_path,weight_file_name FROM tee_asset_materials WHERE asset_id = ? LIMIT 1', [assetId]))[0] : null;
       if (!material?.data_file_path) return res.status(409).json({ success: false, message: 'TEE 资产尚未上传 data.csv' });
+      const weightSchema = extractWeightSchema(fs.readFileSync(material.data_file_path));
 
       const weightFile = req.files?.weightFile?.[0];
       let buyerWeight = {
@@ -399,6 +544,7 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
       };
       if (weightFile) {
         if (!/\.csv$/i.test(weightFile.originalname || '')) return res.status(400).json({ success: false, message: '权重文件必须为 CSV 文件' });
+        validateWeightCsv(weightFile.buffer, weightSchema);
         // 买方每次都请求对应当前待交付轮次，目录按 订单号/attempt-<n>/ 编号。
         const upcomingAttemptNo = await nextAttemptNo(transactionId);
         const dir = path.join(requestRoot, safeTransactionId(transactionId), `attempt-${upcomingAttemptNo}`);
@@ -411,6 +557,9 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
       }
       if (!buyerWeight.path && !material.weight_file_path) {
         return res.status(409).json({ success: false, message: '请上传 weight.csv，或先为该资产登记默认权重文件' });
+      }
+      if (!buyerWeight.path && material.weight_file_path) {
+        validateWeightCsv(fs.readFileSync(material.weight_file_path), weightSchema);
       }
 
       await dbQuery(
@@ -427,6 +576,8 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
            status='PENDING', step='REQUESTED', requested_at=NOW(), current_attempt_id=NULL, last_error=NULL,
            result_status=NULL, encrypted_result=NULL, contract_status=NULL,
            data_file_status=NULL, weight_file_status=NULL,
+           attestation_json=NULL, cleanup_status=NULL, cleanup_scheduled_at=NULL,
+           cleanup_started_at=NULL, cleanup_finished_at=NULL, cleanup_error=NULL,
            weight_key_envelope=NULL, weight_private_key_pem=NULL, weight_public_key_pem=NULL,
            buyer_private_key_pem=NULL, buyer_public_key_pem=NULL,
            data_private_key_pem=NULL, data_public_key_pem=NULL`,
@@ -437,33 +588,192 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
       res.json({
         success: true, deliveryMethod: TEE_DELIVERY_METHOD, transactionId, step: 'REQUESTED',
         requestedAt: new Date().toISOString(),
+        deliveryLimit: entitlement.deliveryLimit,
+        successfulDeliveries: entitlement.successfulDeliveries,
+        remainingDeliveries: entitlement.remainingDeliveries,
         weightSource: buyerWeight.path ? 'BUYER_UPLOADED' : 'ASSET_DEFAULT',
-        weightFileName: buyerWeight.name || material.weight_file_name || null
+        weightFileName: buyerWeight.name || material.weight_file_name || null,
+        weightSchema
       });
     } catch (error) { fail(res, error, 'TEE 交付申请失败'); }
   });
 
+  const closeFailedDelivery = async (transactionId, attemptId, vmId, error) => {
+    const message = error?.message || 'TEE 交付失败';
+    await updateJob(transactionId, {
+      status: 'FAILED', step: 'FAILED', last_error: message,
+      result_status: null, encrypted_result: null,
+      contract_status: 'FAILED'
+    }).catch(() => {});
+    await finishAttempt(attemptId, 'FAILED', { step: 'FAILED', vmId, error: message });
+    if (!vmId) return;
+    await updateJob(transactionId, { cleanup_status: 'RUNNING', cleanup_started_at: new Date(), cleanup_error: null }).catch(() => {});
+    try {
+      await cleanupRemoteVm(vmId);
+      await updateJob(transactionId, {
+        vm_status: 'deleted', cleanup_status: 'SUCCESS', cleanup_finished_at: new Date(), cleanup_error: null
+      }).catch(() => {});
+    } catch (cleanupError) {
+      await updateJob(transactionId, {
+        cleanup_status: 'FAILED', cleanup_finished_at: new Date(), cleanup_error: cleanupError.message
+      }).catch(() => {});
+    }
+  };
+
   const startVmInBackground = async (transactionId, job, attemptId) => {
     if (vmSetupInFlight.has(String(transactionId))) return;
     vmSetupInFlight.add(String(transactionId));
+    let vmId = null;
     try {
       const created = await callTeeStage(transactionId, 'VM_CREATE', () => teeClient.createVm({ cpu: job.vm_cpu || 8, memoryMb: job.vm_memory_mb || 4096 }));
-      const vmId = created.vmId || created.vm_id;
+      vmId = created.vmId || created.vm_id;
       if (!vmId) throw new Error('TEE VM create response missing vmId');
+      const existingBindings = await dbQuery(
+        `SELECT transaction_id FROM delivery_secure_jobs WHERE vm_id = ? AND transaction_id <> ?
+         UNION ALL
+         SELECT transaction_id FROM tee_delivery_attempts WHERE vm_id = ? AND transaction_id <> ? LIMIT 1`,
+        [vmId, String(transactionId), vmId, String(transactionId)]
+      );
+      assertVmBindingAvailable(existingBindings, transactionId);
       await updateJob(transactionId, { vm_id: vmId, vm_status: created.status || 'created', step: 'VM_STARTING' });
-      if (attemptId) await dbQuery('UPDATE tee_delivery_attempts SET vm_id = ? WHERE id = ?', [vmId, Number(attemptId)]).catch(() => {});
+      if (attemptId) await dbQuery('UPDATE tee_delivery_attempts SET vm_id = ? WHERE id = ?', [vmId, Number(attemptId)]);
       const started = await callTeeStage(transactionId, 'VM_START', () => teeClient.startVm(vmId));
-      await updateJob(transactionId, { vm_status: started.status || 'running', step: 'SERVICE_DEPLOYING', status: 'VM_RUNNING' });
+      await updateJob(transactionId, {
+        vm_status: started.status || 'running',
+        step: 'SERVICE_DEPLOYING',
+        status: 'VM_RUNNING',
+        attestation_json: JSON.stringify(summarizeAttestation(started))
+      });
       await callTeeStage(transactionId, 'SERVICE_READY', () => teeClient.waitForServices());
-      await updateJob(transactionId, { step: 'DATA_KEY_NEGOTIATING', status: 'VM_RUNNING' });
-      await autoDeliverMaterials(transactionId, vmId);
-      await updateJob(transactionId, { status: 'SUCCESS', step: 'RESULT_READY', result_status: 'READY', last_error: null }).catch(() => {});
-      await finishAttempt(attemptId, 'SUCCESS', { step: 'RESULT_READY', vmId });
+      await updateJob(transactionId, { step: 'WAITING_MODEL', status: 'VM_RUNNING', last_error: null });
     } catch (error) {
-      await updateJob(transactionId, { status: 'FAILED', step: 'FAILED', last_error: error.message, result_status: null, encrypted_result: null }).catch(() => {});
-      await finishAttempt(attemptId, 'FAILED', { step: 'FAILED', error: error.message });
+      await closeFailedDelivery(transactionId, attemptId, vmId, error);
     } finally { vmSetupInFlight.delete(String(transactionId)); }
   };
+
+  const processModelAndContract = async (transactionId, job, modelBuffer) => runTeeKeyFlowExclusive(async () => {
+    let modelSm4Key = null;
+    let contractSm4Key = null;
+    try {
+      await updateJob(transactionId, { step: 'MODEL_KEY_NEGOTIATING', last_error: null });
+      const modelPair = createServerKeyPair();
+      const modelKeyResponse = await callTeeStage(transactionId, 'MODEL_KEY', () => teeClient.receiveKey({
+        vmId: job.vm_id,
+        fileType: 'model',
+        ecPublicKey: modelPair.publicKey
+      }));
+      modelSm4Key = decryptEnvelope(modelKeyResponse.envelope || modelKeyResponse, crypto.createPrivateKey(modelPair.privateKey));
+      if (modelSm4Key.length !== 16) throw new Error('TEE 返回的模型 SM4 密钥长度无效');
+
+      await updateJob(transactionId, { step: 'MODEL_UPLOADING' });
+      const modelPayload = encryptModelPayload({ vmId: job.vm_id, model: modelBuffer, key: modelSm4Key });
+      const modelResult = await callTeeStage(transactionId, 'MODEL_UPLOAD', () => teeClient.receiveFile(modelPayload));
+      if (modelResult?.model_received !== true) {
+        throw new Error('TEE 未确认模型接收成功');
+      }
+      await updateJob(transactionId, { step: 'MODEL_READY', last_error: null });
+
+      const verification = await loadTeeVerificationContract(dbQuery, transactionId);
+      await updateJob(transactionId, { step: 'CONTRACT_KEY_NEGOTIATING', contract_status: 'PENDING' });
+      const contractPair = createServerKeyPair();
+      const contractKeyResponse = await callTeeStage(transactionId, 'CONTRACT_KEY', () => teeClient.receiveKey({
+        vmId: job.vm_id,
+        fileType: 'contract',
+        ecPublicKey: contractPair.publicKey
+      }));
+      contractSm4Key = decryptEnvelope(contractKeyResponse.envelope || contractKeyResponse, crypto.createPrivateKey(contractPair.privateKey));
+      if (contractSm4Key.length !== 16) throw new Error('TEE 返回的合约 SM4 密钥长度无效');
+
+      await updateJob(transactionId, { step: 'CONTRACT_VERIFYING' });
+      const contractPayload = buildEncryptedContractPayload({
+        vmId: job.vm_id,
+        contract: verification.contract,
+        successfulDeliveries: verification.successfulDeliveries,
+        key: contractSm4Key
+      });
+      const contractResult = await callTeeStage(transactionId, 'CONTRACT_VERIFY', () => teeClient.verifyContract(contractPayload));
+      await updateJob(transactionId, {
+        contract_status: 'PASSED',
+        step: 'CONTRACT_VERIFIED',
+        contract_verify_result: JSON.stringify(contractResult),
+        last_error: null
+      });
+      return { modelResult, contractResult };
+    } finally {
+      if (modelSm4Key) modelSm4Key.fill(0);
+      if (contractSm4Key) contractSm4Key.fill(0);
+    }
+  });
+
+  const continueDeliveryAfterContract = async (transactionId, vmId, attemptId) => {
+    try {
+      await autoDeliverMaterials(transactionId, vmId);
+      await updateJob(transactionId, {
+        status: 'SUCCESS', step: 'RESULT_READY', result_status: 'READY', last_error: null
+      }).catch(() => {});
+      await finishAttempt(attemptId, 'SUCCESS', { step: 'RESULT_READY', vmId });
+    } catch (error) {
+      await closeFailedDelivery(transactionId, attemptId, vmId, error);
+    }
+  };
+
+  app.post('/api/privacy/tee/model', acceptModelUpload, async (req, res) => {
+    const transactionId = String(req.body?.transactionId || '').trim();
+    if (!transactionId) {
+      if (req.file?.buffer) req.file.buffer.fill(0);
+      return res.status(400).json({ success: false, message: '缺少 transactionId' });
+    }
+    let modelBuffer = req.file?.buffer || null;
+    try {
+      validateModelUpload(req.file, Number(process.env.TEE_MODEL_MAX_BYTES || DEFAULT_MODEL_MAX_BYTES));
+    } catch (error) {
+      if (modelBuffer) modelBuffer.fill(0);
+      return fail(res, error, '计算模型上传失败');
+    }
+    if (modelProcessingInFlight.has(transactionId)) {
+      modelBuffer.fill(0);
+      return res.status(409).json({ success: false, code: 'MODEL_UPLOAD_IN_PROGRESS', message: '计算模型正在处理中，请勿重复上传' });
+    }
+    modelProcessingInFlight.add(transactionId);
+    try {
+      const job = await getJob(transactionId);
+      if (!job?.vm_id || !job.current_attempt_id) {
+        const error = new Error('TEE 虚拟机或当前交付任务尚未准备完成');
+        error.statusCode = 409;
+        error.code = 'MODEL_NOT_READY';
+        throw error;
+      }
+      if (String(job.status || '').toUpperCase() !== 'VM_RUNNING' || String(job.step || '').toUpperCase() !== 'WAITING_MODEL') {
+        const error = new Error('当前交付阶段不允许上传计算模型');
+        error.statusCode = 409;
+        error.code = 'INVALID_STAGE';
+        throw error;
+      }
+
+      const result = await processModelAndContract(transactionId, job, modelBuffer);
+      res.status(202).json({
+        success: true,
+        accepted: true,
+        transactionId,
+        step: 'CONTRACT_VERIFIED',
+        modelReceived: result.modelResult?.model_received === true,
+        contractVerified: true
+      });
+      void continueDeliveryAfterContract(transactionId, job.vm_id, job.current_attempt_id);
+    } catch (error) {
+      const job = await getJob(transactionId).catch(() => null);
+      const remoteWasCalled = ['MODEL_KEY_NEGOTIATING', 'MODEL_UPLOADING', 'MODEL_READY', 'CONTRACT_KEY_NEGOTIATING', 'CONTRACT_VERIFYING']
+        .includes(String(job?.step || '').toUpperCase());
+      if (remoteWasCalled) {
+        await closeFailedDelivery(transactionId, job?.current_attempt_id, job?.vm_id, error);
+      }
+      fail(res, error, '计算模型或数字合约处理失败');
+    } finally {
+      if (modelBuffer) modelBuffer.fill(0);
+      modelBuffer = null;
+      modelProcessingInFlight.delete(transactionId);
+    }
+  });
 
   // 卖方“执行交付”统一入口：先建 attempt，再清理海光主机上已有虚机，最后启动后台链路。
   // 清理失败也会作为一次 FAILED 交付记录在交付详情里。
@@ -481,11 +791,43 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
 
     deliveryStarting.add(tx);
     try {
-      const attempt = await createAttempt(tx, job, triggeredBy);
+      const reserveAttempt = async (query) => {
+        // 锁住该订单数字合约，使“额度检查 + RUNNING 占位”成为一个原子操作。
+        // 多进程同时执行时，后到请求会在锁释放后看见前一个 RUNNING 记录。
+        await query(
+          'SELECT id FROM digital_contracts WHERE transaction_id = ? ORDER BY id DESC LIMIT 1 FOR UPDATE',
+          [tx]
+        );
+        const entitlement = await loadTeeEntitlement(query, tx);
+        assertTeeDeliveryAllowed(entitlement);
+        const freshJob = await getJob(tx, query);
+        if (!freshJob?.requested_at) {
+          const error = new Error('请等待买方请求交付');
+          error.statusCode = 409;
+          throw error;
+        }
+        if (String(freshJob.status).toUpperCase() === 'RUNNING') {
+          const error = new Error('当前交付正在进行中，请稍后再试');
+          error.statusCode = 409;
+          error.code = 'DELIVERY_IN_PROGRESS';
+          throw error;
+        }
+        if (freshJob.current_attempt_id != null) {
+          const error = new Error('请等待买方重新请求交付');
+          error.statusCode = 409;
+          throw error;
+        }
+        const attempt = await createAttempt(tx, freshJob, triggeredBy, query);
+        return { attempt, job: freshJob, entitlement };
+      };
+      const reservation = typeof withDbTransaction === 'function'
+        ? await withDbTransaction(({ query }) => reserveAttempt(query))
+        : await reserveAttempt(dbQuery);
+      const { attempt, job: reservedJob, entitlement } = reservation;
       // 每次交付前先清理对面主机上已有的虚机（含本订单上一轮 vm_id）。
       let cleanup;
       try {
-        cleanup = await cleanupRemoteVms({ extraVmIds: job.vm_id ? [job.vm_id] : [] });
+        cleanup = await cleanupRemoteVms({ extraVmIds: reservedJob.vm_id ? [reservedJob.vm_id] : [] });
       } catch (error) {
         const message = `海光主机虚机清理失败：${error.message}`;
         await updateJob(tx, { status: 'FAILED', step: 'FAILED', last_error: message }).catch(() => {});
@@ -499,8 +841,16 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
         await finishAttempt(attempt.attemptId, 'FAILED', { step: 'CLEANUP_FAILED', error: message });
         return { code: 502, body: { success: false, message, cleanup } };
       }
-      void startVmInBackground(tx, job, attempt.attemptId);
-      return { code: 202, body: { success: true, transactionId: tx, accepted: true, cleanup, ...attempt } };
+      void startVmInBackground(tx, reservedJob, attempt.attemptId);
+      return {
+        code: 202,
+        body: {
+          success: true, transactionId: tx, accepted: true, cleanup, ...attempt,
+          deliveryLimit: entitlement.deliveryLimit,
+          successfulDeliveries: entitlement.successfulDeliveries,
+          remainingDeliveries: entitlement.remainingDeliveries
+        }
+      };
     } finally {
       deliveryStarting.delete(tx);
     }
@@ -529,7 +879,27 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
   app.get('/api/privacy/tee/status', async (req, res) => {
     const job = await getJob(req.query.transactionId);
     if (!job) return res.status(404).json({ success: false, message: '未找到 TEE 交付任务' });
-    res.json({ success: true, transactionId: job.transaction_id, deliveryMethod: TEE_DELIVERY_METHOD, vmId: job.vm_id, status: job.status, step: job.step, vmStatus: job.vm_status, contractStatus: job.contract_status, dataFileStatus: job.data_file_status, weightFileStatus: job.weight_file_status, resultStatus: job.result_status, lastError: job.last_error, requestedAt: job.requested_at, currentAttemptId: job.current_attempt_id, buyerWeightFileName: job.buyer_weight_file_name || null });
+    let remoteAttestation = null;
+    try { remoteAttestation = job.attestation_json ? JSON.parse(job.attestation_json) : null; } catch (_) { /* corrupted legacy value is not exposed */ }
+    let entitlement = null;
+    try { entitlement = await loadTeeEntitlement(dbQuery, job.transaction_id); } catch (_) { /* 兼容尚未生成数字合约的历史任务 */ }
+    res.json({
+      success: true, transactionId: job.transaction_id, deliveryMethod: TEE_DELIVERY_METHOD,
+      vmId: job.vm_id, status: job.status, step: job.step, vmStatus: job.vm_status,
+      remoteAttestation, contractStatus: job.contract_status, dataFileStatus: job.data_file_status,
+      weightFileStatus: job.weight_file_status, resultStatus: job.result_status,
+      cleanupStatus: job.cleanup_status || null, cleanupScheduledAt: job.cleanup_scheduled_at || null,
+      cleanupStartedAt: job.cleanup_started_at || null, cleanupFinishedAt: job.cleanup_finished_at || null,
+      cleanupError: job.cleanup_error || null,
+      lastError: job.last_error, requestedAt: job.requested_at,
+      currentAttemptId: job.current_attempt_id, buyerWeightFileName: job.buyer_weight_file_name || null,
+      deliveryLimit: entitlement?.deliveryLimit ?? null,
+      successfulDeliveries: entitlement?.successfulDeliveries ?? null,
+      activeReservations: entitlement?.activeReservations ?? null,
+      remainingDeliveries: entitlement?.remainingDeliveries ?? null,
+      contractExpired: entitlement?.expired ?? null,
+      deliveryLimitReached: entitlement?.limitReached ?? null
+    });
   });
 
   // 交付详情：打开弹窗时拉一次，不做轮询。
@@ -537,8 +907,52 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     const transactionId = String(req.query.transactionId || '').trim();
     if (!transactionId) return res.status(400).json({ success: false, message: '缺少 transactionId' });
     try {
-      res.json({ success: true, transactionId, attempts: await listAttempts(transactionId) });
+      const [job, attempts] = await Promise.all([getJob(transactionId), listAttempts(transactionId)]);
+      const attemptsWithResults = await Promise.all(attempts.map(async (attempt) => ({
+        ...attempt,
+        resultAvailable: await attemptResultAvailable(attempt, job)
+      })));
+      res.json({ success: true, transactionId, attempts: attemptsWithResults });
     } catch (error) { fail(res, error, '查询交付详情失败'); }
+  });
+
+  app.post('/api/privacy/tee/attempt-result', async (req, res) => {
+    const transactionId = String(req.body?.transactionId || '').trim();
+    const attemptId = Number(req.body?.attemptId);
+    if (!transactionId || !Number.isSafeInteger(attemptId) || attemptId <= 0) {
+      return res.status(400).json({ success: false, message: '缺少有效的 transactionId 或 attemptId' });
+    }
+    try {
+      const rows = await dbQuery(
+        'SELECT * FROM tee_delivery_attempts WHERE transaction_id = ? AND id = ? LIMIT 1',
+        [transactionId, attemptId]
+      );
+      if (!rows[0]) return res.status(404).json({ success: false, message: '交付记录不属于当前交易' });
+      const attempt = formatAttempt(rows[0]);
+      if (String(attempt.status || '').toUpperCase() !== 'SUCCESS') {
+        return res.status(409).json({ success: false, message: '只有成功的交付记录可以下载结果' });
+      }
+      const job = await getJob(transactionId);
+      const bundle = await resolveAttemptResultBundle(attempt, job);
+      if (!bundle) {
+        return res.status(409).json({ success: false, message: '本次交付没有完整的历史结果归档' });
+      }
+
+      let cleanup = null;
+      if (isCurrentAttempt(attempt, job) && job?.vm_id) {
+        cleanup = await cleanupScheduler.schedule(transactionId, job.vm_id);
+      }
+      res.json({
+        success: true,
+        transactionId,
+        attemptId: attempt.id,
+        attemptNo: attempt.attemptNo,
+        result: bundle.result,
+        keyInfo: bundle.keyInfo,
+        cleanupStatus: cleanup?.cleanup_status || null,
+        cleanupScheduledAt: cleanup?.cleanup_scheduled_at || null
+      });
+    } catch (error) { fail(res, error, 'TEE 历史结果获取失败'); }
   });
 
   // 卖方执行交付前弹窗展示买方请求信息与上一轮结果。
@@ -549,6 +963,8 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
       const job = await getJob(transactionId);
       const lastAttempt = await getLastAttempt(transactionId);
       const running = String(job?.status || '').toUpperCase() === 'RUNNING';
+      let entitlement = null;
+      try { entitlement = await loadTeeEntitlement(dbQuery, transactionId); } catch (_) { /* 兼容历史任务 */ }
       res.json({
         success: true,
         transactionId,
@@ -556,6 +972,12 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
         requestedAt: job?.requested_at || null,
         awaitingDelivery: Boolean(job?.requested_at) && job?.current_attempt_id == null && !running,
         running,
+        deliveryLimit: entitlement?.deliveryLimit ?? null,
+        successfulDeliveries: entitlement?.successfulDeliveries ?? null,
+        activeReservations: entitlement?.activeReservations ?? null,
+        remainingDeliveries: entitlement?.remainingDeliveries ?? null,
+        contractExpired: entitlement?.expired ?? null,
+        deliveryLimitReached: entitlement?.limitReached ?? null,
         buyerWeight: job?.buyer_weight_file_path
           ? { source: 'BUYER_UPLOADED', fileName: job.buyer_weight_file_name, size: job.buyer_weight_file_size }
           : { source: 'ASSET_DEFAULT', fileName: null, size: null },
@@ -601,8 +1023,8 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     const { transactionId, iv, ciphertext, deliveried_cnt, delivered_cnt, fileHash, expirationTime, vmId } = req.body || {};
     if (!transactionId || !iv || !ciphertext || !fileHash) return res.status(400).json({ success: false, message: '缺少合约校验参数' });
     try {
-      const job = await getJob(transactionId); const effectiveVmId = vmId || job?.vm_id;
-      if (!effectiveVmId) return res.status(409).json({ success: false, message: 'TEE 虚拟机尚未启动' });
+      const job = await getJob(transactionId);
+      const effectiveVmId = resolveBoundVmId(job, vmId);
       const result = await teeClient.verifyContract({ vmId: effectiveVmId, iv, ciphertext, fileHash, expirationTime, deliveried_cnt: deliveried_cnt ?? delivered_cnt });
       await updateJob(transactionId, { contract_status: 'PASSED', step: 'CONTRACT_VERIFIED', contract_verify_result: JSON.stringify(result) });
       res.json({ success: true, transactionId, result });
@@ -614,8 +1036,8 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
     if (!transactionId || !iv || !ciphertext || !fileType) return res.status(400).json({ success: false, message: '缺少文件上传参数' });
     if (!['data', 'weight'].includes(String(fileType).toLowerCase())) return res.status(400).json({ success: false, message: 'fileType 只能是 data 或 weight' });
     try {
-      const job = await getJob(transactionId); const effectiveVmId = vmId || job?.vm_id;
-      if (!effectiveVmId) return res.status(409).json({ success: false, message: 'TEE 虚拟机尚未启动' });
+      const job = await getJob(transactionId);
+      const effectiveVmId = resolveBoundVmId(job, vmId);
       await updateJob(transactionId, { step: String(fileType).toLowerCase() === 'weight' ? 'WEIGHT_UPLOADING' : 'DATA_UPLOADING' });
       const result = await teeClient.receiveFile({ vmId: effectiveVmId, iv, ciphertext, fileType, ...(name && { name }) });
       const isWeight = String(fileType).toLowerCase() === 'weight';
@@ -630,25 +1052,33 @@ function registerTeeRoutes({ app, upload, dbQuery, teeClient = createTeeClient()
 
   app.post('/api/privacy/tee/get-result', async (req, res) => {
     const { transactionId, vmId } = req.body || {};
-    if (!transactionId && !vmId) return res.status(400).json({ success: false, message: '缺少 transactionId 或 vmId' });
+    if (!transactionId) return res.status(400).json({ success: false, message: '缺少 transactionId' });
     try {
-      const job = transactionId ? await getJob(transactionId) : null;
-      const cachedResult = transactionId ? await getPersistedEncryptedResult(transactionId, job) : null;
+      const job = await getJob(transactionId);
+      if (!job) return res.status(404).json({ success: false, message: '未找到 TEE 交付任务' });
+      const effectiveVmId = resolveBoundVmId(job, vmId);
+      const cachedResult = await getPersistedEncryptedResult(transactionId, job);
       // A completed transaction can be downloaded after its VM is deleted:
       // use our validated ciphertext cache and do not call the Hygon host.
       if (cachedResult) {
-        return res.json({ success: true, transactionId, vmId: job?.vm_id || vmId || null, result: cachedResult, source: 'server-cache' });
+        const cleanup = await cleanupScheduler.schedule(transactionId, effectiveVmId);
+        return res.json({
+          success: true, transactionId, vmId: effectiveVmId, result: cachedResult, source: 'server-cache',
+          cleanupStatus: cleanup?.cleanup_status || null,
+          cleanupScheduledAt: cleanup?.cleanup_scheduled_at || null
+        });
       }
 
-      const effectiveVmId = vmId || job?.vm_id;
-      if (!effectiveVmId) return res.status(404).json({ success: false, message: '未找到 TEE 虚拟机' });
-      const result = await callTeeStage(transactionId || String(vmId), 'GET_RESULT_MANUAL', () => teeClient.getResult(effectiveVmId));
-      if (transactionId) {
-        if (!job?.buyer_private_key_pem || !job?.weight_key_envelope) throw new Error('TEE 结果密钥尚未准备完成');
-        const key = decryptEnvelope(JSON.parse(job.weight_key_envelope), crypto.createPrivateKey(job.buyer_private_key_pem));
-        await validateAndPersistResult(transactionId, effectiveVmId, result, key);
-      }
-      res.json({ success: true, transactionId, vmId: effectiveVmId, result });
+      const result = await callTeeStage(transactionId, 'GET_RESULT_MANUAL', () => teeClient.getResult(effectiveVmId));
+      if (!job.buyer_private_key_pem || !job.weight_key_envelope) throw new Error('TEE 结果密钥尚未准备完成');
+      const key = decryptEnvelope(JSON.parse(job.weight_key_envelope), crypto.createPrivateKey(job.buyer_private_key_pem));
+      await validateAndPersistResult(transactionId, effectiveVmId, result, key);
+      const cleanup = await cleanupScheduler.schedule(transactionId, effectiveVmId);
+      res.json({
+        success: true, transactionId, vmId: effectiveVmId, result,
+        cleanupStatus: cleanup?.cleanup_status || null,
+        cleanupScheduledAt: cleanup?.cleanup_scheduled_at || null
+      });
     } catch (error) { fail(res, error, 'TEE 结果获取失败'); }
   });
 }

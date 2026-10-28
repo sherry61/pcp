@@ -20,6 +20,14 @@ const VM_ID_RE = /^[0-9a-f]{16}$/;
 const INSTANCE_DIR = '/var/lib/vm-api/instances';
 const SECRET_FILE = process.env.TEE_HOST_SSH_SECRET_FILE || path.join(__dirname, '..', '.tee-host-ssh-secret');
 
+function isVmAlreadyAbsent(output, vmId) {
+  const text = String(output || '');
+  if (/vm not found/i.test(text)) return true;
+  const instancePath = `${INSTANCE_DIR}/${vmId}`;
+  return text.includes(instancePath)
+    && /(FileNotFoundError|No such file or directory|ENOENT)/i.test(text);
+}
+
 // 密码优先取环境变量，其次取本地 gitignore 的密钥文件（便于重启时无需手动 export）。
 function readSecretFile() {
   try { return fs.readFileSync(SECRET_FILE, 'utf8').trim(); } catch (_) { return ''; }
@@ -105,11 +113,13 @@ async function listRemoteVms() {
 // 清理海光主机上所有虚机（每次交付前调用），并额外清理本订单历史 vm_id。
 // 返回 { cleaned: [vmId], failed: [{ vmId, error }] }。
 async function cleanupRemoteVms(options = {}) {
-  const cfg = getConfig();
+  const cfg = options.config || getConfig();
+  const listVms = options.listRemoteVms || listRemoteVms;
+  const remoteRunner = options.runRemote || runRemote;
   if (!cfg.enabled) return { cleaned: [], failed: [], skipped: true, reason: 'TEE_HOST_SSH_ENABLED=false' };
   if (!cfg.password) throw new Error('未配置 TEE_HOST_SSH_PASSWORD，无法清理海光主机虚机');
 
-  const ids = new Set(await listRemoteVms());
+  const ids = new Set(await listVms());
   for (const extra of options.extraVmIds || []) {
     const value = String(extra || '').trim();
     if (VM_ID_RE.test(value)) ids.add(value);
@@ -126,13 +136,13 @@ async function cleanupRemoteVms(options = {}) {
     ].join(' ');
     let result;
     try {
-      result = await runRemote(remote);
+      result = await remoteRunner(remote);
     } catch (error) {
       failed.push({ vmId, error: error.message });
       continue;
     }
     const output = `${result.stdout}\n${result.stderr}`;
-    if (result.code === 0 || /vm not found/i.test(output)) {
+    if (result.code === 0 || isVmAlreadyAbsent(output, vmId)) {
       cleaned.push(vmId);
     } else {
       failed.push({ vmId, error: (result.stderr || result.stdout || `exit=${result.code}`).trim().slice(-800) });
@@ -142,4 +152,27 @@ async function cleanupRemoteVms(options = {}) {
   return { cleaned, failed };
 }
 
-module.exports = { listRemoteVms, cleanupRemoteVms, VM_ID_RE };
+// Delete exactly one transaction-bound VM. This is intentionally separate
+// from cleanupRemoteVms(), whose pre-delivery behavior removes every instance.
+async function cleanupRemoteVm(vmId, options = {}) {
+  const value = String(vmId || '').trim();
+  if (!VM_ID_RE.test(value)) throw new Error('Invalid TEE VM ID for exact cleanup');
+  const cfg = options.config || getConfig();
+  if (!cfg.enabled) return { vmId: value, skipped: true, reason: 'TEE_HOST_SSH_ENABLED=false' };
+  if (!cfg.password) throw new Error('未配置 TEE_HOST_SSH_PASSWORD，无法清理海光主机虚机');
+
+  const remote = [
+    `sudo -S -p "" bash -c 'cd ${cfg.scriptsDir}`,
+    `&& ( ./stop_vm.sh ${value} || true )`,
+    `&& ./delete_vm.sh ${value} '`
+  ].join(' ');
+  const result = await (options.runRemote || runRemote)(remote);
+  const output = `${result.stdout || ''}\n${result.stderr || ''}`;
+  const alreadyAbsent = isVmAlreadyAbsent(output, value);
+  if (result.code !== 0 && !alreadyAbsent) {
+    throw new Error((result.stderr || result.stdout || `exit=${result.code}`).trim().slice(-800));
+  }
+  return { vmId: value, deleted: true, alreadyAbsent };
+}
+
+module.exports = { listRemoteVms, cleanupRemoteVms, cleanupRemoteVm, VM_ID_RE };

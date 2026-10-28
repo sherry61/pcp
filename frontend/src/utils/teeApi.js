@@ -13,6 +13,8 @@ export const teeApi = {
     return api.post('/api/privacy/tee/assets/materials', form, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 }).then(r => r.data)
   },
   assetMaterials(assetId) { return api.get(`/api/privacy/tee/assets/${encodeURIComponent(assetId)}/materials`).then(r => r.data) },
+  weightTemplate(assetId) { return api.get(`/api/privacy/tee/assets/${encodeURIComponent(assetId)}/weight-template`, { responseType: 'blob' }).then(r => r.data) },
+  dataFormatTemplate(assetId) { return api.get(`/api/privacy/tee/assets/${encodeURIComponent(assetId)}/data-format-template`, { responseType: 'blob' }).then(r => r.data) },
   keyFile(transactionId) { return api.get('/api/privacy/tee/key-file', { params: { transactionId } }).then(r => r.data) },
   request(payload) {
     const { transactionId, buyerAddress, sellerAddress, assetId, vmCpu, vmMemoryMb, weightFile, useDefaultWeight } = payload || {}
@@ -27,8 +29,16 @@ export const teeApi = {
     if (weightFile) form.append('weightFile', weightFile, weightFile.name || 'weight.csv')
     return api.post('/api/privacy/tee/request', form, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 }).then(r => r.data)
   },
+  uploadModel(transactionId, modelFile) {
+    const form = new FormData()
+    form.append('transactionId', String(transactionId))
+    form.append('modelFile', modelFile, modelFile?.name || 'model.c')
+    return api.post('/api/privacy/tee/model', form, { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 300000 }).then(r => r.data)
+  },
   deliver(transactionId) { return api.post('/api/privacy/tee/deliver', { transactionId: String(transactionId) }).then(r => r.data) },
   attempts(transactionId) { return api.get('/api/privacy/tee/attempts', { params: { transactionId: String(transactionId) } }).then(r => r.data) },
+  getAttemptResult(transactionId, attemptId) { return api.post('/api/privacy/tee/attempt-result', { transactionId: String(transactionId), attemptId: Number(attemptId) }).then(r => r.data) },
+  events(transactionId) { return api.get('/api/privacy/tee/events', { params: { transactionId: String(transactionId) } }).then(r => r.data) },
   requestInfo(transactionId) { return api.get('/api/privacy/tee/request-info', { params: { transactionId: String(transactionId) } }).then(r => r.data) },
   confirm(transactionId) { return api.post('/api/privacy/tee/confirm', { transactionId }, { timeout: 420000 }).then(r => r.data) },
   status(transactionId, signal) { return api.get('/api/privacy/tee/status', { params: { transactionId }, signal, timeout: 20000 }).then(r => r.data) },
