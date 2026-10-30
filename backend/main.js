@@ -1459,20 +1459,37 @@ app.post('/api/delegate-asset', async (req, res) => {
         }
 
         const asset = assetRows[0];
-        const ownerAddress = String(asset.current_owner_address || asset.owner_address || '').trim();
-        if (!ownerAddress) {
-            return res.status(400).json({ message: '资产缺少所有者地址，无法代理' });
-        }
-
-        let ownerUserId = Number(asset.user_id);
-        if (ownerAddress && ownerAddress !== asset.owner_address) {
-            const resolvedOwner = await resolveUserIdByAddress(ownerAddress);
-            if (resolvedOwner) ownerUserId = resolvedOwner;
-        }
         if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
             return res.status(400).json({ message: '缺少操作人 actor_user_id' });
         }
-        if (actorUserId !== ownerUserId) {
+
+        // 资产列表按 user_id 归属展示，因此优先认可登记所有者；
+        // 兼容历史上已经通过 current_owner_address 流转的资产。
+        const registeredOwnerUserId = Number(asset.user_id);
+        const registeredOwnerAddress = String(asset.owner_address || '').trim();
+        const currentOwnerAddress = String(asset.current_owner_address || '').trim();
+
+        let ownerUserId = null;
+        let ownerAddress = '';
+        if (actorUserId === registeredOwnerUserId && registeredOwnerAddress) {
+            ownerUserId = registeredOwnerUserId;
+            ownerAddress = registeredOwnerAddress;
+        } else if (currentOwnerAddress) {
+            const resolvedCurrentOwner = await resolveUserIdByAddress(currentOwnerAddress);
+            if (resolvedCurrentOwner === actorUserId) {
+                ownerUserId = resolvedCurrentOwner;
+                ownerAddress = currentOwnerAddress;
+            }
+        }
+
+        if (!ownerUserId || !ownerAddress) {
+            console.warn('代理托管被拒绝:', {
+                assetId,
+                actorUserId,
+                registeredOwnerUserId,
+                registeredOwnerAddress,
+                currentOwnerAddress
+            });
             return res.status(403).json({ message: '只有资产所有者可以发起代理托管' });
         }
 
