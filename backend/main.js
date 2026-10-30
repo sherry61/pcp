@@ -1608,9 +1608,48 @@ app.post('/api/revoke-delegation', async (req, res) => {
                 );
 
             if (!rows.length) {
-                const error = new Error('未找到可撤销的代理关系');
-                error.statusCode = 404;
-                throw error;
+                // 兼容旧数据：只有 agent_addr/is_proxied、没有 asset_delegations 记录的历史托管。
+                if (!assetId) {
+                    const error = new Error('未找到可撤销的代理关系');
+                    error.statusCode = 404;
+                    throw error;
+                }
+
+                const legacyAssets = await query(
+                    'SELECT * FROM asset_registrations WHERE file_hash = ? LIMIT 1 FOR UPDATE',
+                    [assetId]
+                );
+                if (!legacyAssets.length || !legacyAssets[0].agent_addr) {
+                    const error = new Error('未找到可撤销的代理关系');
+                    error.statusCode = 404;
+                    throw error;
+                }
+
+                const legacyAsset = legacyAssets[0];
+                const legacyAgentUsers = await query(
+                    'SELECT user_id FROM certificate_registry WHERE address = ? AND user_id IS NOT NULL LIMIT 1',
+                    [legacyAsset.agent_addr]
+                );
+                const legacyAgentUserId = legacyAgentUsers.length ? Number(legacyAgentUsers[0].user_id) : null;
+                const legacyOwnerUserId = Number(legacyAsset.user_id);
+
+                if (actorUserId !== legacyOwnerUserId && actorUserId !== legacyAgentUserId) {
+                    const error = new Error('只有所有者或代理人可以撤销该代理关系');
+                    error.statusCode = 403;
+                    throw error;
+                }
+
+                await query(
+                    'UPDATE asset_registrations SET agent_addr = NULL, agent_count = 0, is_proxied = 0 WHERE file_hash = ?',
+                    [assetId]
+                );
+                return {
+                    legacy: true,
+                    alreadyRevoked: false,
+                    delegationId: null,
+                    assetId,
+                    returned: 0
+                };
             }
 
             const delegation = rows[0];

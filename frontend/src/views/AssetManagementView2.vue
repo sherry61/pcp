@@ -1758,6 +1758,7 @@ isIndivisible(industry) {
       const agentAddr = asset.agentAddr || '';
       if (!agentAddr) {
         this.errorMessage = '未找到该资产的托管地址，请刷新后重试。';
+        this.$message?.error(this.errorMessage);
         return;
       }
       if (!window.confirm(`确定取消资产“${asset.assetName || asset.fileHash}”的代理托管吗？`)) {
@@ -1802,7 +1803,8 @@ isIndivisible(industry) {
         }
       } catch (error) {
         console.error('取消代理失败:', error);
-        this.errorMessage = error?.response?.data?.message || '取消代理失败，请稍后再试。';
+        this.errorMessage = error?.response?.data?.message || error.message || '取消代理失败，请稍后再试。';
+        this.$message?.error(this.errorMessage);
       }
     },
 
