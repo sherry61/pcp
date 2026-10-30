@@ -540,6 +540,19 @@ export default {
     console.log("资产ID:", asset.file_hash);
     console.log("资产领域:", asset.industry);
 
+    // 代理订单：代理人不持有所有者私钥，由后端使用所有者证书完成过户。
+    if (asset.seller_type === 'AGENT') {
+      const proxyResponse = await axios.post('http://10.112.191.163:3000/api/proxy-transfer', {
+        transaction_id: asset.transaction_id,
+        seller_address: asset.seller_address
+      });
+      if (!proxyResponse.data?.success) {
+        throw new Error(proxyResponse.data?.message || '代理资产过户失败');
+      }
+      this.$message.success('代理资产链上过户成功');
+      return true;
+    }
+
     // 收集所有证书和地址映射
     const allCerts = [];
 

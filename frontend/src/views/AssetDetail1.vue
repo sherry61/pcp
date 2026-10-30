@@ -24,6 +24,7 @@
     <div class="asset-info-panel">
       <div class="asset-title-row">
         <h1 class="asset-title">{{ asset.asset_name }}</h1>
+        <span v-if="asset.is_proxy" class="proxy-detail-tag">代理销售</span>
       </div>
 
       <p class="asset-subtitle">
@@ -428,6 +429,13 @@ export default {
   custom_algorithm: null,
   owner_address: '',
   current_owner_address: '',
+  seller_address: '',
+  seller_id: '',
+  owner_id: '',
+  delegation_id: null,
+  seller_type: 'OWNER',
+  allowed_rights: '',
+  is_proxy: false,
   email: '',
   address: '',
   contact_phone: '',   // 目前数据库没有这个字段，先占位
@@ -572,6 +580,7 @@ export default {
         const assetId = this.$route.params.id;
         console.log('资产ID:', assetId);
         await this.fetchAssetDetails(assetId);
+        await this.fetchDelegationFromRoute();
         if (this.asset.trade_mode === 'auction') {
           await this.fetchAuction();
           this.auctionTimer = window.setInterval(() => this.fetchAuction(), 5000);
@@ -729,6 +738,64 @@ export default {
     console.error('获取资产详情失败:', error);
   }
 },
+
+    async fetchDelegationFromRoute() {
+      const delegationId = Number(this.$route.query.delegation);
+      if (!Number.isInteger(delegationId) || delegationId <= 0) return;
+
+      try {
+        const response = await axios.get(`http://10.112.191.163:3000/api/delegation/${delegationId}`);
+        if (!response.data?.success || !response.data.delegation) {
+          throw new Error(response.data?.message || '代理关系不存在');
+        }
+        const delegation = response.data.delegation;
+        if (delegation.status !== 'ACTIVE' || Number(delegation.quantity_remaining) <= 0) {
+          this.errorMessage = '该代理库存已售罄或已撤销';
+          return;
+        }
+
+        const rights = String(delegation.allowed_rights || '')
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean);
+        const allowAsset = Number(delegation.can_sell_asset) === 1 && (!rights.length || rights.includes('持有权'));
+        const allowView = Number(delegation.can_sell_view) === 1 && (!rights.length || rights.includes('经营权'));
+        const allowProcess = Number(delegation.can_sell_process) === 1 && (!rights.length || rights.includes('使用权'));
+
+        this.asset = {
+          ...this.asset,
+          file_hash: delegation.asset_id,
+          asset_name: delegation.asset_name || this.asset.asset_name,
+          asset_type: delegation.asset_type || this.asset.asset_type,
+          description: delegation.description || this.asset.description,
+          industry: delegation.industry || this.asset.industry,
+          price: delegation.price != null ? Number(delegation.price) : this.asset.price,
+          number: Number(delegation.quantity_remaining),
+          user_id: delegation.agent_user_id,
+          owner_id: delegation.owner_id,
+          owner_address: delegation.owner_address,
+          current_owner_address: delegation.owner_address,
+          seller_address: delegation.agent_address,
+          seller_id: delegation.agent_user_id,
+          delegation_id: delegation.id,
+          seller_type: 'AGENT',
+          is_proxy: true,
+          allowed_rights: delegation.allowed_rights || '',
+          can_sell_asset: allowAsset ? 1 : 0,
+          can_sell_view: allowView ? 1 : 0,
+          can_sell_process: allowProcess ? 1 : 0,
+          permissions: {
+            canSellAsset: allowAsset,
+            canSellView: allowView,
+            canSellProcess: allowProcess
+          }
+        };
+        this.current_owner_address = delegation.owner_address;
+      } catch (error) {
+        console.error('获取代理资产信息失败:', error);
+        this.errorMessage = error.response?.data?.message || error.message || '获取代理资产信息失败';
+      }
+    },
 
     validateInput() {
       // 清除之前的错误提示
@@ -967,7 +1034,11 @@ if (!certAddr) {
   const requestBody = {
     asset_id: this.asset.file_hash,
     buyer_address: certAddr,
-    seller_address: this.asset.owner_address,
+    seller_address: this.asset.seller_address || this.asset.owner_address,
+    seller_id: this.asset.seller_id || this.asset.user_id,
+    owner_id: this.asset.owner_id || this.asset.user_id,
+    owner_address: this.asset.owner_address,
+    delegation_id: this.asset.delegation_id || null,
     quantity: this.purchaseQuantity,
     quality: this.selectedPermissions.join(','),
      // 可能值：'model'、'data'，或者 null（两个都不选）
@@ -1008,14 +1079,14 @@ async startPayment(requestBody) {
     let payload;
     if (requestBody instanceof FormData) {
       payload = requestBody;
-      payload.append('owner_id', String(this.asset.user_id ?? ''));
+      payload.append('owner_id', String(this.asset.owner_id || this.asset.user_id || ''));
       payload.append('buyer_id', String(this.userId ?? ''));
       payload.append('amount', String(this.asset.price || 1200));
       payload.append('subject', `数字资产购买-${this.asset.asset_name || this.asset.file_hash}`);
     } else {
       payload = {
         ...requestBody,
-        owner_id: this.asset.user_id,
+        owner_id: this.asset.owner_id || this.asset.user_id,
         buyer_id: this.userId,
         amount: this.asset.price || 1200,
         subject: `数字资产购买-${this.asset.asset_name || this.asset.file_hash}`,
@@ -1305,6 +1376,18 @@ body {
   font-weight: 700;
   color: #1f2d3d;
   line-height: 1.2;
+}
+
+.proxy-detail-tag {
+  display: inline-flex;
+  align-items: center;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 500;
 }
 
 .asset-subtitle {

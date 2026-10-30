@@ -64,8 +64,11 @@
                 </tr>
               </thead>
              <tbody>
-  <tr v-for="item in currentPageData" :key="item.id">
-    <td>{{ item.assetName }}</td>
+  <tr v-for="item in currentPageData" :key="item.rowKey || item.id">
+    <td>
+      {{ item.assetName }}
+      <span v-if="item.isProxy" class="proxy-badge">代理</span>
+    </td>
     <td>{{ item.assetType }}</td>
     <td class="center-cell">{{ item.description }}</td>
     <td v-if="isSeller" class="nowrap">{{ item.number }}</td>
@@ -87,22 +90,31 @@
     <!--<td>{{ formatRemarks(item.email, item.address) }}</td>-->
 
 <td v-if="isSeller" class="action-cell center-cell">
-  <button @click="openEditModal(item)" class="edit-button">
+  <button v-if="!item.isProxy" @click="openEditModal(item)" class="edit-button">
     编辑
   </button>
 </td>
 <td v-if="isSeller" class="nowrap proxy-cell">
-  <button type="button" @click.stop.prevent="handleAuthorization(item)" class="edit-button">
-    {{ isAssetProxied(item) ? '修改代理托管' : '代理托管' }}
-  </button>
-  <button
-    v-if="isAssetProxied(item)"
-    type="button"
-    class="edit-button revoke-button"
-    @click.stop.prevent="handleRevokeAuthorization(item)"
-  >
-    取消授权
-  </button>
+  <template v-if="item.isProxy">
+    <button type="button" class="edit-button revoke-button" @click.stop.prevent="handleReturnDelegation(item)">
+      退出代理
+    </button>
+  </template>
+  <template v-else>
+    <template v-if="isAssetProxied(item)">
+      <div class="proxy-owner-hint" :title="item.agentAddr">托管给 {{ shortenHash(item.agentAddr) }}</div>
+      <button
+        type="button"
+        class="edit-button revoke-button"
+        @click.stop.prevent="handleRevokeAuthorization(item)"
+      >
+        取消授权
+      </button>
+    </template>
+    <button v-else type="button" @click.stop.prevent="handleAuthorization(item)" class="edit-button">
+      代理托管
+    </button>
+  </template>
 </td>
 
   </tr>
@@ -135,6 +147,24 @@
             min="1" :disabled="isIndivisible(selectedAsset.industry)" required />
         </div>
       </div>
+
+              <div class="form-row">
+                <div class="form-group">
+                  <label>允许代理的权益</label>
+                  <div class="delegation-rights">
+                    <label v-if="selectedAsset && selectedAsset.canSellAsset">
+                      <input type="checkbox" value="持有权" v-model="authorizationData.rights" /> 持有权
+                    </label>
+                    <label v-if="selectedAsset && selectedAsset.canSellView">
+                      <input type="checkbox" value="经营权" v-model="authorizationData.rights" /> 经营权
+                    </label>
+                    <label v-if="selectedAsset && selectedAsset.canSellProcess">
+                      <input type="checkbox" value="使用权" v-model="authorizationData.rights" /> 使用权
+                    </label>
+                  </div>
+                  <small style="color:#909399; display:block; margin-top:4px;">至少选择一项；未选择的权益代理人不能出售。</small>
+                </div>
+              </div>
 
               <div class="button-container">
                 <button class="confirm-button" @click="confirmAuthorization">确认代理托管</button>
@@ -214,8 +244,10 @@
           <div class="form-row">
             <div class="form-group">
               <label for="asset-number-modal">可售数量</label>
-              <input id="asset-number-modal" type="number" min="0" step="1" v-model.number="editAsset.number" :disabled="editAsset.industry === 'WH'" />
-              <small style="color:#909399; display:block; margin-top:4px;">0 表示售罄；填写数量并选择“开放交易”后会重新上架。</small>
+              <input id="asset-number-modal" type="number" min="0" step="1" v-model.number="editAsset.number" :disabled="editAsset.industry === 'WH' || isAssetProxied(editAsset)" />
+              <small style="color:#909399; display:block; margin-top:4px;">
+                {{ isAssetProxied(editAsset) ? '代理期间数量由代理关系管理，请先撤销代理后再修改。' : '0 表示售罄；填写数量并选择“开放交易”后会重新上架。' }}
+              </small>
             </div>
           </div>
           <div class="form-row">
@@ -443,6 +475,7 @@ export default {
       authorizationData: {
         targetAddress: '',  // 目标地址
         authorizationQuantity: 1,  // 默认授权数量为 1
+        rights: [], // 允许代理出售的权益
       },
 
 
@@ -1703,6 +1736,11 @@ isIndivisible(industry) {
       this.selectedAsset = item;  // 保存当前资产信息
       this.authorizationData.targetAddress = item.agentAddr || '';
       this.authorizationData.authorizationQuantity = item.number || 1;
+      this.authorizationData.rights = [
+        item.canSellAsset ? '持有权' : null,
+        item.canSellView ? '经营权' : null,
+        item.canSellProcess ? '使用权' : null
+      ].filter(Boolean);
       this.showAuthorizationModal = true; // 显示授权弹窗
     },
 
@@ -1712,8 +1750,8 @@ isIndivisible(industry) {
       return item.isProxied === 1 || item.isProxied === '1' || !!item.agentAddr;
     },
 
-    // 取消代理托管：先走链上撤销（与授权同接口、isApproval 反置/额度归零），
-    // 成功后再清理本系统的数据库托管记录。
+    // 取消代理托管：先撤销业务库里的代理关系和库存，再尽力撤销链上授权。
+    // 这样有未完成订单时不会出现“链上已撤销、业务还在”的状态。
     async handleRevokeAuthorization(item) {
       if (!item) return;
       const asset = item;
@@ -1726,40 +1764,70 @@ isIndivisible(industry) {
         return;
       }
 
-      let owner;
       try {
-        owner = await this.getOwnerOfAsset(asset.fileHash); // 获取资产拥有者
+        const revokeResponse = await axios.post('http://10.112.191.163:3000/api/revoke-delegation', {
+          asset_id: asset.fileHash,
+          actor_user_id: this.userId
+        });
+        const returned = Number(revokeResponse.data?.returned || 0);
+        asset.isProxied = 0;
+        asset.agentAddr = '';
+        asset.number = Number(asset.number || 0) + returned;
+        this.errorMessage = '';
+
+        let owner = asset.ownerAddress || '';
+        try {
+          owner = (await this.getOwnerOfAsset(asset.fileHash)) || owner;
+        } catch (ownerError) {
+          console.warn('读取链上所有者失败，使用数据库地址:', ownerError);
+        }
+
+        const indivisible = this.isIndivisible(asset.industry);
+        const payload = indivisible
+          ? { owner, to: agentAddr, tokenId: asset.fileHash, isApproval: 'false' }
+          : { to: agentAddr, amount: '0' };
+        const apiUrl = indivisible
+          ? 'http://10.112.191.163:8848/pre/SetApproval'
+          : 'http://10.112.191.163:8848/pre/En-Approve';
+
+        try {
+          const response = await axios.post(apiUrl, payload);
+          if (!(response.status === 200 && (response.data.code === 0 || response.data.code === '0'))) {
+            throw new Error(response.data.message || '链上撤销失败');
+          }
+          this.$message?.success('已取消代理托管');
+        } catch (chainError) {
+          console.error('链上撤销代理授权失败:', chainError);
+          this.$message?.warning('业务代理已撤销，链上授权撤销失败，可稍后重试');
+        }
       } catch (error) {
-        this.errorMessage = '获取资产拥有者失败，请稍后再试。';
+        console.error('取消代理失败:', error);
+        this.errorMessage = error?.response?.data?.message || '取消代理失败，请稍后再试。';
+      }
+    },
+
+    async handleReturnDelegation(item) {
+      if (!item || !item.delegationId) return;
+      if (!window.confirm(`确定退出资产“${item.assetName || item.fileHash}”的代理吗？剩余数量会退回所有者。`)) {
         return;
       }
 
-      const indivisible = this.isIndivisible(asset.industry);
-      const payload = indivisible
-        ? { owner: owner, to: agentAddr, tokenId: asset.fileHash, isApproval: 'false' }
-        : { to: agentAddr, amount: '0' }; // 可分割资产按额度归零处理
-      const apiUrl = indivisible
-        ? 'http://10.112.191.163:8848/pre/SetApproval' // 不可分割资产
-        : 'http://10.112.191.163:8848/pre/En-Approve'; // 可分割资产
-
       try {
-        const response = await axios.post(apiUrl, payload);
-        if (!(response.status === 200 && (response.data.code === 0 || response.data.code === '0'))) {
-          this.errorMessage = '链上取消授权失败：' + (response.data.message || '未知错误');
-          return;
-        }
-        await axios.post('http://10.112.191.163:3000/api/revoke-agent', {
-          file_hash: asset.fileHash
+        const response = await axios.post('http://10.112.191.163:3000/api/revoke-delegation', {
+          delegation_id: item.delegationId,
+          actor_user_id: this.userId
         });
-        asset.isProxied = 0;
-        asset.agentAddr = '';
-        this.errorMessage = '';
-        if (this.$message && this.$message.success) {
-          this.$message.success('已取消代理托管');
+        if (!response.data?.success) {
+          throw new Error(response.data?.message || '退出代理失败');
         }
+        this.registeredAssets = this.registeredAssets.filter(
+          (asset) => asset.delegationId !== item.delegationId
+        );
+        this.setPagination();
+        this.$message?.success('已退出代理，剩余数量已退回所有者');
       } catch (error) {
-        console.error('取消授权失败:', error);
-        this.errorMessage = '取消授权失败，请稍后再试。';
+        console.error('退出代理失败:', error);
+        this.$message?.error(error?.response?.data?.message || error.message || '退出代理失败');
       }
     },
 
@@ -2052,45 +2120,74 @@ updatePurchasedAssetsPagination() {
       return;
     }
 
-    const asset = this.selectedAsset;
-    const indivisible = this.isIndivisible(asset.industry);
-    const authorizationQuantity = indivisible ? 1 : this.authorizationData.authorizationQuantity;
-    let owner;
-
-    try {
-      owner = await this.getOwnerOfAsset(asset.fileHash);
-    } catch (error) {
-      this.errorMessage = '获取资产拥有者失败，请稍后再试。';
-      this.$message?.error(this.errorMessage);
+    const rights = Array.isArray(this.authorizationData.rights) ? this.authorizationData.rights : [];
+    if (!rights.length) {
+      this.$message?.warning('请至少选择一项允许代理的权益');
       return;
     }
 
-    const payload = indivisible
-      ? { owner, to: targetAddress, tokenId: asset.fileHash, isApproval: 'true' }
-      : { to: targetAddress, amount: authorizationQuantity.toString() };
-    const apiUrl = indivisible
-      ? 'http://10.112.191.163:8848/pre/SetApproval'
-      : 'http://10.112.191.163:8848/pre/En-Approve';
+    const asset = this.selectedAsset;
+    const indivisible = this.isIndivisible(asset.industry);
+    const authorizationQuantity = indivisible ? 1 : Number(this.authorizationData.authorizationQuantity);
+    if (!Number.isInteger(authorizationQuantity) || authorizationQuantity <= 0) {
+      this.$message?.warning('代理数量必须为正整数');
+      return;
+    }
 
+    let delegation = null;
     try {
+      // 1. 先在业务库预扣库存并建立代理关系
+      const delegateResponse = await axios.post('http://10.112.191.163:3000/api/delegate-asset', {
+        asset_id: asset.fileHash,
+        agent_address: targetAddress,
+        quantity: authorizationQuantity,
+        allowed_rights: rights.join(','),
+        actor_user_id: this.userId
+      });
+      delegation = delegateResponse.data?.delegation || null;
+      if (!delegation) {
+        throw new Error(delegateResponse.data?.message || '代理关系创建失败');
+      }
+
+      // 2. 再写链上授权记录；即使链上失败，业务库存也会回滚
+      let owner = delegation.owner_address;
+      try {
+        const chainOwner = await this.getOwnerOfAsset(asset.fileHash);
+        if (chainOwner) owner = chainOwner;
+      } catch (ownerError) {
+        console.warn('读取链上所有者失败，使用数据库所有者地址:', ownerError);
+      }
+
+      const payload = indivisible
+        ? { owner, to: targetAddress, tokenId: asset.fileHash, isApproval: 'true' }
+        : { to: targetAddress, amount: authorizationQuantity.toString() };
+      const apiUrl = indivisible
+        ? 'http://10.112.191.163:8848/pre/SetApproval'
+        : 'http://10.112.191.163:8848/pre/En-Approve';
+
       const response = await axios.post(apiUrl, payload);
       if (!(response.status === 200 && (response.data.code === 0 || response.data.code === '0'))) {
         throw new Error(response.data.message || '链上授权失败');
       }
 
-      await axios.post('http://10.112.191.163:3000/api/update-agent', {
-        file_hash: asset.fileHash,
-        agent_addr: targetAddress,
-        agent_count: authorizationQuantity
-      });
-
       asset.agentAddr = targetAddress;
       asset.isProxied = 1;
+      asset.number = Math.max(0, Number(asset.number) - authorizationQuantity);
       this.closeAuthorizationModal();
       this.showAuthorizationSuccessModal = true;
       this.$message?.success('代理托管已设置');
     } catch (error) {
       console.error('授权失败:', error);
+      if (delegation && delegation.id) {
+        try {
+          await axios.post('http://10.112.191.163:3000/api/revoke-delegation', {
+            delegation_id: delegation.id,
+            actor_user_id: this.userId
+          });
+        } catch (rollbackError) {
+          console.error('回滚代理关系失败:', rollbackError);
+        }
+      }
       this.errorMessage = '授权失败：' + (error?.response?.data?.message || error.message || '请稍后再试');
       this.$message?.error(this.errorMessage);
     }
@@ -2190,7 +2287,7 @@ updatePurchasedAssetsPagination() {
         this.isAdmin = false;
       }
       // 获取资产数据
-      axios.get(`http://10.112.191.163:3000/api/get-asset2`)
+      return axios.get(`http://10.112.191.163:3000/api/get-asset2`)
         .then(response => {
           this.isLoading = true;
           const groupedAssets = response.data.reduce((acc, item) => {
@@ -2220,6 +2317,7 @@ updatePurchasedAssetsPagination() {
             industry: item.industry,
             algorithm: item.algorithm,
             agentAddr: item.agent_addr,
+            ownerAddress: item.current_owner_address || item.owner_address,
             userId: item.user_id,
             txperm: item.txperm,
             isProxied: item.is_proxied, // 这里加上 is_proxied 字段
@@ -2233,6 +2331,7 @@ updatePurchasedAssetsPagination() {
          /* this.pagination.total = this.assetData.length;
           this.pagination.pages = Math.ceil(this.pagination.total / this.pagination.perPage);*/
            this.setPagination();
+           if (this.isSeller) this.fetchAgentDelegations();
         })
         .catch(error => {
           console.error('获取资产数据失败:', error);
@@ -2241,6 +2340,53 @@ updatePurchasedAssetsPagination() {
         .finally(() => {
           this.isLoading = false;
         });
+    },
+
+    async fetchAgentDelegations() {
+      if (!this.isSeller || !this.userId) return;
+      try {
+        const response = await axios.get('http://10.112.191.163:3000/api/agent-delegations', {
+          params: { agentUserId: this.userId }
+        });
+        const rows = (response.data?.delegations || []).map((item) => {
+          const rights = String(item.allowed_rights || '')
+            .split(',')
+            .map((right) => right.trim())
+            .filter(Boolean);
+          return {
+            rowKey: `proxy-${item.delegation_id}`,
+            id: `proxy-${item.delegation_id}`,
+            delegationId: item.delegation_id,
+            isProxy: true,
+            assetName: item.asset_name,
+            assetType: item.asset_type,
+            description: item.description,
+            fileHash: item.asset_id,
+            industry: item.industry,
+            agentAddr: item.agent_address,
+            userId: item.owner_id,
+            ownerName: item.owner_username,
+            ownerAddress: item.owner_address,
+            sellerAddress: item.agent_address,
+            txperm: 3,
+            isProxied: 1,
+            canSellAsset: rights.includes('持有权') ? 1 : 0,
+            canSellView: rights.includes('经营权') ? 1 : 0,
+            canSellProcess: rights.includes('使用权') ? 1 : 0,
+            number: item.quantity_remaining,
+            price: item.price,
+            isExpanded: false
+          };
+        });
+
+        this.registeredAssets = [
+          ...this.registeredAssets.filter((asset) => !asset.isProxy),
+          ...rows
+        ];
+        this.setPagination();
+      } catch (error) {
+        console.error('获取代理资产失败:', error);
+      }
     },
 
     formatRemarks(email, address) {
@@ -2483,7 +2629,7 @@ async confirmEdit() {
         address: this.editAsset.address,
         userId: this.editAsset.userId,
         txperm: this.editAsset.txperm,
-        number: this.editAsset.number,
+        ...(this.isAssetProxied(this.editAsset) ? {} : { number: this.editAsset.number }),
         can_sell_asset: this.editAsset.canSellAsset ? 1 : 0,   // 选中则传 1，未选中传 0
         can_sell_view: this.editAsset.canSellView ? 1 : 0,
         can_sell_process: this.editAsset.canSellProcess ? 1 : 0,
@@ -2942,6 +3088,41 @@ body {
 .revoke-button:hover {
   background-color: #dc3545;
   color: #fff;
+}
+
+.proxy-owner-hint {
+  margin-bottom: 6px;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-all;
+}
+
+.proxy-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #eef4ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+.delegation-rights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding-top: 4px;
+}
+
+.delegation-rights label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 14px;
+  cursor: pointer;
 }
 
 /* 调整分页器样式 */

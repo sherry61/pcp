@@ -1339,7 +1339,7 @@ app.get('/api/query-assets', (req, res) => {
     });
 });
 
-app.post('/api/update-asset', (req, res) => {
+app.post('/api/update-asset', async (req, res) => {
     const { assetName, assetType, description, fileHash, email, address, userId , txperm, can_sell_asset, can_sell_view, can_sell_process, number } = req.body;
      console.log('Received data:', req.body); // 打印请求数据
 
@@ -1351,24 +1351,520 @@ app.post('/api/update-asset', (req, res) => {
         }
         nextNumber = parsed;
     }
-     
-    const sql = `
-        UPDATE asset_registrations 
-        SET asset_name = ?, asset_type = ?, description = ?, email = ?, address = ?, user_id = ? , txperm = ?, can_sell_asset = ?, can_sell_view = ?, can_sell_process = ?,
-            number = CASE WHEN industry = 'WH' THEN LEAST(number, 1) ELSE COALESCE(?, number) END
-        WHERE file_hash = ?
-    `;
 
-    db.query(sql, [assetName, assetType, description, email, address, userId, txperm, can_sell_asset, can_sell_view, can_sell_process, nextNumber, fileHash], (err, result) => {
-        if (err) {
-            console.error('更新资产信息失败:', err);
-            res.status(500).json({ message: '更新失败，请稍后再试' });
-        } else if (result.affectedRows > 0) {
-            res.status(200).json({ message: '资产信息更新成功' });  // 确保返回成功的状态码
-        } else {
-            res.status(404).json({ message: '未找到对应的资产' });
+    try {
+        // 代理期间资产的可售数量由代理关系管理，不能直接改大或改小。
+        if (nextNumber !== null) {
+            const delegations = await dbQuery(
+                `SELECT id FROM asset_delegations
+                 WHERE asset_id = ? AND status IN ('ACTIVE', 'SOLD_OUT')
+                 LIMIT 1`,
+                [fileHash]
+            );
+            if (delegations.length) {
+                const currentRows = await dbQuery(
+                    'SELECT number FROM asset_registrations WHERE file_hash = ? LIMIT 1',
+                    [fileHash]
+                );
+                if (currentRows.length && nextNumber !== Number(currentRows[0].number)) {
+                    return res.status(409).json({
+                        message: '代理期间不能直接修改可售数量，请先撤销代理关系'
+                    });
+                }
+            }
         }
-    });
+
+        const sql = `
+            UPDATE asset_registrations 
+            SET asset_name = ?, asset_type = ?, description = ?, email = ?, address = ?, user_id = ? , txperm = ?, can_sell_asset = ?, can_sell_view = ?, can_sell_process = ?,
+                number = CASE WHEN industry = 'WH' THEN LEAST(number, 1) ELSE COALESCE(?, number) END
+            WHERE file_hash = ?
+        `;
+
+        const result = await dbQuery(sql, [
+            assetName, assetType, description, email, address, userId, txperm,
+            can_sell_asset, can_sell_view, can_sell_process, nextNumber, fileHash
+        ]);
+
+        if (result.affectedRows > 0) {
+            return res.status(200).json({ message: '资产信息更新成功' });
+        }
+        return res.status(404).json({ message: '未找到对应的资产' });
+    } catch (error) {
+        console.error('更新资产信息失败:', error);
+        return res.status(500).json({ message: '更新失败，请稍后再试' });
+    }
+});
+
+// ================= 代理库存 / 代销 =================
+
+const DELEGATION_RIGHTS = [
+    { name: '持有权', field: 'can_sell_asset' },
+    { name: '经营权', field: 'can_sell_view' },
+    { name: '使用权', field: 'can_sell_process' }
+];
+
+function normalizeDelegationRights(input, asset) {
+    const available = DELEGATION_RIGHTS
+        .filter((item) => Number(asset[item.field]) === 1)
+        .map((item) => item.name);
+    const raw = Array.isArray(input) ? input : String(input || '').split(',');
+    const requested = raw.map((item) => String(item || '').trim()).filter(Boolean);
+    const finalRights = requested.length ? [...new Set(requested)] : available;
+
+    if (!available.length) {
+        const error = new Error('该资产当前没有可代理出售的权益');
+        error.statusCode = 400;
+        throw error;
+    }
+    const invalid = finalRights.filter((item) => !available.includes(item));
+    if (invalid.length) {
+        const error = new Error(`代理权益超出可售范围：${invalid.join('、')}`);
+        error.statusCode = 400;
+        throw error;
+    }
+    return finalRights;
+}
+
+async function resolveUserIdByAddress(address) {
+    if (!address) return null;
+    const rows = await dbQuery(
+        'SELECT user_id FROM certificate_registry WHERE address = ? AND user_id IS NOT NULL LIMIT 1',
+        [address]
+    );
+    return rows.length ? Number(rows[0].user_id) : null;
+}
+
+app.post('/api/delegate-asset', async (req, res) => {
+    const assetId = String(req.body?.asset_id || '').trim();
+    const agentAddress = String(req.body?.agent_address || '').trim();
+    const requestedQuantity = Number(req.body?.quantity);
+    const allowedRightsInput = req.body?.allowed_rights;
+    const actorUserId = Number(req.body?.actor_user_id || req.body?.owner_user_id);
+
+    if (!assetId || !agentAddress) {
+        return res.status(400).json({ message: '缺少 asset_id 或 agent_address' });
+    }
+    if (!Number.isInteger(requestedQuantity) || requestedQuantity <= 0) {
+        return res.status(400).json({ message: '代理数量必须为正整数' });
+    }
+
+    try {
+        const assetRows = await dbQuery(
+            'SELECT * FROM asset_registrations WHERE file_hash = ? LIMIT 1',
+            [assetId]
+        );
+        if (!assetRows.length) {
+            return res.status(404).json({ message: '资产不存在' });
+        }
+
+        const asset = assetRows[0];
+        const ownerAddress = String(asset.current_owner_address || asset.owner_address || '').trim();
+        if (!ownerAddress) {
+            return res.status(400).json({ message: '资产缺少所有者地址，无法代理' });
+        }
+
+        let ownerUserId = Number(asset.user_id);
+        if (ownerAddress && ownerAddress !== asset.owner_address) {
+            const resolvedOwner = await resolveUserIdByAddress(ownerAddress);
+            if (resolvedOwner) ownerUserId = resolvedOwner;
+        }
+        if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
+            return res.status(400).json({ message: '缺少操作人 actor_user_id' });
+        }
+        if (actorUserId !== ownerUserId) {
+            return res.status(403).json({ message: '只有资产所有者可以发起代理托管' });
+        }
+
+        const agentUserId = await resolveUserIdByAddress(agentAddress);
+        if (!agentUserId) {
+            return res.status(400).json({ message: '托管码未绑定系统用户，请填写本站证书地址' });
+        }
+        if (agentUserId === ownerUserId) {
+            return res.status(400).json({ message: '不能把资产代理给自己' });
+        }
+        if (String(asset.trade_mode || 'fixed') === 'auction') {
+            return res.status(400).json({ message: '拍卖资产暂不支持代理托管' });
+        }
+        if (Number(asset.txperm) !== 3) {
+            return res.status(400).json({ message: '当前资产尚未开放交易' });
+        }
+
+        const rights = normalizeDelegationRights(allowedRightsInput, asset);
+        const quantity = String(asset.industry) === 'WH' ? 1 : requestedQuantity;
+
+        const delegation = await withMainDbTransaction(async ({ query }) => {
+            const lockedAssets = await query(
+                'SELECT * FROM asset_registrations WHERE file_hash = ? LIMIT 1 FOR UPDATE',
+                [assetId]
+            );
+            if (!lockedAssets.length) {
+                const error = new Error('资产不存在');
+                error.statusCode = 404;
+                throw error;
+            }
+            const lockedAsset = lockedAssets[0];
+
+            const existing = await query(
+                `SELECT id, status FROM asset_delegations
+                 WHERE asset_id = ? AND status IN ('ACTIVE', 'SOLD_OUT')
+                 LIMIT 1 FOR UPDATE`,
+                [assetId]
+            );
+            if (existing.length) {
+                const error = new Error('该资产已有代理关系，请先撤销或退回后再重新授权');
+                error.statusCode = 409;
+                throw error;
+            }
+
+            const available = Number(lockedAsset.number);
+            if (!Number.isFinite(available) || available < quantity) {
+                const error = new Error('可售数量不足，无法预扣代理库存');
+                error.statusCode = 409;
+                error.code = 'OUT_OF_STOCK';
+                throw error;
+            }
+
+            const updateResult = await query(
+                'UPDATE asset_registrations SET number = number - ? WHERE file_hash = ? AND number >= ?',
+                [quantity, assetId, quantity]
+            );
+            if (!updateResult || updateResult.affectedRows === 0) {
+                const error = new Error('可售数量不足，无法预扣代理库存');
+                error.statusCode = 409;
+                error.code = 'OUT_OF_STOCK';
+                throw error;
+            }
+
+            const insertResult = await query(
+                `INSERT INTO asset_delegations
+                    (asset_id, owner_id, owner_address, agent_user_id, agent_address,
+                     quantity_total, quantity_remaining, allowed_rights, price, status)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'ACTIVE')`,
+                [
+                    assetId,
+                    ownerUserId,
+                    ownerAddress,
+                    agentUserId,
+                    agentAddress,
+                    quantity,
+                    quantity,
+                    rights.join(','),
+                    lockedAsset.price != null ? lockedAsset.price : null
+                ]
+            );
+
+            await query(
+                'UPDATE asset_registrations SET agent_addr = ?, agent_count = ?, is_proxied = 1 WHERE file_hash = ?',
+                [agentAddress, quantity, assetId]
+            );
+
+            return {
+                id: insertResult.insertId,
+                asset_id: assetId,
+                owner_id: ownerUserId,
+                owner_address: ownerAddress,
+                agent_user_id: agentUserId,
+                agent_address: agentAddress,
+                quantity_total: quantity,
+                quantity_remaining: quantity,
+                allowed_rights: rights.join(','),
+                price: lockedAsset.price,
+                status: 'ACTIVE'
+            };
+        });
+
+        return res.status(200).json({ success: true, message: '代理托管成功', delegation });
+    } catch (error) {
+        console.error('代理托管失败:', error.message);
+        return res.status(error.statusCode || 500).json({
+            message: error.message || '代理托管失败',
+            code: error.code
+        });
+    }
+});
+
+app.post('/api/revoke-delegation', async (req, res) => {
+    const delegationId = Number(req.body?.delegation_id);
+    const assetId = String(req.body?.asset_id || '').trim();
+    const actorUserId = Number(req.body?.actor_user_id || req.body?.user_id);
+
+    if (!Number.isInteger(actorUserId) || actorUserId <= 0) {
+        return res.status(400).json({ message: '缺少 actor_user_id' });
+    }
+    if ((!Number.isInteger(delegationId) || delegationId <= 0) && !assetId) {
+        return res.status(400).json({ message: '缺少 delegation_id 或 asset_id' });
+    }
+
+    try {
+        const result = await withMainDbTransaction(async ({ query }) => {
+            const rows = Number.isInteger(delegationId) && delegationId > 0
+                ? await query('SELECT * FROM asset_delegations WHERE id = ? LIMIT 1 FOR UPDATE', [delegationId])
+                : await query(
+                    `SELECT * FROM asset_delegations
+                     WHERE asset_id = ? AND status IN ('ACTIVE', 'SOLD_OUT')
+                     ORDER BY id DESC LIMIT 1 FOR UPDATE`,
+                    [assetId]
+                );
+
+            if (!rows.length) {
+                const error = new Error('未找到可撤销的代理关系');
+                error.statusCode = 404;
+                throw error;
+            }
+
+            const delegation = rows[0];
+            if (actorUserId !== Number(delegation.owner_id) && actorUserId !== Number(delegation.agent_user_id)) {
+                const error = new Error('只有所有者或代理人可以撤销该代理关系');
+                error.statusCode = 403;
+                throw error;
+            }
+            if (delegation.status === 'REVOKED') {
+                return { alreadyRevoked: true, delegationId: delegation.id, returned: 0 };
+            }
+
+            const pending = await query(
+                `SELECT COUNT(*) AS total FROM transactions
+                 WHERE delegation_id = ? AND status = '待确认' AND is_deleted = 0`,
+                [delegation.id]
+            );
+            if (Number(pending[0]?.total || 0) > 0) {
+                const error = new Error('该代理还有未完成订单，请先处理订单再撤销');
+                error.statusCode = 409;
+                throw error;
+            }
+
+            const remaining = Number(delegation.quantity_remaining) || 0;
+            if (remaining > 0) {
+                await query(
+                    'UPDATE asset_registrations SET number = number + ? WHERE file_hash = ?',
+                    [remaining, delegation.asset_id]
+                );
+            }
+
+            await query(
+                `UPDATE asset_delegations
+                 SET status = 'REVOKED', quantity_remaining = 0, revoked_at = NOW()
+                 WHERE id = ?`,
+                [delegation.id]
+            );
+            await query(
+                'UPDATE asset_registrations SET agent_addr = NULL, agent_count = 0, is_proxied = 0 WHERE file_hash = ?',
+                [delegation.asset_id]
+            );
+
+            return {
+                alreadyRevoked: false,
+                delegationId: delegation.id,
+                returned: remaining,
+                assetId: delegation.asset_id
+            };
+        });
+
+        return res.status(200).json({ success: true, message: '代理关系已撤销', ...result });
+    } catch (error) {
+        console.error('撤销代理失败:', error.message);
+        return res.status(error.statusCode || 500).json({
+            message: error.message || '撤销代理失败'
+        });
+    }
+});
+
+// 代理订单确认后，由平台使用所有者证书完成链上过户。
+// 代理关系是业务层代销，链上仍然从所有者地址转出。
+app.post('/api/proxy-transfer', async (req, res) => {
+    const transactionId = Number(req.body?.transaction_id);
+    const sellerAddress = String(req.body?.seller_address || '').trim();
+
+    if (!Number.isInteger(transactionId) || transactionId <= 0 || !sellerAddress) {
+        return res.status(400).json({ message: '缺少 transaction_id 或 seller_address' });
+    }
+
+    try {
+        const transactionRows = await dbQuery(
+            `SELECT * FROM transactions
+             WHERE transaction_id = ? AND seller_address = ? LIMIT 1`,
+            [transactionId, sellerAddress]
+        );
+        if (!transactionRows.length) {
+            return res.status(404).json({ message: '交易不存在或不属于当前代理人' });
+        }
+
+        const transaction = transactionRows[0];
+        if (transaction.seller_type !== 'AGENT' || !Number(transaction.delegation_id)) {
+            return res.status(400).json({ message: '该交易不是代理订单' });
+        }
+        if (transaction.status !== '已确认') {
+            return res.status(409).json({ message: '交易尚未确认，不能过户' });
+        }
+        if (transaction.chain_transfer_status === 'SUCCESS') {
+            return res.json({ success: true, message: '该交易已完成链上过户', alreadyTransferred: true });
+        }
+
+        const assetRows = await dbQuery(
+            'SELECT * FROM asset_registrations WHERE file_hash = ? LIMIT 1',
+            [transaction.asset_id]
+        );
+        if (!assetRows.length) {
+            return res.status(404).json({ message: '资产不存在' });
+        }
+        const asset = assetRows[0];
+
+        const ownerAddress = String(transaction.owner_address || asset.current_owner_address || asset.owner_address || '').trim();
+        if (!ownerAddress) {
+            return res.status(400).json({ message: '交易缺少所有者地址' });
+        }
+
+        const certRows = await dbQuery(
+            `SELECT certificate_name, org, address
+             FROM certificate_registry
+             WHERE address = ? AND user_id IS NOT NULL
+             ORDER BY id DESC LIMIT 1`,
+            [ownerAddress]
+        );
+        if (!certRows.length) {
+            return res.status(400).json({ message: '未找到所有者证书，无法完成链上过户' });
+        }
+        const ownerCert = certRows[0];
+        const orgName = String(ownerCert.org || '').includes('.chainmaker.org')
+            ? ownerCert.org
+            : `${ownerCert.org}.chainmaker.org`;
+
+        const configResponse = await axios.post(
+            'http://127.0.0.1:8848/pre/DynamicCertConfig',
+            { clientName: ownerCert.certificate_name, orgName }
+        );
+        if (configResponse.status !== 200) {
+            return res.status(502).json({ message: '配置所有者证书失败' });
+        }
+
+        const isIndivisible = String(asset.industry) === 'WH';
+        const transferPayload = isIndivisible
+            ? {
+                from: ownerAddress,
+                to: transaction.buyer_address,
+                tokenId: asset.file_hash
+            }
+            : {
+                to: transaction.buyer_address,
+                amount: String(Number(transaction.quantity) || 1)
+            };
+        const transferUrl = isIndivisible
+            ? 'http://127.0.0.1:8848/pre/TransferFrom'
+            : 'http://127.0.0.1:8848/pre/En-Transfer';
+
+        const transferResponse = await axios.post(transferUrl, transferPayload);
+        const transferCode = transferResponse.data?.code;
+        if (!(transferResponse.status === 200 && (transferCode === 0 || transferCode === '0'))) {
+            await dbQuery(
+                "UPDATE transactions SET chain_transfer_status = 'FAILED' WHERE transaction_id = ?",
+                [transactionId]
+            );
+            return res.status(502).json({
+                message: '链上过户失败',
+                detail: transferResponse.data?.message || transferResponse.data?.msg || '未知错误'
+            });
+        }
+
+        await dbQuery(
+            'UPDATE asset_registrations SET current_owner_address = ? WHERE file_hash = ?',
+            [transaction.buyer_address, transaction.asset_id]
+        );
+        await dbQuery(
+            `UPDATE transactions
+             SET chain_transfer_status = 'SUCCESS', chain_transferred_at = NOW()
+             WHERE transaction_id = ?`,
+            [transactionId]
+        );
+
+        return res.json({ success: true, message: '链上过户成功', transaction_id: transactionId });
+    } catch (error) {
+        console.error('代理订单过户失败:', error.message);
+        return res.status(500).json({
+            message: '代理订单过户失败',
+            detail: error.response?.data?.message || error.message
+        });
+    }
+});
+
+app.get('/api/agent-delegations', async (req, res) => {
+    const agentUserId = Number(req.query.agentUserId || req.query.agent_user_id);
+    if (!Number.isInteger(agentUserId) || agentUserId <= 0) {
+        return res.status(400).json({ success: false, message: '缺少 agentUserId' });
+    }
+
+    try {
+        const rows = await dbQuery(
+            `SELECT d.id AS delegation_id,
+                    d.asset_id,
+                    d.owner_id,
+                    d.owner_address,
+                    d.agent_user_id,
+                    d.agent_address,
+                    d.quantity_total,
+                    d.quantity_remaining,
+                    d.allowed_rights,
+                    d.price,
+                    d.status,
+                    d.created_at,
+                    ar.asset_name,
+                    ar.asset_type,
+                    ar.asset_category,
+                    ar.description,
+                    ar.industry,
+                    ar.industry_raw,
+                    ar.industry_raw_name,
+                    ar.can_sell_asset,
+                    ar.can_sell_view,
+                    ar.can_sell_process,
+                    owner.username AS owner_username
+             FROM asset_delegations d
+             JOIN asset_registrations ar ON ar.file_hash = d.asset_id
+             LEFT JOIN users owner ON owner.id = d.owner_id
+             WHERE d.agent_user_id = ?
+               AND d.status = 'ACTIVE'
+               AND d.quantity_remaining > 0
+             ORDER BY d.id DESC`,
+            [agentUserId]
+        );
+        return res.json({ success: true, delegations: rows });
+    } catch (error) {
+        console.error('查询代理资产失败:', error.message);
+        return res.status(500).json({ success: false, message: '查询代理资产失败' });
+    }
+});
+
+app.get('/api/delegation/:id', async (req, res) => {
+    const delegationId = Number(req.params.id);
+    if (!Number.isInteger(delegationId) || delegationId <= 0) {
+        return res.status(400).json({ success: false, message: '无效的代理 ID' });
+    }
+
+    try {
+        const rows = await dbQuery(
+            `SELECT d.*,
+                    ar.asset_name, ar.asset_type, ar.asset_category, ar.description,
+                    ar.industry, ar.industry_raw, ar.industry_raw_name,
+                    ar.can_sell_asset, ar.can_sell_view, ar.can_sell_process,
+                    ar.pc_type, ar.price AS asset_price,
+                    owner.username AS owner_username,
+                    agent.username AS agent_username
+             FROM asset_delegations d
+             JOIN asset_registrations ar ON ar.file_hash = d.asset_id
+             LEFT JOIN users owner ON owner.id = d.owner_id
+             LEFT JOIN users agent ON agent.id = d.agent_user_id
+             WHERE d.id = ?
+             LIMIT 1`,
+            [delegationId]
+        );
+        if (!rows.length) {
+            return res.status(404).json({ success: false, message: '代理关系不存在' });
+        }
+        return res.json({ success: true, delegation: rows[0] });
+    } catch (error) {
+        console.error('查询代理详情失败:', error.message);
+        return res.status(500).json({ success: false, message: '查询代理详情失败' });
+    }
 });
 
 app.post('/api/authorize', (req, res) => {
@@ -2424,29 +2920,94 @@ app.get('/api/available-assets', (req, res) => {
     queryParams.push(asset_type);
   }
 
+  let proxyQuery = `
+    SELECT ar.asset_name,
+           ar.asset_type,
+           ar.asset_category,
+           ar.email,
+           ar.address,
+           ar.description,
+           ar.algorithm,
+           ar.custom_algorithm,
+           ar.file_hash,
+           ar.industry,
+           ar.industry_raw,
+           ar.industry_raw_name,
+           d.agent_user_id AS user_id,
+           d.owner_id AS owner_user_id,
+           d.owner_address,
+           ar.current_owner_address,
+           d.agent_address AS seller_address,
+           d.agent_address AS agent_addr,
+           1 AS is_proxied,
+           COALESCE(d.price, ar.price) AS price,
+           d.quantity_remaining AS number,
+           ar.trade_mode, ar.auction_start_price, ar.auction_end_time,
+           ar.auction_current_price, ar.auction_bid_count, ar.auction_status,
+           d.id AS delegation_id,
+           'AGENT' AS seller_type,
+           d.allowed_rights
+           ${includePictures ? ', ar.picture' : ''}
+    FROM asset_delegations d
+    JOIN asset_registrations ar ON ar.file_hash = d.asset_id
+    WHERE d.status = 'ACTIVE'
+      AND d.quantity_remaining > 0
+      AND ar.txperm = 3
+      AND (ar.trade_mode <> 'auction' OR ((ar.auction_status IS NULL OR ar.auction_status = 'OPEN') AND ar.auction_end_time > NOW()))
+  `;
+
+  const proxyParams = [];
+  if (industry_raw_name && industry_raw_name !== 'ALL') {
+    proxyQuery += ` AND ar.industry_raw_name = ?`;
+    proxyParams.push(industry_raw_name);
+  }
+  if (asset_category && asset_category !== 'ALL') {
+    proxyQuery += ` AND ar.asset_category = ?`;
+    proxyParams.push(asset_category);
+  }
+  if (asset_type && asset_type !== 'ALL') {
+    proxyQuery += ` AND ar.asset_type = ?`;
+    proxyParams.push(asset_type);
+  }
+
+  const normalizeAssetRow = (asset, extra = {}) => {
+    if (asset.picture && Buffer.isBuffer(asset.picture)) {
+      asset.picture = asset.picture.toString('base64');
+    } else {
+      asset.picture = null;
+    }
+    return Object.assign(asset, extra);
+  };
+
   db.query(query, queryParams, (err, results) => {
     if (err) {
       console.error('查询可交易资产失败:', err);
       return res.status(500).json({ error: '服务器内部错误' });
     }
 
-    const assets = results.map(asset => {
-      if (asset.picture && Buffer.isBuffer(asset.picture)) {
-        asset.picture = asset.picture.toString('base64');
-      } else {
-        asset.picture = null;
+    db.query(proxyQuery, proxyParams, (proxyErr, proxyResults) => {
+      if (proxyErr) {
+        console.error('查询代理资产失败:', proxyErr);
+        return res.status(500).json({ error: '服务器内部错误' });
       }
-      return asset;
-    });
 
-    res.status(200).json(assets);
+      const ownerAssets = results.map((asset) => normalizeAssetRow(asset, {
+        seller_type: 'OWNER',
+        delegation_id: null,
+        owner_user_id: asset.user_id,
+        seller_address: asset.current_owner_address || asset.owner_address
+      }));
+      const agentAssets = proxyResults.map((asset) => normalizeAssetRow(asset));
+
+      res.status(200).json([...ownerAssets, ...agentAssets]);
+    });
   });
 });
   
 
   app.get('/api/get-asset2', (req, res) => {
     // 查询最新的一条数据，按id排序
-    const query = 'SELECT asset_name, asset_type, email, address, description, algorithm, custom_algorithm, file_hash, industry, txperm, user_id, owner_address, agent_addr, is_proxied, number, can_sell_asset, can_sell_view, can_sell_process FROM asset_registrations';
+    const query = 'SELECT asset_name, asset_type, email, address, description, algorithm, custom_algorithm, file_hash, industry, txperm, user_id, owner_address, current_owner_address, agent_addr, is_proxied, number, can_sell_asset, can_sell_view, can_sell_process FROM asset_registrations';
     
     db.query(query, (err, results) => {
         if (err) {
@@ -3186,7 +3747,10 @@ function insertTransaction(payload, cb) {
         model_file_hash,
         delivery_limit,
         pc_type,
-        price
+        price,
+        delegation_id,
+        seller_type,
+        owner_address
     } = payload || {};
 
     const ownerId = owner_id || null;
@@ -3206,6 +3770,22 @@ function insertTransaction(payload, cb) {
         return error;
     };
 
+    const delegationId = Number(delegation_id) > 0 ? Number(delegation_id) : null;
+    const safeSellerType = delegationId ? 'AGENT' : (seller_type === 'AGENT' ? 'AGENT' : 'OWNER');
+    const chainOwnerAddress = owner_address || null;
+
+    const syncAgentCount = (done) => {
+        if (!delegationId) return done();
+        db.query(
+            `UPDATE asset_registrations ar
+             JOIN asset_delegations d ON d.asset_id = ar.file_hash
+             SET ar.agent_count = d.quantity_remaining
+             WHERE d.id = ?`,
+            [delegationId],
+            () => done()
+        );
+    };
+
     const insertRow = (stockReserved) => {
         const query = `
             INSERT INTO transactions (
@@ -3223,8 +3803,11 @@ function insertTransaction(payload, cb) {
                 model_file_hash,
                 delivery_limit,
                 pc_type,
-                stock_reserved
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                stock_reserved,
+                delegation_id,
+                seller_type,
+                owner_address
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
         const values = [
             asset_id,
@@ -3241,14 +3824,26 @@ function insertTransaction(payload, cb) {
             model_file_hash,
             safeDeliveryLimit,
             pc_type || null,
-            stockReserved
+            stockReserved,
+            delegationId,
+            safeSellerType,
+            chainOwnerAddress
         ];
 
         db.query(query, values, (err, results) => {
             if (err) {
                 console.error('插入交易数据失败:', err);
                 if (!stockReserved) return cb(err);
-                // 插入失败时把刚占用的库存退回去
+                // 插入失败时把刚占用的库存退回去：代理库存退回代理关系，普通库存退回资产。
+                if (delegationId) {
+                    return db.query(
+                        `UPDATE asset_delegations
+                         SET quantity_remaining = quantity_remaining + ?, status = 'ACTIVE'
+                         WHERE id = ?`,
+                        [purchaseQuantity, delegationId],
+                        () => syncAgentCount(() => cb(err))
+                    );
+                }
                 return db.query(
                     'UPDATE asset_registrations SET number = number + ? WHERE file_hash = ?',
                     [purchaseQuantity, asset_id],
@@ -3266,6 +3861,26 @@ function insertTransaction(payload, cb) {
               });
         });
     };
+
+    // 代理订单扣代理库存，普通订单扣资产自身的可售数量。
+    if (delegationId) {
+        db.query(
+            `UPDATE asset_delegations
+             SET status = IF(quantity_remaining = ?, 'SOLD_OUT', status),
+                 quantity_remaining = quantity_remaining - ?
+             WHERE id = ?
+               AND asset_id = ?
+               AND status = 'ACTIVE'
+               AND quantity_remaining >= ?`,
+            [purchaseQuantity, purchaseQuantity, delegationId, asset_id, purchaseQuantity],
+            (updateErr, updateResult) => {
+                if (updateErr) return cb(updateErr);
+                if (!updateResult || updateResult.affectedRows === 0) return cb(outOfStock());
+                syncAgentCount(() => insertRow(1));
+            }
+        );
+        return;
+    }
 
     // 库存以 asset_registrations.number 为准：下单即占用，拒绝/软删除时回补。
     db.query('SELECT number FROM asset_registrations WHERE file_hash = ? LIMIT 1', [asset_id], (stockErr, rows) => {
@@ -3459,6 +4074,39 @@ async function refundBalanceForTransaction(query, transactionId, remark) {
     );
     await query('UPDATE alipay_orders SET balance_refunded = 1 WHERE id = ?', [order.id]);
     return { userId: order.buyer_id, amount: order.amount, balanceAfter };
+}
+
+// 拒绝/关闭交易时，把下单占用的库存退回去。
+// 代理订单退回代理库存，普通订单退回资产自身的可售数量。
+async function restoreTransactionStock(query, transaction) {
+    if (Number(transaction.stock_reserved) !== 1) return;
+
+    const quantity = Number(transaction.quantity) || 0;
+    if (Number(transaction.delegation_id) > 0) {
+        await query(
+            `UPDATE asset_delegations
+             SET quantity_remaining = quantity_remaining + ?, status = 'ACTIVE'
+             WHERE id = ?`,
+            [quantity, transaction.delegation_id]
+        );
+        await query(
+            `UPDATE asset_registrations ar
+             JOIN asset_delegations d ON d.asset_id = ar.file_hash
+             SET ar.agent_count = d.quantity_remaining
+             WHERE d.id = ?`,
+            [transaction.delegation_id]
+        );
+    } else {
+        await query(
+            'UPDATE asset_registrations SET number = number + ? WHERE file_hash = ?',
+            [quantity, transaction.asset_id]
+        );
+    }
+
+    await query(
+        'UPDATE transactions SET stock_reserved = 0 WHERE transaction_id = ?',
+        [transaction.transaction_id]
+    );
 }
 
 // 充值订单支付成功后入账（幂等）。
@@ -3821,12 +4469,13 @@ app.post('/api/balance/pay', async (req, res) => {
 });
 
 // 创建支付订单并返回二维码
-app.post('/api/create-payment', acceptTeeModelUpload, (req, res) => {
+app.post('/api/create-payment', acceptTeeModelUpload, async (req, res) => {
     if (!alipay.enabled) {
         return res.status(503).json({ message: '支付宝支付未配置' });
     }
     const b = req.body || {};
-    const { asset_id, buyer_address, seller_address, subject } = b;
+    const { asset_id, buyer_address, subject } = b;
+    let { seller_address } = b;
     if (!asset_id || !buyer_address || !seller_address) {
         return res.status(400).json({ message: '缺少必要的参数' });
     }
@@ -3845,16 +4494,75 @@ app.post('/api/create-payment', acceptTeeModelUpload, (req, res) => {
         return res.status(400).json({ message: error.message });
     }
 
-    const requestedQuantity = Math.max(1, Number(b.quantity) || 1);
-    db.query('SELECT number FROM asset_registrations WHERE file_hash = ? LIMIT 1', [asset_id], (stockErr, stockRows) => {
-        if (stockErr) return res.status(500).json({ message: '库存查询失败' });
-        if (stockRows && stockRows.length && Number(stockRows[0].number) < requestedQuantity) {
-            return res.status(409).json({ message: '库存不足或已售罄', code: 'OUT_OF_STOCK' });
+    const requestedQuantity = Math.max(1, Math.floor(Number(b.quantity) || 1));
+    const delegationId = Number(b.delegation_id) > 0 ? Number(b.delegation_id) : null;
+
+    try {
+        let amount = null;
+
+        if (delegationId) {
+            const delegationRows = await dbQuery(
+                'SELECT * FROM asset_delegations WHERE id = ? AND asset_id = ? LIMIT 1',
+                [delegationId, asset_id]
+            );
+            if (!delegationRows.length) {
+                return res.status(404).json({ message: '代理关系不存在' });
+            }
+            const delegation = delegationRows[0];
+            if (delegation.status !== 'ACTIVE') {
+                return res.status(409).json({ message: '代理库存已售罄或已撤销', code: 'OUT_OF_STOCK' });
+            }
+            if (Number(delegation.quantity_remaining) < requestedQuantity) {
+                return res.status(409).json({ message: '代理库存不足', code: 'OUT_OF_STOCK' });
+            }
+            if (seller_address && seller_address !== delegation.agent_address) {
+                return res.status(403).json({ message: '代理订单的卖家地址不匹配' });
+            }
+            if (b.owner_address && String(b.owner_address) !== String(delegation.owner_address)) {
+                return res.status(403).json({ message: '代理订单的所有者地址不匹配' });
+            }
+
+            const allowedRights = String(delegation.allowed_rights || '')
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean);
+            const requestedRights = String(b.quality || '')
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean);
+            if (allowedRights.length && requestedRights.some((item) => !allowedRights.includes(item))) {
+                return res.status(400).json({ message: '购买权益超出代理授权范围' });
+            }
+
+            b.owner_id = delegation.owner_id;
+            b.owner_address = delegation.owner_address;
+            b.seller_id = delegation.agent_user_id;
+            b.seller_address = delegation.agent_address;
+            b.seller_type = 'AGENT';
+            seller_address = delegation.agent_address;
+
+            amount = delegation.price != null
+                ? Number(delegation.price)
+                : await new Promise((resolve, reject) => {
+                    resolveAssetPrice(asset_id, b.amount, (err, value) => err ? reject(err) : resolve(value));
+                });
+        } else {
+            const stockRows = await dbQuery(
+                'SELECT number FROM asset_registrations WHERE file_hash = ? LIMIT 1',
+                [asset_id]
+            );
+            if (stockRows.length && Number(stockRows[0].number) < requestedQuantity) {
+                return res.status(409).json({ message: '库存不足或已售罄', code: 'OUT_OF_STOCK' });
+            }
+            amount = await new Promise((resolve, reject) => {
+                resolveAssetPrice(asset_id, b.amount, (err, value) => err ? reject(err) : resolve(value));
+            });
         }
 
-    resolveAssetPrice(asset_id, b.amount, (perr, amount) => {
-        if (perr) return res.status(500).json({ message: '价格查询失败' });
-        if (!amount) return res.status(400).json({ message: '无法确定支付金额' });
+        if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+            return res.status(400).json({ message: '无法确定支付金额' });
+        }
+        amount = Number(amount);
 
         const outTradeNo = 'ALI' + Date.now() + Math.floor(Math.random() * 1000);
         const parsedBuyerId = Number(b.buyer_id);
@@ -3865,7 +4573,10 @@ app.post('/api/create-payment', acceptTeeModelUpload, (req, res) => {
             buyer_address,
             seller_id: b.seller_id,
             seller_address,
-            quantity: b.quantity,
+            owner_address: b.owner_address || null,
+            delegation_id: delegationId,
+            seller_type: delegationId ? 'AGENT' : 'OWNER',
+            quantity: requestedQuantity,
             quality: b.quality,
             processing_type: b.processing_type,
             expiration_time: b.expiration_time,
@@ -3875,42 +4586,38 @@ app.post('/api/create-payment', acceptTeeModelUpload, (req, res) => {
         };
         const finalSubject = (subject && String(subject).trim()) || ('数字资产购买-' + asset_id);
 
-        db.query(`INSERT INTO alipay_orders
-                  (out_trade_no, asset_id, owner_id, buyer_id, buyer_address, seller_id, seller_address, amount, subject, status, payload)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
+        await dbQuery(
+            `INSERT INTO alipay_orders
+             (out_trade_no, asset_id, owner_id, buyer_id, buyer_address, seller_id, seller_address, amount, subject, status, payload)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
             [outTradeNo, asset_id, payload.owner_id || null, payload.buyer_id || null, buyer_address,
-             payload.seller_id || null, seller_address, amount.toFixed(2), finalSubject, JSON.stringify(payload)],
-            (err) => {
-                if (err) {
-                    console.error('创建支付订单失败:', err);
-                    return res.status(500).json({ message: '创建订单失败' });
-                }
-                const bizContent = {
-                    out_trade_no: outTradeNo,
-                    total_amount: amount.toFixed(2),
-                    subject: finalSubject,
-                    timeout_express: '10m'
-                };
-                if (alipay.notifyUrl) bizContent.notify_url = alipay.notifyUrl;
+             payload.seller_id || null, seller_address, amount.toFixed(2), finalSubject, JSON.stringify(payload)]
+        );
 
-                alipay.sdk.exec('alipay.trade.precreate', { bizContent }).then((result) => {
-                    if (result && result.code === '10000' && result.qrCode) {
-                        return res.status(201).json({
-                            message: '订单已创建',
-                            out_trade_no: outTradeNo,
-                            qr_code: result.qrCode,
-                            amount: amount.toFixed(2)
-                        });
-                    }
-                    console.error('支付宝下单失败:', result);
-                    res.status(502).json({ message: '支付宝下单失败', detail: result && (result.subMsg || result.msg) });
-                }).catch((e) => {
-                    console.error('支付宝下单异常:', e);
-                    res.status(502).json({ message: '支付宝下单异常', detail: e.message });
-                });
+        const bizContent = {
+            out_trade_no: outTradeNo,
+            total_amount: amount.toFixed(2),
+            subject: finalSubject,
+            timeout_express: '10m'
+        };
+        if (alipay.notifyUrl) bizContent.notify_url = alipay.notifyUrl;
+
+        const result = await alipay.sdk.exec('alipay.trade.precreate', { bizContent });
+        if (result && result.code === '10000' && result.qrCode) {
+            return res.status(201).json({
+                message: '订单已创建',
+                out_trade_no: outTradeNo,
+                qr_code: result.qrCode,
+                amount: amount.toFixed(2)
             });
-    });
-    });
+        }
+
+        console.error('支付宝下单失败:', result);
+        return res.status(502).json({ message: '支付宝下单失败', detail: result && (result.subMsg || result.msg) });
+    } catch (error) {
+        console.error('创建支付订单失败:', error);
+        return res.status(500).json({ message: '创建订单失败' });
+    }
 });
 
 // 查询支付状态：本地未支付的会主动向支付宝查单
@@ -4190,7 +4897,7 @@ app.post('/api/seller-delete-transaction', async (req, res) => {
     try {
         await withMainDbTransaction(async ({ query }) => {
             const rows = await query(
-                `SELECT transaction_id, asset_id, quantity, stock_reserved, status, expiration_time
+                `SELECT transaction_id, asset_id, quantity, stock_reserved, status, expiration_time, delegation_id
                  FROM transactions
                  WHERE transaction_id = ? AND seller_address = ? AND status = '待确认' AND is_deleted = 0
                  FOR UPDATE`,
@@ -4212,12 +4919,7 @@ app.post('/api/seller-delete-transaction', async (req, res) => {
             }
 
             // 软删除待确认交易时，把下单时占用的库存退回去。
-            if (Number(transaction.stock_reserved) === 1) {
-                await query(
-                    'UPDATE asset_registrations SET number = number + ? WHERE file_hash = ?',
-                    [Number(transaction.quantity) || 0, transaction.asset_id]
-                );
-            }
+            await restoreTransactionStock(query, transaction);
 
             // 余额支付的订单关闭时，同步把钱退回买家。
             await refundBalanceForTransaction(query, transaction_id, '交易已过期关闭退款');
@@ -4262,17 +4964,8 @@ app.post('/api/seller-confirm-transaction', async (req, res) => {
             let contract = null;
 
             // 卖家拒绝时，把下单时占用的库存退回去，余额支付的金额也退回买家。
-            if (!isAgree && Number(transaction.stock_reserved) === 1) {
-                await query(
-                    'UPDATE asset_registrations SET number = number + ? WHERE file_hash = ?',
-                    [Number(transaction.quantity) || 0, transaction.asset_id]
-                );
-                await query(
-                    'UPDATE transactions SET stock_reserved = 0 WHERE transaction_id = ?',
-                    [transaction_id]
-                );
-            }
             if (!isAgree) {
+                await restoreTransactionStock(query, transaction);
                 await refundBalanceForTransaction(query, transaction_id, '卖家拒绝交易退款');
             }
 

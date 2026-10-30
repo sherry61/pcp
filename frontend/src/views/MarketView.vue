@@ -129,6 +129,9 @@
           <span v-if="asset.number !== undefined && asset.number !== null" class="asset-row-tag">
             剩余 {{ asset.number }}
           </span>
+          <span v-if="asset.seller_type === 'AGENT'" class="asset-row-tag proxy-market-tag">
+            代理
+          </span>
         </div>
       </div>
 
@@ -189,6 +192,10 @@
 
   <span v-if="asset.number !== undefined && asset.number !== null" class="asset-row-tag">
     剩余 {{ asset.number }}
+  </span>
+
+  <span v-if="asset.seller_type === 'AGENT'" class="asset-row-tag proxy-market-tag">
+    代理
   </span>
 
   <span
@@ -2087,7 +2094,8 @@ async transferAsset(asset) {
 
 
     selectAsset(asset) {
-    this.$router.push({ name: 'AssetDetail', params: { id: asset.file_hash } });
+    const query = asset.delegation_id ? { delegation: String(asset.delegation_id) } : {};
+    this.$router.push({ name: 'AssetDetail', params: { id: asset.file_hash }, query });
   },
     searchAssets() {
       if (this.searchTerm.trim() !== '') {
@@ -2339,6 +2347,13 @@ async fetchAssets() {
   background: #fff8ef;
   border-color: #ffd59c;
   color: #d48806;
+}
+
+.proxy-market-tag {
+  background: #eef4ff;
+  border-color: #b9cdfb;
+  color: #2563eb;
+  font-weight: 500;
 }
 
 .market {
