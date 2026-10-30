@@ -42,18 +42,8 @@
       </div>
 
       <div class="asset-meta-row">
-        <span class="meta-label">创建者ID：</span>
-        <span class="meta-value">{{ asset.user_id }}</span>
-      </div>
-
-      <div class="asset-meta-row">
-        <span class="meta-label">创建者地址：</span>
-        <span class="meta-value hash-text">{{ asset.owner_address || '暂无' }}</span>
-      </div>
-
-      <div class="asset-meta-row">
-        <span class="meta-label">当前拥有者：</span>
-        <span class="meta-value hash-text">{{ asset.current_owner_address || '暂无' }}</span>
+        <span class="meta-label">卖家：</span>
+        <span class="meta-value">{{ asset.seller_username || asset.owner_username || '未知卖家' }}</span>
       </div>
 
       <div class="asset-price-row">
@@ -719,6 +709,7 @@ export default {
   try {
     const response = await axios.get(`http://10.112.191.163:3000/api/asset/${id}`);
     this.asset = response.data;
+    this.asset.seller_username = this.asset.owner_username || '';
     console.log('asset detail response:', response.data);
 
     // 兜底：如果接口没返回 current_owner_address，就用 owner_address
@@ -772,6 +763,7 @@ export default {
           price: delegation.price != null ? Number(delegation.price) : this.asset.price,
           number: Number(delegation.quantity_remaining),
           user_id: delegation.agent_user_id,
+          seller_username: delegation.agent_username || delegation.owner_username || '',
           owner_id: delegation.owner_id,
           owner_address: delegation.owner_address,
           current_owner_address: delegation.owner_address,

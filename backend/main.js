@@ -3216,6 +3216,7 @@ app.get('/api/asset/:id', (req, res) => {
       custom_algorithm,
       file_hash,
       user_id,
+      (SELECT u.username FROM users u WHERE u.id = user_id LIMIT 1) AS owner_username,
       industry,
       industry_raw,
       industry_raw_name,
