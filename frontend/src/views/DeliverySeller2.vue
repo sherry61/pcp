@@ -375,7 +375,6 @@
             <div class="dialog-row"><span class="dialog-label">当前状态</span><span>{{ genericDetailDialog.data.status }}</span></div>
             <div v-if="genericDetailDialog.data.reference" class="dialog-row"><span class="dialog-label">交付记录</span><span class="dialog-value">{{ genericDetailDialog.data.reference }}</span></div>
             <div v-if="genericDetailDialog.data.error" class="dialog-row"><span class="dialog-label">异常说明</span><span class="dialog-value">{{ genericDetailDialog.data.error }}</span></div>
-            <div class="dialog-hint">当前交付方式暂未提供服务调用明细，仅展示后端已有的状态信息。</div>
           </div>
           <template #footer><el-button @click="genericDetailDialog.visible=false">关闭</el-button></template>
         </el-dialog>
