@@ -324,7 +324,7 @@
             :disabled="payingWithBalance || paymentStatus === 'PAID'"
             @click="payWithBalance"
           >
-            {{ payingWithBalance ? '支付中…' : `余额支付 ¥${paymentAmount}` }}
+            {{ payingWithBalance ? '支付中…' : '余额支付' }}
           </button>
           <button @click="closePaymentModal">取消支付</button>
         </div>
