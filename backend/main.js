@@ -1340,16 +1340,26 @@ app.get('/api/query-assets', (req, res) => {
 });
 
 app.post('/api/update-asset', (req, res) => {
-    const { assetName, assetType, description, fileHash, email, address, userId , txperm, can_sell_asset, can_sell_view, can_sell_process} = req.body;
+    const { assetName, assetType, description, fileHash, email, address, userId , txperm, can_sell_asset, can_sell_view, can_sell_process, number } = req.body;
      console.log('Received data:', req.body); // 打印请求数据
+
+    let nextNumber = null;
+    if (number !== undefined && number !== null && String(number).trim() !== '') {
+        const parsed = Number(number);
+        if (!Number.isInteger(parsed) || parsed < 0) {
+            return res.status(400).json({ message: '可售数量必须为非负整数' });
+        }
+        nextNumber = parsed;
+    }
      
     const sql = `
         UPDATE asset_registrations 
-        SET asset_name = ?, asset_type = ?, description = ?, email = ?, address = ?, user_id = ? , txperm = ?, can_sell_asset = ?, can_sell_view = ?, can_sell_process = ?
+        SET asset_name = ?, asset_type = ?, description = ?, email = ?, address = ?, user_id = ? , txperm = ?, can_sell_asset = ?, can_sell_view = ?, can_sell_process = ?,
+            number = CASE WHEN industry = 'WH' THEN LEAST(number, 1) ELSE COALESCE(?, number) END
         WHERE file_hash = ?
     `;
 
-    db.query(sql, [assetName, assetType, description, email, address, userId, txperm, can_sell_asset, can_sell_view, can_sell_process, fileHash], (err, result) => {
+    db.query(sql, [assetName, assetType, description, email, address, userId, txperm, can_sell_asset, can_sell_view, can_sell_process, nextNumber, fileHash], (err, result) => {
         if (err) {
             console.error('更新资产信息失败:', err);
             res.status(500).json({ message: '更新失败，请稍后再试' });
@@ -1979,7 +1989,7 @@ app.post('/api/save-asset2', upload.single('picture'), async (req, res) => {
             predicted_domain || null,
             picture.buffer,
             is_proxied || 0,
-            number || 0,
+            Number(number) > 0 ? Number(number) : 1,
             price || null,
             can_sell_asset || 0,
             can_sell_view || 0,
@@ -2078,7 +2088,7 @@ app.post('/api/save-resalable-asset', upload.single('picture'), async (req, res)
         industry,
         picture ? picture.buffer : null, // 如果没有上传新图片，则为 NULL
         is_proxied || 0,
-        number || 0,
+        Number(number) > 0 ? Number(number) : 1,
         can_sell_asset || 0,
         can_sell_view || 0,
         can_sell_process || 0,
@@ -2384,6 +2394,7 @@ app.get('/api/available-assets', (req, res) => {
       agent_addr,
       is_proxied,
       price,
+      number,
       trade_mode, auction_start_price, auction_end_time,
       auction_current_price, auction_bid_count, auction_status
       ${includePictures ? ', picture' : ''}
@@ -2392,6 +2403,7 @@ app.get('/api/available-assets', (req, res) => {
     SELECT ${selectColumns}
     FROM asset_registrations
     WHERE txperm = 3
+      AND COALESCE(number, 0) > 0
       AND (trade_mode <> 'auction' OR ((auction_status IS NULL OR auction_status = 'OPEN') AND auction_end_time > NOW()))
   `;
 
@@ -2700,15 +2712,33 @@ app.get('/api/model-options', (req, res) => {
 
 
 
-app.post('/api/add-certificate', (req, res) => {
-    const { userId, certificateName, org } = req.body;
+app.get('/api/certificate-name-available', (req, res) => {
+    const certificateName = String(req.query.certificateName || '').trim();
+    if (!certificateName) {
+        return res.status(400).json({ success: false, message: '缺少 certificateName 参数' });
+    }
 
-    // 检查必须参数
-    if (!userId || !certificateName || !org) {
+    db.query(
+        'SELECT user_id FROM certificate_registry WHERE certificate_name = ? AND user_id IS NOT NULL LIMIT 1',
+        [certificateName],
+        (err, rows) => {
+            if (err) {
+                console.error('查询证书名称失败:', err);
+                return res.status(500).json({ success: false, message: '查询证书名称失败' });
+            }
+            return res.json({ success: true, available: rows.length === 0 });
+        }
+    );
+});
+
+app.post('/api/add-certificate', async (req, res) => {
+    const { userId, certificateName, org } = req.body || {};
+    const name = String(certificateName || '').trim();
+
+    if (!userId || !name || !org) {
         return res.status(400).json({ message: '缺少 userId、certificateName 或 org 参数' });
     }
 
-    // 根据 org 参数确定要操作的列名
     let certColumn;
     if (org === 'wx-org1') {
         certColumn = 'certificates';
@@ -2718,51 +2748,217 @@ app.post('/api/add-certificate', (req, res) => {
         return res.status(400).json({ message: '未知的 org 参数' });
     }
 
-    // 根据确定的列名查询当前证书列表
-    const selectQuery = `SELECT ${certColumn} FROM users WHERE id = ?`;
-
-    db.query(selectQuery, [userId], (err, results) => {
-        if (err) {
-            console.error('查询证书失败:', err);
-            return res.status(500).json({ message: '服务器内部错误' });
-        }
-
-        if (results.length === 0) {
-            return res.status(404).json({ message: '用户未找到' });
-        }
-
-        // 如果数据库中存在数据则将其转换为 JSON 数组，否则初始化为空数组
-        const currentCertificates = results[0][certColumn] ? JSON.parse(results[0][certColumn]) : [];
-
-        // 检查证书是否已存在，避免重复添加
-        if (currentCertificates.includes(certificateName)) {
-            return res.status(400).json({ message: '证书已存在，不能重复添加' });
-        }
-
-        // 追加新的 certificateName 到数组中
-        currentCertificates.push(certificateName);
-
-        // 动态生成 UPDATE 语句，更新对应的列
-        const updateQuery = `UPDATE users SET ${certColumn} = ? WHERE id = ?`;
-        db.query(updateQuery, [JSON.stringify(currentCertificates), userId], (err, result) => {
-            if (err) {
-                console.error('更新证书失败:', err);
-                return res.status(500).json({ message: '服务器内部错误' });
+    try {
+        const certificate = await withMainDbTransaction(async ({ query }) => {
+            const registryRows = await query(
+                'SELECT id, user_id, address FROM certificate_registry WHERE certificate_name = ? LIMIT 1 FOR UPDATE',
+                [name]
+            );
+            if (!registryRows.length || !registryRows[0].address) {
+                const error = new Error('证书信息未登记，请重新生成');
+                error.statusCode = 400;
+                throw error;
+            }
+            if (registryRows[0].user_id != null && String(registryRows[0].user_id) !== String(userId)) {
+                const error = new Error('证书名称已被其他用户使用');
+                error.statusCode = 409;
+                throw error;
             }
 
-            const chainmakerDbName = CERT_DB_NAME_BY_ORG[org] || null;
-            insertCertificateRegistry({
-                userId,
-                certificateName,
-                org,
-                expiresAt: null
-            }).catch((registryErr) => {
-                console.error('写入 certificate_registry 失败:', registryErr);
-            });
+            const userRows = await query(
+                `SELECT ${certColumn} AS certs FROM users WHERE id = ? FOR UPDATE`,
+                [userId]
+            );
+            if (!userRows.length) {
+                const error = new Error('用户未找到');
+                error.statusCode = 404;
+                throw error;
+            }
 
-            res.status(200).json({ message: '证书添加成功' });
+            let certs = [];
+            try {
+                certs = userRows[0].certs ? JSON.parse(userRows[0].certs) : [];
+            } catch (_) {
+                certs = [];
+            }
+            if (!Array.isArray(certs)) certs = [];
+            if (certs.includes(name)) {
+                const error = new Error('证书已存在，不能重复添加');
+                error.statusCode = 400;
+                throw error;
+            }
+
+            certs.push(name);
+            await query(
+                `UPDATE users
+                 SET ${certColumn} = ?,
+                     default_register_cert = ?,
+                     default_trade_cert = ?
+                 WHERE id = ?`,
+                [JSON.stringify(certs), name, name, userId]
+            );
+
+            // autocert 已经登记了证书文件/地址/有效期，这里只补齐所属用户。
+            await query(
+                `INSERT INTO certificate_registry (user_id, certificate_name, org)
+                 VALUES (?, ?, ?)
+                 ON DUPLICATE KEY UPDATE user_id = VALUES(user_id)`,
+                [userId, name, org]
+            );
+
+            const rows = await query(
+                `SELECT certificate_name AS cert, org AS organization, address, expires_at
+                 FROM certificate_registry WHERE certificate_name = ? LIMIT 1`,
+                [name]
+            );
+            return rows[0];
         });
-    });
+
+        return res.status(200).json({ message: '证书添加成功', certificate });
+    } catch (error) {
+        console.error('添加证书失败:', error.message);
+        return res.status(error.statusCode || 500).json({
+            message: error.message || '服务器内部错误'
+        });
+    }
+});
+
+app.post('/api/renew-certificate', async (req, res) => {
+    const { userId, certificateName, org } = req.body || {};
+    const name = String(certificateName || '').trim();
+    const orgValue = String(org || '').trim();
+    if (!userId || !name || !orgValue) {
+        return res.status(400).json({ message: '缺少 userId、certificateName 或 org 参数' });
+    }
+
+    const orgDir = orgValue.endsWith('.chainmaker.org') ? orgValue : `${orgValue}.chainmaker.org`;
+    const orgShort = orgDir.replace('.chainmaker.org', '');
+    const caPort = orgShort === 'wx-org2' ? 8091 : 8090;
+    const caBase = `http://127.0.0.1:${caPort}`;
+
+    // certSn 是 int64（约 2.4e18），超出 JS Number 精度，
+    // 必须先按原始文本取出，再用字符串拼进请求体，避免尾数被改写。
+    const queryCertSn = async (usage) => {
+        const response = await axios.post(`${caBase}/api/ca/querycerts`, {
+            orgId: orgDir,
+            userId: `${name}.${usage}`,
+            userType: 'client',
+            certUsage: usage
+        }, {
+            timeout: 15000,
+            responseType: 'text',
+            transformResponse: [(data) => data]
+        });
+        const raw = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+        const blocks = raw.split('{"userId"').slice(1);
+        let latest = null;
+        for (const block of blocks) {
+            if (!block.includes('"certContent"')) continue;
+            const snMatch = block.match(/"certSn"\s*:\s*(\d+)/);
+            if (!snMatch) continue;
+            const expMatch = block.match(/"expirationDate"\s*:\s*(\d+)/);
+            const exp = expMatch ? Number(expMatch[1]) : 0;
+            if (!latest || exp > latest.exp) {
+                latest = { sn: snMatch[1], exp };
+            }
+        }
+        if (!latest) throw new Error(`${usage} 证书不存在`);
+        return latest.sn;
+    };
+
+    const renewCert = async (certSn) => {
+        // CA 的续期是在原到期时间上叠加有效期。
+        // 如果证书已过期较久，一次续期可能仍落在过去，这里继续叠加直到重新生效。
+        for (let attempt = 0; attempt < 24; attempt += 1) {
+            const response = await axios.post(
+                `${caBase}/api/ca/renewcert`,
+                `{"certSn":${certSn}}`,
+                {
+                    timeout: 30000,
+                    headers: { 'Content-Type': 'application/json' }
+                }
+            );
+            const cert = response.data?.data?.cert;
+            if (!cert) {
+                throw new Error(response.data?.msg || '证书续期返回为空');
+            }
+            const renewed = new crypto.X509Certificate(cert);
+            if (new Date(renewed.validTo).getTime() > Date.now()) {
+                return cert;
+            }
+        }
+        throw new Error('证书已过期过久，续期后仍未生效，请联系管理员');
+    };
+
+    try {
+        const rows = await dbQuery(
+            `SELECT certificate_name, org, sign_cert_path, tls_cert_path, address
+             FROM certificate_registry
+             WHERE certificate_name = ? AND user_id = ?
+             LIMIT 1`,
+            [name, userId]
+        );
+        if (!rows.length) {
+            return res.status(404).json({ message: '证书不存在或不属于当前用户' });
+        }
+        const record = rows[0];
+
+        const [signSn, tlsSn] = await Promise.all([queryCertSn('sign'), queryCertSn('tls')]);
+        const [newSignCert, newTlsCert] = await Promise.all([
+            renewCert(signSn),
+            renewCert(tlsSn)
+        ]);
+
+        const baseDir = `/home/super/fqh/cert-store/${orgDir}/${name}`;
+        const signPath = record.sign_cert_path || `${baseDir}/${name}.sign.crt`;
+        const tlsPath = record.tls_cert_path || `${baseDir}/${name}.tls.crt`;
+        await fs.mkdir(path.dirname(signPath), { recursive: true, mode: 0o755 });
+        await fs.writeFile(signPath, newSignCert, { mode: 0o644 });
+        await fs.writeFile(tlsPath, newTlsCert, { mode: 0o644 });
+
+        // 同步到 GoSDK 使用的 crypto-config，名称和地址保持不变。
+        const gosdkDirs = [
+            `/home/super/r/GoSDK/crypto-config/${orgDir}/user/${name}`,
+            `/home/super/lihuihao/otherwork/mint_service/GoSDK/crypto-config/${orgDir}/user/${name}`
+        ];
+        for (const dir of gosdkDirs) {
+            try {
+                await fs.mkdir(dir, { recursive: true, mode: 0o755 });
+                await fs.writeFile(path.join(dir, `${name}.sign.crt`), newSignCert, { mode: 0o644 });
+                await fs.writeFile(path.join(dir, `${name}.tls.crt`), newTlsCert, { mode: 0o644 });
+            } catch (error) {
+                console.warn('同步续期证书到 GoSDK 失败:', dir, error.message);
+            }
+        }
+
+        const x509 = new crypto.X509Certificate(newSignCert);
+        const expires = new Date(x509.validTo);
+        const pad = (value) => String(value).padStart(2, '0');
+        const expiresAt = `${expires.getFullYear()}-${pad(expires.getMonth() + 1)}-${pad(expires.getDate())} ${pad(expires.getHours())}:${pad(expires.getMinutes())}:${pad(expires.getSeconds())}`;
+
+        await dbQuery(
+            `UPDATE certificate_registry
+             SET expires_at = ?, sign_cert_path = ?, tls_cert_path = ?
+             WHERE certificate_name = ? AND user_id = ?`,
+            [expiresAt, signPath, tlsPath, name, userId]
+        );
+
+        return res.json({
+            success: true,
+            message: '证书续期成功',
+            certificate: {
+                cert: name,
+                organization: record.org,
+                address: record.address,
+                expiresAt
+            }
+        });
+    } catch (error) {
+        console.error('证书续期失败:', error.message);
+        return res.status(500).json({
+            message: error.response?.data?.msg || error.message || '证书续期失败'
+        });
+    }
 });
 
 app.post('/api/get-certificates', (req, res) => {
@@ -2997,59 +3193,100 @@ function insertTransaction(payload, cb) {
     const sellerId = seller_id || null;
     const safeQuality = (typeof quality === 'string' && quality.trim() !== '') ? quality : null;
     const safeDeliveryLimit = delivery_limit ?? 10;
+    const parsedQuantity = Number(quantity);
+    const purchaseQuantity = Number.isSafeInteger(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 1;
     const formattedExpirationTime = (expiration_time && typeof expiration_time === 'string')
         ? expiration_time.replace('T', ' ') + ':00'
         : null;
 
-    const query = `
-        INSERT INTO transactions (
+    const outOfStock = () => {
+        const error = new Error('库存不足或已售罄');
+        error.code = 'OUT_OF_STOCK';
+        error.statusCode = 409;
+        return error;
+    };
+
+    const insertRow = (stockReserved) => {
+        const query = `
+            INSERT INTO transactions (
+                asset_id,
+                owner_id,
+                buyer_address,
+                seller_id,
+                seller_address,
+                status,
+                price,
+                quantity,
+                quality,
+                processing_type,
+                expiration_time,
+                model_file_hash,
+                delivery_limit,
+                pc_type,
+                stock_reserved
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+
+        const values = [
             asset_id,
-            owner_id,
+            ownerId,
             buyer_address,
-            seller_id,
+            sellerId,
             seller_address,
-            status,
-            price,
-            quantity,
-            quality,
+            '待确认',
+            (price !== undefined && price !== null && price !== '') ? String(price) : null,
+            purchaseQuantity,
+            safeQuality,
             processing_type,
-            expiration_time,
+            formattedExpirationTime,
             model_file_hash,
-            delivery_limit,
-            pc_type
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            safeDeliveryLimit,
+            pc_type || null,
+            stockReserved
+        ];
 
-    const values = [
-        asset_id,
-        ownerId,
-        buyer_address,
-        sellerId,
-        seller_address,
-        '待确认',
-        (price !== undefined && price !== null && price !== '') ? String(price) : null,
-        quantity,
-        safeQuality,
-        processing_type,
-        formattedExpirationTime,
-        model_file_hash,
-        safeDeliveryLimit,
-        pc_type || null
-    ];
+        db.query(query, values, (err, results) => {
+            if (err) {
+                console.error('插入交易数据失败:', err);
+                if (!stockReserved) return cb(err);
+                // 插入失败时把刚占用的库存退回去
+                return db.query(
+                    'UPDATE asset_registrations SET number = number + ? WHERE file_hash = ?',
+                    [purchaseQuantity, asset_id],
+                    () => cb(err)
+                );
+            }
+            const transactionId = results.insertId;
+            // 拍卖获胜者提交权益申请后，移出“待处理获拍”列表，但保留交易历史。
+            db.query(`UPDATE asset_registrations
+                      SET auction_status = 'APPLIED', txperm = 0
+                      WHERE file_hash = ? AND trade_mode = 'auction' AND auction_status = 'CLOSED'`,
+              [asset_id], (auctionErr) => {
+                if (auctionErr) console.error('更新拍卖申请状态失败:', auctionErr);
+                cb(null, transactionId);
+              });
+        });
+    };
 
-    db.query(query, values, (err, results) => {
-        if (err) {
-            console.error('插入交易数据失败:', err);
-            return cb(err);
+    // 库存以 asset_registrations.number 为准：下单即占用，拒绝/软删除时回补。
+    db.query('SELECT number FROM asset_registrations WHERE file_hash = ? LIMIT 1', [asset_id], (stockErr, rows) => {
+        if (stockErr) return cb(stockErr);
+        // 非主资产（例如二次交易）不在 asset_registrations 时，不做库存扣减。
+        if (!rows || rows.length === 0) return insertRow(0);
+
+        const available = Number(rows[0].number);
+        if (!Number.isFinite(available) || available < purchaseQuantity) {
+            return cb(outOfStock());
         }
-        const transactionId = results.insertId;
-        // 拍卖获胜者提交权益申请后，移出“待处理获拍”列表，但保留交易历史。
-        db.query(`UPDATE asset_registrations
-                  SET auction_status = 'APPLIED', txperm = 0
-                  WHERE file_hash = ? AND trade_mode = 'auction' AND auction_status = 'CLOSED'`,
-          [asset_id], (auctionErr) => {
-            if (auctionErr) console.error('更新拍卖申请状态失败:', auctionErr);
-            cb(null, transactionId);
-          });
+
+        db.query(
+            'UPDATE asset_registrations SET number = number - ? WHERE file_hash = ? AND number >= ?',
+            [purchaseQuantity, asset_id, purchaseQuantity],
+            (updateErr, updateResult) => {
+                if (updateErr) return cb(updateErr);
+                if (!updateResult || updateResult.affectedRows === 0) return cb(outOfStock());
+                insertRow(1);
+            }
+        );
     });
 }
 
@@ -3104,6 +3341,9 @@ app.post('/api/save-transaction', acceptTeeModelUpload, (req, res) => {
         pc_type: proposal.pcType
     }, (err, transactionId) => {
         if (err) {
+            if (err.code === 'OUT_OF_STOCK') {
+                return res.status(409).json({ message: '库存不足或已售罄', code: err.code });
+            }
             return res.status(500).json({ error: '服务器内部错误' });
         }
         res.status(201).json({ message: '交易已成功创建', transactionId });
@@ -3166,6 +3406,420 @@ function finalizeOrderPaid(outTradeNo, alipayResult, cb) {
         });
 }
 
+// ================= 账户余额 =================
+
+// 在事务内给余额加钱，并写一条流水。
+async function creditBalance(query, userId, amount, type, refNo, remark) {
+    const value = Number(amount);
+    if (!Number.isFinite(value) || value <= 0) {
+        throw new Error('余额变动金额无效');
+    }
+    const result = await query(
+        'UPDATE users SET balance = balance + ? WHERE id = ?',
+        [value.toFixed(2), userId]
+    );
+    if (!result || result.affectedRows === 0) {
+        const error = new Error('用户不存在');
+        error.statusCode = 404;
+        throw error;
+    }
+    const rows = await query('SELECT balance FROM users WHERE id = ? LIMIT 1', [userId]);
+    const balanceAfter = rows[0] ? rows[0].balance : null;
+    await query(
+        `INSERT INTO balance_ledger (user_id, type, amount, balance_after, ref_no, remark)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [userId, type, value.toFixed(2), balanceAfter, refNo || null, remark || null]
+    );
+    return balanceAfter;
+}
+
+// 卖家拒绝/关闭交易时，把余额支付的金额退回买家（只退一次）。
+async function refundBalanceForTransaction(query, transactionId, remark) {
+    const rows = await query(
+        `SELECT *
+         FROM alipay_orders
+         WHERE transaction_id = ?
+           AND payment_method = 'BALANCE'
+           AND status = 'PAID'
+           AND balance_refunded = 0
+         LIMIT 1
+         FOR UPDATE`,
+        [transactionId]
+    );
+    if (!rows.length || !rows[0].buyer_id) return null;
+
+    const order = rows[0];
+    const balanceAfter = await creditBalance(
+        query,
+        order.buyer_id,
+        order.amount,
+        'REFUND',
+        order.out_trade_no,
+        remark || '交易关闭退款'
+    );
+    await query('UPDATE alipay_orders SET balance_refunded = 1 WHERE id = ?', [order.id]);
+    return { userId: order.buyer_id, amount: order.amount, balanceAfter };
+}
+
+// 充值订单支付成功后入账（幂等）。
+async function finalizeRechargePaid(outTradeNo, alipayResult) {
+    return withMainDbTransaction(async ({ query }) => {
+        const rows = await query(
+            'SELECT * FROM recharge_orders WHERE out_trade_no = ? LIMIT 1 FOR UPDATE',
+            [outTradeNo]
+        );
+        if (!rows.length) {
+            const error = new Error('充值订单不存在');
+            error.statusCode = 404;
+            throw error;
+        }
+
+        const order = rows[0];
+        if (order.status === 'PAID') {
+            const balanceRows = await query('SELECT balance FROM users WHERE id = ? LIMIT 1', [order.user_id]);
+            return {
+                status: 'PAID',
+                amount: order.amount,
+                balance: balanceRows[0] ? balanceRows[0].balance : null
+            };
+        }
+        if (order.status !== 'PENDING') {
+            const error = new Error('充值订单状态不可用');
+            error.statusCode = 409;
+            throw error;
+        }
+
+        const tradeNo = alipayResult && (alipayResult.tradeNo || alipayResult.trade_no) || null;
+        const balanceAfter = await creditBalance(
+            query,
+            order.user_id,
+            order.amount,
+            'RECHARGE',
+            outTradeNo,
+            '账户余额充值'
+        );
+        await query(
+            `UPDATE recharge_orders
+             SET status = 'PAID', trade_no = ?, paid_at = NOW(), raw_notify = ?
+             WHERE out_trade_no = ?`,
+            [tradeNo, alipayResult ? JSON.stringify(alipayResult) : null, outTradeNo]
+        );
+
+        return { status: 'PAID', amount: order.amount, balance: balanceAfter };
+    });
+}
+
+app.get('/api/balance', async (req, res) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ success: false, message: '缺少 userId' });
+    }
+
+    try {
+        const rows = await dbQuery('SELECT balance FROM users WHERE id = ? LIMIT 1', [userId]);
+        if (!rows.length) {
+            return res.status(404).json({ success: false, message: '用户不存在' });
+        }
+        const records = await dbQuery(
+            `SELECT id, type, amount, balance_after, ref_no, remark, created_at
+             FROM balance_ledger
+             WHERE user_id = ?
+             ORDER BY id DESC
+             LIMIT 20`,
+            [userId]
+        );
+        return res.json({ success: true, balance: rows[0].balance, records });
+    } catch (error) {
+        console.error('查询余额失败:', error.message);
+        return res.status(500).json({ success: false, message: '查询余额失败' });
+    }
+});
+
+// 创建余额充值订单，返回支付宝二维码
+app.post('/api/balance/recharge', async (req, res) => {
+    if (!alipay.enabled) {
+        return res.status(503).json({ message: '支付宝支付未配置' });
+    }
+
+    const userId = Number(req.body?.userId);
+    const amount = Math.round(Number(req.body?.amount) * 100) / 100;
+    if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ message: '缺少 userId' });
+    }
+    if (!Number.isFinite(amount) || amount < 0.01 || amount >= 100000000) {
+        return res.status(400).json({ message: '充值金额需在 0.01 ~ 99999999.99 元之间' });
+    }
+
+    try {
+        const users = await dbQuery('SELECT id FROM users WHERE id = ? LIMIT 1', [userId]);
+        if (!users.length) {
+            return res.status(404).json({ message: '用户不存在' });
+        }
+
+        const outTradeNo = 'RC' + Date.now() + Math.floor(Math.random() * 1000);
+        const subject = '账户余额充值';
+        await dbQuery(
+            `INSERT INTO recharge_orders (out_trade_no, user_id, amount, status)
+             VALUES (?, ?, ?, 'PENDING')`,
+            [outTradeNo, userId, amount.toFixed(2)]
+        );
+
+        const bizContent = {
+            out_trade_no: outTradeNo,
+            total_amount: amount.toFixed(2),
+            subject,
+            timeout_express: '10m'
+        };
+        if (alipay.notifyUrl) bizContent.notify_url = alipay.notifyUrl;
+
+        const result = await alipay.sdk.exec('alipay.trade.precreate', { bizContent });
+        if (!result || result.code !== '10000' || !result.qrCode) {
+            console.error('充值下单失败:', result);
+            await dbQuery("UPDATE recharge_orders SET status = 'FAILED' WHERE out_trade_no = ?", [outTradeNo]);
+            return res.status(502).json({
+                message: '支付宝下单失败',
+                detail: result && (result.subMsg || result.msg)
+            });
+        }
+
+        return res.status(201).json({
+            message: '充值订单已创建',
+            out_trade_no: outTradeNo,
+            qr_code: result.qrCode,
+            amount: amount.toFixed(2)
+        });
+    } catch (error) {
+        console.error('创建充值订单失败:', error.message);
+        return res.status(500).json({ message: '创建充值订单失败' });
+    }
+});
+
+app.get('/api/balance/recharge-status/:outTradeNo', async (req, res) => {
+    const outTradeNo = String(req.params.outTradeNo || '').trim();
+    if (!outTradeNo) {
+        return res.status(400).json({ message: '缺少订单号' });
+    }
+
+    try {
+        const rows = await dbQuery(
+            'SELECT * FROM recharge_orders WHERE out_trade_no = ? LIMIT 1',
+            [outTradeNo]
+        );
+        if (!rows.length) {
+            return res.status(404).json({ message: '充值订单不存在' });
+        }
+        const order = rows[0];
+        if (order.status === 'PAID') {
+            const balanceRows = await dbQuery('SELECT balance FROM users WHERE id = ? LIMIT 1', [order.user_id]);
+            return res.json({
+                status: 'PAID',
+                amount: order.amount,
+                balance: balanceRows[0] ? balanceRows[0].balance : null
+            });
+        }
+        if (!alipay.enabled) {
+            return res.json({ status: order.status });
+        }
+
+        const result = await alipay.sdk.exec('alipay.trade.query', {
+            bizContent: { out_trade_no: outTradeNo }
+        });
+        const tradeStatus = result && (result.tradeStatus || result.trade_status);
+        if (tradeStatus === 'TRADE_SUCCESS' || tradeStatus === 'TRADE_FINISHED') {
+            const paid = await finalizeRechargePaid(outTradeNo, result);
+            return res.json(paid);
+        }
+        return res.json({ status: order.status, trade_status: tradeStatus || null });
+    } catch (error) {
+        console.error('查询充值状态失败:', error.message);
+        return res.status(error.statusCode || 500).json({
+            message: error.message || '查询充值状态失败'
+        });
+    }
+});
+
+// 开发/测试：跳过支付宝扫码，直接把充值订单置为已支付
+app.post('/api/dev/balance-recharge-success/:outTradeNo', async (req, res) => {
+    if (process.env.NODE_ENV === 'production' && process.env.ALLOW_DEV_PAYMENT !== '1') {
+        return res.status(403).json({ message: 'dev endpoint disabled' });
+    }
+    const outTradeNo = String(req.params.outTradeNo || '').trim();
+    if (!outTradeNo) {
+        return res.status(400).json({ message: '缺少订单号' });
+    }
+
+    try {
+        const paid = await finalizeRechargePaid(outTradeNo, {
+            tradeNo: `DEVRC${Date.now()}`,
+            dev_skip: true
+        });
+        return res.json(paid);
+    } catch (error) {
+        console.error('充值跳过支付失败:', error.message);
+        return res.status(error.statusCode || 500).json({
+            message: error.message || '充值入账失败'
+        });
+    }
+});
+
+// 用余额支付一笔待支付的资产订单
+app.post('/api/balance/pay', async (req, res) => {
+    const outTradeNo = String(req.body?.out_trade_no || '').trim();
+    const userId = Number(req.body?.userId);
+    if (!outTradeNo || !Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ message: '缺少 out_trade_no 或 userId' });
+    }
+
+    let claimed;
+    try {
+        claimed = await withMainDbTransaction(async ({ query }) => {
+            const rows = await query(
+                'SELECT * FROM alipay_orders WHERE out_trade_no = ? LIMIT 1 FOR UPDATE',
+                [outTradeNo]
+            );
+            if (!rows.length) {
+                const error = new Error('订单不存在');
+                error.statusCode = 404;
+                throw error;
+            }
+
+            const order = rows[0];
+            if (order.status === 'PAID') {
+                return { alreadyPaid: true, transactionId: order.transaction_id, order };
+            }
+            if (order.status !== 'PENDING') {
+                const error = new Error('订单状态不可支付');
+                error.statusCode = 409;
+                throw error;
+            }
+
+            let buyerId = order.buyer_id != null ? Number(order.buyer_id) : null;
+            if (!buyerId) {
+                const ownerRows = await query(
+                    'SELECT user_id FROM certificate_registry WHERE address = ? AND user_id IS NOT NULL LIMIT 1',
+                    [order.buyer_address]
+                );
+                buyerId = ownerRows.length ? Number(ownerRows[0].user_id) : null;
+            }
+            if (!buyerId || buyerId !== userId) {
+                const error = new Error('订单不属于当前用户');
+                error.statusCode = 403;
+                throw error;
+            }
+
+            const amount = Number(order.amount);
+            if (!Number.isFinite(amount) || amount <= 0) {
+                const error = new Error('订单金额无效');
+                error.statusCode = 400;
+                throw error;
+            }
+
+            const balanceRows = await query('SELECT balance FROM users WHERE id = ? FOR UPDATE', [buyerId]);
+            if (!balanceRows.length) {
+                const error = new Error('用户不存在');
+                error.statusCode = 404;
+                throw error;
+            }
+            if (Number(balanceRows[0].balance) < amount) {
+                const error = new Error('余额不足，请先充值');
+                error.statusCode = 402;
+                error.code = 'INSUFFICIENT_BALANCE';
+                throw error;
+            }
+
+            await query(
+                'UPDATE users SET balance = balance - ? WHERE id = ?',
+                [amount.toFixed(2), buyerId]
+            );
+            await query(
+                `UPDATE alipay_orders
+                 SET status = 'PROCESSING', payment_method = 'BALANCE', buyer_id = ?
+                 WHERE out_trade_no = ?`,
+                [buyerId, outTradeNo]
+            );
+
+            const afterRows = await query('SELECT balance FROM users WHERE id = ? LIMIT 1', [buyerId]);
+            const balanceAfter = afterRows[0] ? afterRows[0].balance : null;
+            await query(
+                `INSERT INTO balance_ledger (user_id, type, amount, balance_after, ref_no, remark)
+                 VALUES (?, 'PAYMENT', ?, ?, ?, ?)`,
+                [buyerId, (-amount).toFixed(2), balanceAfter, outTradeNo, `余额支付-${order.subject}`]
+            );
+
+            order.buyer_id = buyerId;
+            return { alreadyPaid: false, order, balanceAfter };
+        });
+    } catch (error) {
+        return res.status(error.statusCode || 500).json({
+            message: error.message || '余额支付失败',
+            code: error.code
+        });
+    }
+
+    if (claimed.alreadyPaid) {
+        return res.json({
+            status: 'PAID',
+            transaction_id: claimed.transactionId,
+            message: '订单已支付'
+        });
+    }
+
+    const order = claimed.order;
+    let payload = {};
+    try {
+        payload = typeof order.payload === 'string' ? JSON.parse(order.payload) : (order.payload || {});
+    } catch (error) {
+        payload = {};
+    }
+    payload.price = order.amount;
+
+    try {
+        const transactionId = await new Promise((resolve, reject) => {
+            insertTransaction(payload, (error, id) => error ? reject(error) : resolve(id));
+        });
+
+        const tradeNo = 'BAL' + Date.now();
+        await dbQuery(
+            `UPDATE alipay_orders
+             SET status = 'PAID', trade_no = ?, transaction_id = ?, paid_at = NOW(), raw_notify = ?
+             WHERE out_trade_no = ?`,
+            [tradeNo, transactionId, JSON.stringify({ method: 'BALANCE', userId, dev_skip: false }), outTradeNo]
+        );
+
+        return res.json({
+            status: 'PAID',
+            transaction_id: transactionId,
+            balance: claimed.balanceAfter
+        });
+    } catch (error) {
+        // 下单失败（例如并发下库存被抢完）时，把刚扣的余额退回，订单恢复为待支付。
+        try {
+            await withMainDbTransaction(async ({ query }) => {
+                await creditBalance(
+                    query,
+                    order.buyer_id,
+                    order.amount,
+                    'REFUND',
+                    outTradeNo,
+                    '余额支付失败退回'
+                );
+                await query(
+                    `UPDATE alipay_orders
+                     SET status = 'PENDING', payment_method = 'ALIPAY'
+                     WHERE out_trade_no = ? AND status = 'PROCESSING'`,
+                    [outTradeNo]
+                );
+            });
+        } catch (refundError) {
+            console.error('余额支付失败退款异常:', refundError.message);
+        }
+        return res.status(error.statusCode || 500).json({
+            message: error.message || '余额支付失败',
+            code: error.code
+        });
+    }
+});
+
 // 创建支付订单并返回二维码
 app.post('/api/create-payment', acceptTeeModelUpload, (req, res) => {
     if (!alipay.enabled) {
@@ -3191,14 +3845,23 @@ app.post('/api/create-payment', acceptTeeModelUpload, (req, res) => {
         return res.status(400).json({ message: error.message });
     }
 
+    const requestedQuantity = Math.max(1, Number(b.quantity) || 1);
+    db.query('SELECT number FROM asset_registrations WHERE file_hash = ? LIMIT 1', [asset_id], (stockErr, stockRows) => {
+        if (stockErr) return res.status(500).json({ message: '库存查询失败' });
+        if (stockRows && stockRows.length && Number(stockRows[0].number) < requestedQuantity) {
+            return res.status(409).json({ message: '库存不足或已售罄', code: 'OUT_OF_STOCK' });
+        }
+
     resolveAssetPrice(asset_id, b.amount, (perr, amount) => {
         if (perr) return res.status(500).json({ message: '价格查询失败' });
         if (!amount) return res.status(400).json({ message: '无法确定支付金额' });
 
         const outTradeNo = 'ALI' + Date.now() + Math.floor(Math.random() * 1000);
+        const parsedBuyerId = Number(b.buyer_id);
         const payload = {
             asset_id,
             owner_id: b.owner_id,
+            buyer_id: Number.isInteger(parsedBuyerId) && parsedBuyerId > 0 ? parsedBuyerId : null,
             buyer_address,
             seller_id: b.seller_id,
             seller_address,
@@ -3213,10 +3876,10 @@ app.post('/api/create-payment', acceptTeeModelUpload, (req, res) => {
         const finalSubject = (subject && String(subject).trim()) || ('数字资产购买-' + asset_id);
 
         db.query(`INSERT INTO alipay_orders
-                  (out_trade_no, asset_id, owner_id, buyer_address, seller_id, seller_address, amount, subject, status, payload)
-                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
-            [outTradeNo, asset_id, payload.owner_id || null, buyer_address, payload.seller_id || null,
-             seller_address, amount.toFixed(2), finalSubject, JSON.stringify(payload)],
+                  (out_trade_no, asset_id, owner_id, buyer_id, buyer_address, seller_id, seller_address, amount, subject, status, payload)
+                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?)`,
+            [outTradeNo, asset_id, payload.owner_id || null, payload.buyer_id || null, buyer_address,
+             payload.seller_id || null, seller_address, amount.toFixed(2), finalSubject, JSON.stringify(payload)],
             (err) => {
                 if (err) {
                     console.error('创建支付订单失败:', err);
@@ -3246,6 +3909,7 @@ app.post('/api/create-payment', acceptTeeModelUpload, (req, res) => {
                     res.status(502).json({ message: '支付宝下单异常', detail: e.message });
                 });
             });
+    });
     });
 });
 
@@ -3310,17 +3974,36 @@ app.post('/api/payment-notify', (req, res) => {
             return res.send('fail');
         }
         const tradeStatus = params.trade_status;
-        if (tradeStatus === 'TRADE_SUCCESS' || tradeStatus === 'TRADE_FINISHED') {
-            finalizeOrderPaid(params.out_trade_no, params, (e) => {
-                if (e) {
-                    console.error('回调处理失败:', e);
+        if (tradeStatus !== 'TRADE_SUCCESS' && tradeStatus !== 'TRADE_FINISHED') {
+            return res.send('success');
+        }
+
+        db.query(
+            'SELECT id FROM recharge_orders WHERE out_trade_no = ? LIMIT 1',
+            [params.out_trade_no],
+            (lookupError, lookupRows) => {
+                if (lookupError) {
+                    console.error('回调查询充值订单失败:', lookupError);
                     return res.send('fail');
                 }
-                res.send('success');
-            });
-        } else {
-            res.send('success');
-        }
+                if (lookupRows && lookupRows.length) {
+                    finalizeRechargePaid(params.out_trade_no, params)
+                        .then(() => res.send('success'))
+                        .catch((e) => {
+                            console.error('充值回调处理失败:', e);
+                            res.send('fail');
+                        });
+                    return;
+                }
+                finalizeOrderPaid(params.out_trade_no, params, (e) => {
+                    if (e) {
+                        console.error('回调处理失败:', e);
+                        return res.send('fail');
+                    }
+                    res.send('success');
+                });
+            }
+        );
     } catch (e) {
         console.error('回调异常:', e);
         res.send('fail');
@@ -3497,45 +4180,59 @@ app.get('/api/seller-pending-transactions/:seller_address', (req, res) => {
 });
 
 // 软删除：卖家移除已过期的待确认交易（仅标记，保留记录，前端不再显示）
-app.post('/api/seller-delete-transaction', (req, res) => {
+app.post('/api/seller-delete-transaction', async (req, res) => {
     const { transaction_id, seller_address } = req.body || {};
 
     if (!transaction_id || !seller_address) {
         return res.status(400).json({ message: '缺少必要的参数' });
     }
 
-    const query = `
-        SELECT transaction_id, status, expiration_time
-        FROM transactions
-        WHERE transaction_id = ? AND seller_address = ? AND status = '待确认' AND is_deleted = 0`;
-
-    db.query(query, [transaction_id, seller_address], (err, rows) => {
-        if (err) {
-            console.error('查询待删除交易失败:', err);
-            return res.status(500).json({ error: '服务器内部错误' });
-        }
-        if (!rows || rows.length === 0) {
-            return res.status(404).json({ message: '未找到可删除的待确认交易' });
-        }
-
-        const expirationTime = rows[0].expiration_time;
-        const expired = expirationTime && new Date(expirationTime).getTime() <= Date.now();
-        if (!expired) {
-            return res.status(400).json({ message: '仅可删除已过期的交易' });
-        }
-
-        db.query(
-            'UPDATE transactions SET is_deleted = 1, deleted_at = NOW() WHERE transaction_id = ?',
-            [transaction_id],
-            (updateErr) => {
-                if (updateErr) {
-                    console.error('软删除交易失败:', updateErr);
-                    return res.status(500).json({ error: '服务器内部错误' });
-                }
-                res.status(200).json({ message: '过期交易已移除' });
+    try {
+        await withMainDbTransaction(async ({ query }) => {
+            const rows = await query(
+                `SELECT transaction_id, asset_id, quantity, stock_reserved, status, expiration_time
+                 FROM transactions
+                 WHERE transaction_id = ? AND seller_address = ? AND status = '待确认' AND is_deleted = 0
+                 FOR UPDATE`,
+                [transaction_id, seller_address]
+            );
+            if (!rows.length) {
+                const error = new Error('未找到可删除的待确认交易');
+                error.statusCode = 404;
+                throw error;
             }
-        );
-    });
+
+            const transaction = rows[0];
+            const expirationTime = transaction.expiration_time;
+            const expired = expirationTime && new Date(expirationTime).getTime() <= Date.now();
+            if (!expired) {
+                const error = new Error('仅可删除已过期的交易');
+                error.statusCode = 400;
+                throw error;
+            }
+
+            // 软删除待确认交易时，把下单时占用的库存退回去。
+            if (Number(transaction.stock_reserved) === 1) {
+                await query(
+                    'UPDATE asset_registrations SET number = number + ? WHERE file_hash = ?',
+                    [Number(transaction.quantity) || 0, transaction.asset_id]
+                );
+            }
+
+            // 余额支付的订单关闭时，同步把钱退回买家。
+            await refundBalanceForTransaction(query, transaction_id, '交易已过期关闭退款');
+
+            await query(
+                'UPDATE transactions SET is_deleted = 1, deleted_at = NOW(), stock_reserved = 0 WHERE transaction_id = ?',
+                [transaction_id]
+            );
+        });
+
+        return res.status(200).json({ message: '过期交易已移除' });
+    } catch (error) {
+        console.error('软删除交易失败:', error.message);
+        return res.status(error.statusCode || 500).json({ message: error.message || '服务器内部错误' });
+    }
 });
 
 app.post('/api/seller-confirm-transaction', async (req, res) => {
@@ -3563,6 +4260,21 @@ app.post('/api/seller-confirm-transaction', async (req, res) => {
             const transaction = rows[0];
             const newStatus = isAgree ? '已确认' : '已拒绝';
             let contract = null;
+
+            // 卖家拒绝时，把下单时占用的库存退回去，余额支付的金额也退回买家。
+            if (!isAgree && Number(transaction.stock_reserved) === 1) {
+                await query(
+                    'UPDATE asset_registrations SET number = number + ? WHERE file_hash = ?',
+                    [Number(transaction.quantity) || 0, transaction.asset_id]
+                );
+                await query(
+                    'UPDATE transactions SET stock_reserved = 0 WHERE transaction_id = ?',
+                    [transaction_id]
+                );
+            }
+            if (!isAgree) {
+                await refundBalanceForTransaction(query, transaction_id, '卖家拒绝交易退款');
+            }
 
             if (isAgree && String(transaction.pc_type || '').trim().toUpperCase() === 'TEE') {
                 const expirationValue = transaction.expiration_time;
@@ -6287,6 +6999,59 @@ app.get('/api/default-cert', (req, res) => {
       default_trade_cert: rows[0].default_trade_cert || ''
     });
   });
+});
+
+app.get('/api/user-profile', (req, res) => {
+    const userId = Number(req.query.userId);
+    if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ success: false, message: '缺少 userId' });
+    }
+
+    db.query(
+        `SELECT id, username, email, phone_number, address, balance, usertype, created_at,
+                default_register_cert, default_trade_cert
+         FROM users WHERE id = ? LIMIT 1`,
+        [userId],
+        (err, rows) => {
+            if (err) {
+                console.error('查询个人资料失败:', err);
+                return res.status(500).json({ success: false, message: '查询个人资料失败' });
+            }
+            if (!rows || rows.length === 0) {
+                return res.status(404).json({ success: false, message: '用户不存在' });
+            }
+
+            const profile = rows[0];
+            db.query(
+                `SELECT
+                    (SELECT COUNT(*) FROM asset_registrations WHERE user_id = ?) AS asset_count,
+                    (SELECT COUNT(*) FROM certificate_registry WHERE user_id = ?) AS certificate_count,
+                    (SELECT COUNT(*) FROM transactions t
+                      WHERE t.status = '待确认' AND t.is_deleted = 0
+                        AND t.seller_address IN (
+                          SELECT address FROM certificate_registry
+                          WHERE user_id = ? AND address IS NOT NULL
+                        )) AS pending_seller_count,
+                    (SELECT COUNT(*) FROM transactions t
+                      WHERE t.status = '已确认'
+                        AND (t.seller_address IN (
+                          SELECT address FROM certificate_registry
+                          WHERE user_id = ? AND address IS NOT NULL
+                        ) OR t.buyer_address IN (
+                          SELECT address FROM certificate_registry
+                          WHERE user_id = ? AND address IS NOT NULL
+                        ))) AS order_count`,
+                [userId, userId, userId, userId, userId],
+                (statErr, statRows) => {
+                    if (statErr) {
+                        console.error('查询个人统计失败:', statErr);
+                        return res.json({ success: true, profile, stats: {} });
+                    }
+                    return res.json({ success: true, profile, stats: statRows[0] || {} });
+                }
+            );
+        }
+    );
 });
 
 app.get('/api/user-certificates', (req, res) => {

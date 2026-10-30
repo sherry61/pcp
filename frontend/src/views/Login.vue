@@ -77,8 +77,8 @@ export default {
 
     loginRole: "user",
 
-    loading: false,
-    userIP: ""
+    loading: false
+    // userIP: "" // IP 归属地功能已停用
   }
 },
   methods: {
@@ -115,11 +115,9 @@ export default {
           localStorage.setItem('user_role', 'buyer');
         }
 
-        // 2. 获取公网 IP
-        await this.getUserIP();
-
-        // 3. 发送 IP 到后端
-        await this.sendIPToBackend();
+        // IP 归属地记录已停用：GoSDK /pre/Ipaddr 只查日志，不落库
+        // await this.getUserIP();
+        // await this.sendIPToBackend();
 
         // 4. 跳转到主页
         if (this.loginRole === 'user') {
@@ -162,6 +160,7 @@ export default {
       }
     },
 
+    /*
     // 获取公网 IP
     async getUserIP() {
       try {
@@ -172,7 +171,6 @@ export default {
         console.error("获取公网 IP 失败:", error);
       }
     },
-    
 
     // 发送 IP 到后端
     async sendIPToBackend() {
@@ -186,6 +184,7 @@ export default {
         console.error("发送 IP 失败:", error);
       }
     },
+    */
   },
 };
 </script>

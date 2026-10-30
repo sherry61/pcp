@@ -217,7 +217,7 @@
             <p><strong>资产名称:</strong> {{ asset.asset_name }}</p>
             <p><strong>价格:</strong> {{ asset.price || 1200 }} RMB</p>
             <p><strong>账户余额:</strong> {{ userBalance }} RMB</p>
-            <p v-if="insufficientBalance" style="color: red;">余额不足，无法完成购买。</p>
+            <p v-if="insufficientBalance" style="color: #b45309;">余额不足，可在支付时选择扫码支付。</p>
             <!-- 证书选择 -->
             
             <!-- 添加勾选，查阅权，加工权，所有权 -->
@@ -286,7 +286,9 @@
               <!-- 购买数量输入框 -->
               <label for="purchase-quantity">购买数量：</label>
               <input id="purchase-quantity" type="number" class="form-control" v-model.number="purchaseQuantity" min="1"
+                :max="Number(asset.number ?? 1)" :disabled="Number(asset.number ?? 1) <= 0"
                 placeholder="请输入购买数量" @input="validateInput">
+              <small style="color:#909399;">剩余数量：{{ Number(asset.number ?? 1) }}</small>
               <!-- 提示信息 -->
               <small v-if="errorMessage" class="text-danger">{{ errorMessage }}</small>
             </div>
@@ -347,6 +349,9 @@
               <span class="payment-amount-label">应付金额</span>
               <span class="payment-amount-value">¥ {{ paymentAmount }}</span>
             </div>
+            <div class="payment-balance">
+              账户余额 <strong>¥ {{ userBalance }}</strong>
+            </div>
 
             <div class="payment-qr-wrap" :class="{ 'is-paid': paymentStatus === 'PAID' }">
               <img v-if="paymentQr" :src="paymentQr" alt="支付宝支付二维码" class="payment-qr" />
@@ -357,6 +362,13 @@
         </div>
 
         <div class="modal-buttons payment-actions">
+          <button
+            class="balance-pay-button"
+            :disabled="payingWithBalance || paymentStatus === 'PAID'"
+            @click="payWithBalance"
+          >
+            {{ payingWithBalance ? '支付中…' : `余额支付 ¥${paymentAmount}` }}
+          </button>
           <button @click="closePaymentModal">取消支付</button>
         </div>
       </div>
@@ -447,7 +459,7 @@ export default {
         { id: 3, event: 'Sale', price: '63 rmb', seller: 'user3', buyer: 'user4' },
         { id: 4, event: 'Transfer', price: '0 rmb', seller: 'user3', buyer: 'user4' }
       ],
-      userBalance: 500000, // 演示账户可用余额（RMB）
+      userBalance: 0, // 账户可用余额（RMB），从后端加载
       showPurchaseModal: false, // 控制购买弹窗
       showConfirmModal: false,//控制申请成功弹窗
       insufficientBalance: false,
@@ -460,6 +472,7 @@ export default {
       paymentStatus: 'PENDING',
       paymentPollingTimer: null,
       paymentDeadline: 0,
+      payingWithBalance: false,
       certificates: [],
       selectedCertificate: '', // 用户选择的证书
       defaultTradeCert: null,
@@ -748,6 +761,7 @@ export default {
       });
     },
 async openPurchaseModal() {
+  this.fetchBalance();
   this.insufficientBalance = (this.asset.price || 1200) > this.userBalance;
   this.selectedPermissions = [];
   this.processingChoice = null;
@@ -892,6 +906,18 @@ async openPurchaseModal() {
     return;
   }
 
+  const availableQuantity = Number(this.asset.number);
+  if (Number.isFinite(availableQuantity)) {
+    if (availableQuantity <= 0) {
+      this.errorMessage = '该资产已售罄';
+      return;
+    }
+    if (this.purchaseQuantity > availableQuantity) {
+      this.errorMessage = `购买数量不能超过剩余数量 ${availableQuantity}`;
+      return;
+    }
+  }
+
  let certAddr = this.defaultTradeCert?.address;
 
 if (!certAddr) {
@@ -974,19 +1000,23 @@ async startPayment(requestBody) {
   this.paymentQr = '';
   this.paymentOrderNo = '';
   this.paymentStatus = 'PENDING';
+  this.payingWithBalance = false;
   this.paymentAmount = Number(this.asset.price || 1200).toFixed(2);
+  this.fetchBalance();
 
   try {
     let payload;
     if (requestBody instanceof FormData) {
       payload = requestBody;
       payload.append('owner_id', String(this.asset.user_id ?? ''));
+      payload.append('buyer_id', String(this.userId ?? ''));
       payload.append('amount', String(this.asset.price || 1200));
       payload.append('subject', `数字资产购买-${this.asset.asset_name || this.asset.file_hash}`);
     } else {
       payload = {
         ...requestBody,
         owner_id: this.asset.user_id,
+        buyer_id: this.userId,
         amount: this.asset.price || 1200,
         subject: `数字资产购买-${this.asset.asset_name || this.asset.file_hash}`,
       };
@@ -1061,6 +1091,50 @@ async handleDevPaymentShortcut(event) {
 closePaymentModal() {
   this.stopPaymentPolling();
   this.showPaymentModal = false;
+},
+
+async fetchBalance() {
+  if (!this.userId) return;
+  try {
+    const res = await axios.get('http://10.112.191.163:3000/api/balance', {
+      params: { userId: this.userId }
+    });
+    if (res.data?.success) {
+      this.userBalance = Number(res.data.balance || 0).toFixed(2);
+      this.insufficientBalance = Number(this.asset.price || 1200) > Number(this.userBalance);
+    }
+  } catch (error) {
+    console.error('获取余额失败:', error);
+  }
+},
+
+async payWithBalance() {
+  if (!this.paymentOrderNo || this.payingWithBalance) return;
+  this.payingWithBalance = true;
+  try {
+    const res = await axios.post('http://10.112.191.163:3000/api/balance/pay', {
+      out_trade_no: this.paymentOrderNo,
+      userId: this.userId
+    });
+
+    if (res.data?.status === 'PAID') {
+      this.paymentStatus = 'PAID';
+      this.stopPaymentPolling();
+      this.transactionId = res.data.transaction_id;
+      if (res.data.balance !== undefined && res.data.balance !== null) {
+        this.userBalance = Number(res.data.balance).toFixed(2);
+      }
+      setTimeout(() => {
+        this.showPaymentModal = false;
+        this.openConfirmModal();
+      }, 800);
+    }
+  } catch (error) {
+    console.error('余额支付失败:', error);
+    alert(error.response?.data?.message || '余额支付失败，请稍后重试。');
+  } finally {
+    this.payingWithBalance = false;
+  }
 }
 ,
 
@@ -1838,16 +1912,41 @@ body {
   color: #dc2626;
 }
 
+.payment-balance {
+  margin: -8px 0 14px;
+  font-size: 13px;
+  color: #6b7280;
+}
+
+.payment-balance strong {
+  color: #111827;
+  font-weight: 600;
+}
+
 .payment-actions {
   margin-top: 20px;
 }
 
-.payment-actions button:first-child {
+.payment-actions .balance-pay-button {
+  background-color: #1677ff;
+  color: #fff;
+}
+
+.payment-actions .balance-pay-button:hover:not(:disabled) {
+  background-color: #0f63d6;
+}
+
+.payment-actions .balance-pay-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.payment-actions button:last-child {
   background-color: #f3f4f6;
   color: #374151;
 }
 
-.payment-actions button:first-child:hover {
+.payment-actions button:last-child:hover {
   background-color: #e5e7eb;
 }
 

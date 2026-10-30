@@ -126,6 +126,9 @@
           <span class="asset-row-tag">
             {{ asset.industry_raw_name || '未分类' }}
           </span>
+          <span v-if="asset.number !== undefined && asset.number !== null" class="asset-row-tag">
+            剩余 {{ asset.number }}
+          </span>
         </div>
       </div>
 
@@ -182,6 +185,10 @@
         <div class="asset-row-tags">
   <span class="asset-row-tag">
     {{ asset.industry_raw_name || industryMap[asset.industry] || '未分类' }}
+  </span>
+
+  <span v-if="asset.number !== undefined && asset.number !== null" class="asset-row-tag">
+    剩余 {{ asset.number }}
   </span>
 
   <span

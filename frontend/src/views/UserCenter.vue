@@ -4,30 +4,118 @@
     <div class="main-content">
       <AppSidebar />
       <div class="content">
-        <h2 class="title">证书管理</h2>
+        <div class="page" v-loading="loading || profileLoading">
+          <h2 class="title">个人中心</h2>
 
-        <!-- 用户信息展示 -->
-        <el-card class="personal-info-container">
-          <div class="info-container">
-            <!-- 输入框 -->
-            <input v-model="searchQuery" type="text" placeholder="请输入证书名称" class="input-box" />
-
-            <!-- 按钮组 -->
-            <div class="btn-group-container">
-              <div class="btn-group">
-                <el-button type="primary" @click="isDialogVisible = true">申请</el-button>
+          <div class="top-grid">
+            <section class="info-panel">
+              <h3 class="section-title">基本信息</h3>
+              <div class="info-grid">
+                <div class="info-item">
+                  <span class="info-label">用户名</span>
+                  <span class="info-value">{{ profile?.username || username || '-' }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">用户 ID</span>
+                  <span class="info-value mono">{{ profile?.id || userId || '-' }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">邮箱</span>
+                  <span class="info-value">{{ profile?.email || '未填写' }}</span>
+                </div>
+                <div class="info-item">
+                  <span class="info-label">手机</span>
+                  <span class="info-value">{{ profile?.phone_number || '未填写' }}</span>
+                </div>
+                <div class="info-item span-2">
+                  <span class="info-label">地址</span>
+                  <span class="info-value">{{ profile?.address || '未填写' }}</span>
+                </div>
+                <div class="info-item span-2">
+                  <span class="info-label">注册时间</span>
+                  <span class="info-value">{{ formatProfileDate(profile?.created_at) }}</span>
+                </div>
               </div>
+            </section>
 
-              <div class="btn-group">
-                <el-button type="primary" @click="searchCertificates">搜索</el-button>
+            <aside class="balance-card">
+              <div class="balance-head">
+                <div class="balance-label">账户余额</div>
+                <el-button size="small" plain @click="openRecharge">充值</el-button>
+              </div>
+              <div class="balance-value">
+                ¥ {{ balanceText }}
+                <span class="currency">CNY</span>
+              </div>
+            </aside>
+          </div>
+
+          <section class="cert-section">
+            <div class="section-head">
+              <h3 class="section-title">我的证书</h3>
+              <el-button
+                v-if="activeCertificate"
+                size="small"
+                plain
+                @click="openCertDialog('renew')"
+              >续期证书</el-button>
+              <el-button
+                v-else
+                type="primary"
+                plain
+                size="small"
+                @click="openCertDialog('apply')"
+              >申请证书</el-button>
+            </div>
+            <div v-if="activeCertificate" class="cert-surface">
+              <div class="cert-main">
+                <div>
+                  <div class="cert-name">{{ activeCertificate.cert }}</div>
+                  <div class="cert-org">{{ activeCertificate.organization }}</div>
+                </div>
+                <span class="cert-badge" :class="{ expired: certificateExpired }">
+                  {{ certificateExpired ? '已过期' : '有效' }}
+                </span>
+              </div>
+              <div class="cert-grid">
+                <div class="cert-item span-2">
+                  <span>证书地址</span>
+                  <strong class="mono">{{ activeCertificate.address }}</strong>
+                </div>
+                <div class="cert-item">
+                  <span>创建时间</span>
+                  <strong>{{ activeCertificate.createdAt }}</strong>
+                </div>
+                <div class="cert-item">
+                  <span>过期时间</span>
+                  <strong>{{ activeCertificate.expirationAt }}</strong>
+                </div>
               </div>
             </div>
-          </div>
-        </el-card>
+            <el-empty v-else description="暂无证书" />
+          </section>
+        </div>
 
-        <!-- 申请证书对话框 -->
-        <el-dialog title="申请证书" v-model="isDialogVisible" width="500px">
-          <el-form :model="form">
+        <el-dialog
+          :title="certDialogMode === 'renew' ? '续期证书' : '申请证书'"
+          v-model="isDialogVisible"
+          width="500px"
+        >
+          <template v-if="certDialogMode === 'renew'">
+            <el-descriptions :column="1">
+              <el-descriptions-item label="证书名称">{{ activeCertificate?.cert }}</el-descriptions-item>
+              <el-descriptions-item label="所属组织">{{ activeCertificate?.organization }}</el-descriptions-item>
+              <el-descriptions-item label="当前有效期">{{ activeCertificate?.expirationAt }}</el-descriptions-item>
+            </el-descriptions>
+            <el-alert
+              title="证书名称和链上地址保持不变，续期后有效期延长。"
+              type="info"
+              show-icon
+              :closable="false"
+              style="margin-top:12px;"
+            />
+          </template>
+          <el-form v-else :model="form">
             <el-form-item label="证书名称" :rules="{ required: true, message: '请输入证书名称', trigger: 'blur' }">
               <el-input v-model="form.certificateName" placeholder="输入不超过10位的字母和数字组合" />
             </el-form-item>
@@ -37,99 +125,90 @@
                 <el-option label="wx-org2.chainmaker.org" value="wx-org2.chainmaker.org"></el-option>
               </el-select>
             </el-form-item>
-            <el-alert v-if="formError" :title="formError" type="error" show-icon :closable="false" />
-            <el-alert title="证书有效期暂定为6个月，到期后可联系官方续期。" type="info" show-icon />
+            <el-alert title="证书有效期暂定为6个月，到期后可续期。" type="info" show-icon />
           </el-form>
+          <el-alert
+            v-if="formError"
+            :title="formError"
+            type="error"
+            show-icon
+            :closable="false"
+            style="margin-top:12px;"
+          />
           <template #footer>
             <div class="dialog-footer">
               <el-button @click="isDialogVisible = false">取消</el-button>
-              <el-button type="primary" @click="submitApplication">确认</el-button>
+              <el-button
+                type="primary"
+                @click="certDialogMode === 'renew' ? renewCertificate() : submitApplication()"
+              >
+                {{ certDialogMode === 'renew' ? '确认续期' : '确认申请' }}
+              </el-button>
             </div>
           </template>
         </el-dialog>
 
-        <!-- 证书内容弹窗 -->
-        <el-dialog title="证书内容" v-model="isCertContentDialogVisible" width="600px">
-          <pre>{{ certContent }}</pre>
+        <el-dialog
+          v-model="rechargeVisible"
+          title="余额充值"
+          width="420px"
+          @closed="stopRechargePolling"
+        >
+          <template v-if="!rechargeQr">
+            <el-form label-width="72px">
+              <el-form-item label="充值金额">
+                <el-input v-model="rechargeAmount" placeholder="请输入充值金额">
+                  <template #append>元</template>
+                </el-input>
+              </el-form-item>
+            </el-form>
+          </template>
+
+          <template v-else>
+            <div class="recharge-qr">
+              <img :src="rechargeQr" alt="充值二维码" />
+              <div v-if="rechargeStatus === 'PAID'" class="recharge-paid">✓ 已到账</div>
+            </div>
+            <div class="recharge-amount-line">
+              应付金额 <strong>¥ {{ rechargeAmount }}</strong>
+            </div>
+            <div class="recharge-tip">请使用支付宝扫码支付，到账后余额自动更新。</div>
+          </template>
+
+          <el-alert
+            v-if="rechargeError"
+            :title="rechargeError"
+            type="error"
+            show-icon
+            :closable="false"
+            style="margin-top:12px;"
+          />
+
           <template #footer>
             <div class="dialog-footer">
-              <el-button @click="isCertContentDialogVisible = false">关闭</el-button>
+              <el-button @click="rechargeVisible = false">取消</el-button>
+              <el-button
+                v-if="!rechargeQr"
+                type="primary"
+                :loading="rechargeLoading"
+                @click="createRecharge"
+              >支付</el-button>
             </div>
           </template>
         </el-dialog>
 
-
-<!-- 默认证书设置 -->
-<el-card class="default-cert-card">
-  <h3>默认证书设置</h3>
-
-  <el-form label-width="140px">
-    <el-form-item label="上链默认证书">
-      <el-select
-        v-model="defaultRegisterCert"
-        placeholder="请选择上链登记使用的证书"
-        style="width: 360px"
-      >
-        <el-option
-  v-for="item in defaultCertOptions"
-  :key="item.cert + '-register'"
-  :label="`${item.cert}（${item.organization}）`"
-  :value="item.cert"
-/>
-      </el-select>
-    </el-form-item>
-
-    <el-form-item label="交易默认证书">
-      <el-select
-        v-model="defaultTradeCert"
-        placeholder="请选择买家交易使用的证书"
-        style="width: 360px"
-      >
-        <el-option
-  v-for="item in defaultCertOptions"
-  :key="item.cert + '-register'"
-  :label="`${item.cert}（${item.organization}）`"
-  :value="item.cert"
-/>
-      </el-select>
-    </el-form-item>
-
-    <el-button
-      type="primary"
-      :loading="savingDefaultCert"
-      @click="saveDefaultCert"
-    >
-      保存默认证书
-    </el-button>
-  </el-form>
-</el-card>
-
-<!-- 表格展示 -->
-<el-card>
-  <div class="table">
-    <el-table :data="tableData" border style="width: 100%" v-loading="loading" empty-text="暂无数据">
-      <el-table-column prop="cert" label="证书名称" />
-      <el-table-column prop="organization" label="所属组织" />
-      <el-table-column prop="address" label="证书地址" show-overflow-tooltip />
-      <el-table-column prop="createdAt" label="创建时间" />
-      <el-table-column prop="expirationAt" label="过期时间" />
-    </el-table>
-  </div>
-</el-card>
-      
-
-        <!-- 提示信息 -->
-        <el-alert v-if="message" :title="message" type="info" show-icon></el-alert>
+        <el-alert v-if="message" :title="message" type="info" show-icon class="page-message" />
       </div>
     </div>
   </div>
 </template>
 
 <script>
-import { ref, onMounted } from "vue";
+import { computed, ref, onMounted, onBeforeUnmount } from "vue";
 import AppHeader from "@/components/AppHeader.vue";
 import AppSidebar from "@/components/AppSidebar.vue";
 import axios from "axios";
+import QRCode from "qrcode";
 
 export default {
   name: "UserProfile",
@@ -145,6 +224,7 @@ export default {
 
     const loading = ref(false); // 加载状态
     const isDialogVisible = ref(false);
+    const certDialogMode = ref('apply');
     const isCertContentDialogVisible = ref(false);
     const searchQuery = ref(""); // 搜索关键词
     const message = ref(""); // 提示信息
@@ -154,6 +234,153 @@ export default {
     const savingDefaultCert = ref(false);
 
     const defaultCertOptions = ref([]);
+    const profile = ref(null);
+    const stats = ref({});
+    const profileLoading = ref(false);
+
+    const balance = ref('0.00');
+    const balanceText = computed(() => {
+      const value = Number(balance.value);
+      return Number.isFinite(value) ? value.toFixed(2) : '0.00';
+    });
+    const rechargeVisible = ref(false);
+    const rechargeAmount = ref('');
+    const rechargeLoading = ref(false);
+    const rechargeError = ref('');
+    const rechargeQr = ref('');
+    const rechargeOrderNo = ref('');
+    const rechargeStatus = ref('PENDING');
+    const rechargeTimer = ref(null);
+
+    const fetchBalance = async () => {
+      if (!userId.value) return;
+      try {
+        const res = await axios.get('http://10.112.191.163:3000/api/balance', {
+          params: { userId: userId.value }
+        });
+        if (res.data?.success) {
+          balance.value = Number(res.data.balance || 0).toFixed(2);
+        }
+      } catch (error) {
+        console.error('获取余额失败:', error);
+      }
+    };
+
+    const stopRechargePolling = () => {
+      if (rechargeTimer.value) {
+        clearInterval(rechargeTimer.value);
+        rechargeTimer.value = null;
+      }
+    };
+
+    const openRecharge = () => {
+      stopRechargePolling();
+      rechargeVisible.value = true;
+      rechargeAmount.value = '';
+      rechargeError.value = '';
+      rechargeQr.value = '';
+      rechargeOrderNo.value = '';
+      rechargeStatus.value = 'PENDING';
+    };
+
+    const startRechargePolling = () => {
+      stopRechargePolling();
+      rechargeTimer.value = setInterval(async () => {
+        if (!rechargeOrderNo.value) return;
+        try {
+          const res = await axios.get(
+            `http://10.112.191.163:3000/api/balance/recharge-status/${rechargeOrderNo.value}`
+          );
+          if (res.data?.status === 'PAID') {
+            rechargeStatus.value = 'PAID';
+            stopRechargePolling();
+            await fetchBalance();
+            message.value = '充值成功';
+            setTimeout(() => {
+              rechargeVisible.value = false;
+            }, 700);
+          }
+        } catch (error) {
+          console.error('查询充值状态失败:', error);
+        }
+      }, 3000);
+    };
+
+    const createRecharge = async () => {
+      const amount = Number(rechargeAmount.value);
+      if (!Number.isFinite(amount) || amount < 0.01 || amount >= 100000000) {
+        rechargeError.value = '充值金额需在 0.01 ~ 99999999.99 元之间';
+        return;
+      }
+
+      rechargeError.value = '';
+      rechargeLoading.value = true;
+      try {
+        const res = await axios.post('http://10.112.191.163:3000/api/balance/recharge', {
+          userId: parseInt(userId.value),
+          amount
+        });
+        if (res.status !== 201 || !res.data?.qr_code) {
+          rechargeError.value = res.data?.message || '创建充值订单失败';
+          return;
+        }
+        rechargeOrderNo.value = res.data.out_trade_no;
+        rechargeAmount.value = Number(res.data.amount || amount).toFixed(2);
+        rechargeQr.value = await QRCode.toDataURL(res.data.qr_code, { width: 220, margin: 1 });
+        rechargeStatus.value = 'PENDING';
+        startRechargePolling();
+      } catch (error) {
+        console.error('创建充值订单失败:', error);
+        rechargeError.value = error.response?.data?.message || '创建充值订单失败，请稍后重试';
+      } finally {
+        rechargeLoading.value = false;
+      }
+    };
+
+    const formatProfileDate = (value) => {
+      if (!value) return '未知';
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      return date.toLocaleString('zh-CN', { hour12: false });
+    };
+
+    const fetchUserProfile = async () => {
+      if (!userId.value) return;
+      profileLoading.value = true;
+      try {
+        const res = await axios.get('http://10.112.191.163:3000/api/user-profile', {
+          params: { userId: userId.value }
+        });
+        if (res.data?.success) {
+          profile.value = res.data.profile || null;
+          stats.value = res.data.stats || {};
+        }
+      } catch (error) {
+        console.error('获取个人资料失败:', error);
+      } finally {
+        profileLoading.value = false;
+      }
+    };
+
+    const activeCertificate = computed(() => {
+      const preferred = profile.value?.default_register_cert || profile.value?.default_trade_cert;
+      const list = certificates.value || [];
+      return list.find((item) => item.cert === preferred) || list[0] || null;
+    });
+
+    const certificateExpired = computed(() => {
+      const raw = activeCertificate.value?.expiresAtRaw;
+      if (!raw) return false;
+      const time = new Date(raw).getTime();
+      return Number.isFinite(time) && time <= Date.now();
+    });
+
+    const openCertDialog = (mode) => {
+      certDialogMode.value = mode === 'renew' ? 'renew' : 'apply';
+      form.value = { certificateName: '', organization: '' };
+      formError.value = '';
+      isDialogVisible.value = true;
+    };
 
     const form = ref({
       certificateName: "",
@@ -277,50 +504,85 @@ export default {
         return;
       }
 
-      console.log(form.value.certificateName);
-
       try {
         loading.value = true;
 
-        // 第一步：调用 /generate 接口生成证书
-        const generateResponse = await axios.post('/generate', {
-          client_number: form.value.certificateName, 
-          org: form.value.organization.split(".")[0] 
+        // 生成前先检查名称是否已被占用，避免覆盖别人的证书文件。
+        const nameCheck = await axios.get('http://10.112.191.163:3000/api/certificate-name-available', {
+          params: { certificateName: form.value.certificateName }
         });
-
-        console.log(generateResponse)
-
-        if (generateResponse.status === 200 && generateResponse.data.status === "success") {
-          // 第二步：调用 /api/add-certificate 接口添加证书
-          const addCertResponse = await axios.post('http://10.112.191.163:3000/api/add-certificate', {
-            userId: parseInt(userId.value),
-            certificateName: form.value.certificateName,
-            org: form.value.organization.split(".")[0] 
-          });
-
-          console.log("添加证书响应:", addCertResponse);  // 打印响应数据
-          if (addCertResponse.status === 200) {
-            message.value = "证书申请成功";
-            formError.value = "";
-            isDialogVisible.value = false;
-            form.value.certificateName = "";
-            form.value.organization = "";
-            fetchUserCertificate(userId.value);
-
-          } else {
-            console.error("申请证书失败:", addCertResponse.data);
-            message.value = addCertResponse.data.msg || "证书申请失败";
-          }
-        } else {
-          console.error("证书生成失败:", generateResponse.data.msg);
-          message.value = generateResponse.data.msg || "证书生成失败";
- 
+        if (nameCheck.data?.success && nameCheck.data.available === false) {
+          formError.value = '证书名称已被使用，请更换';
+          return;
         }
 
-      } catch (error) {
-        console.error("申请证书时发生错误:", error);
-        message.value = "申请证书失败，服务器不可用。";
+        // 第一步：调用 /generate 接口生成证书
+        const generateResponse = await axios.post('/generate', {
+          client_number: form.value.certificateName,
+          org: form.value.organization.split(".")[0]
+        });
 
+        if (generateResponse.status !== 200 || generateResponse.data.status !== "success") {
+          formError.value =
+            generateResponse.data?.msg ||
+            generateResponse.data?.message ||
+            "证书生成失败";
+          return;
+        }
+
+        // 第二步：登记证书并设为当前账户证书
+        const addCertResponse = await axios.post('http://10.112.191.163:3000/api/add-certificate', {
+          userId: parseInt(userId.value),
+          certificateName: form.value.certificateName,
+          org: form.value.organization.split(".")[0]
+        });
+
+        if (addCertResponse.status !== 200) {
+          formError.value = addCertResponse.data?.message || "证书添加失败";
+          return;
+        }
+
+        message.value = "证书申请成功";
+        formError.value = "";
+        isDialogVisible.value = false;
+        form.value = { certificateName: "", organization: "" };
+        await fetchUserCertificate(userId.value);
+        await fetchUserProfile();
+      } catch (error) {
+        console.error("申请/更换证书时发生错误:", error);
+        const serverMessage = error.response?.data?.message || error.response?.data?.error;
+        formError.value = serverMessage || "证书操作失败，请稍后重试";
+        message.value = formError.value;
+      } finally {
+        loading.value = false;
+      }
+    };
+
+    const renewCertificate = async () => {
+      if (!activeCertificate.value) return;
+      formError.value = '';
+      loading.value = true;
+
+      try {
+        const org = String(activeCertificate.value.organization || '').split('.')[0];
+        const response = await axios.post('http://10.112.191.163:3000/api/renew-certificate', {
+          userId: parseInt(userId.value),
+          certificateName: activeCertificate.value.cert,
+          org
+        });
+
+        if (!response.data?.success) {
+          formError.value = response.data?.message || '证书续期失败';
+          return;
+        }
+
+        message.value = response.data.message || '证书续期成功';
+        isDialogVisible.value = false;
+        await fetchUserCertificate(userId.value);
+        await fetchUserProfile();
+      } catch (error) {
+        console.error('证书续期失败:', error);
+        formError.value = error.response?.data?.message || '证书续期失败，请稍后重试';
       } finally {
         loading.value = false;
       }
@@ -455,6 +717,7 @@ const fetchUserCertificate = async (userId) => {
           address,
           createdAt,
           expirationAt,
+          expiresAtRaw: item.expires_at || null,
         };
       });
 
@@ -541,10 +804,14 @@ onMounted(async () => {
 
     if (userId.value) {
       await fetchUserCertificate(userId.value);
-      await fetchDefaultCertOptions();               // 新增：下拉框候选项
-      await fetchDefaultCert();                      // 已保存的默认值
+      await fetchUserProfile();
+      await fetchBalance();
     }
   }
+});
+
+onBeforeUnmount(() => {
+  stopRechargePolling();
 });
 
 
@@ -558,6 +825,10 @@ onMounted(async () => {
       form,
       formError,
       isDialogVisible,
+      certDialogMode,
+      certificateExpired,
+      openCertDialog,
+      renewCertificate,
       isCertContentDialogVisible,
       certContent,
       searchCertificates,
@@ -571,50 +842,36 @@ onMounted(async () => {
       certificates,
       defaultCertOptions,
       fetchDefaultCertOptions,
+      profile,
+      stats,
+      profileLoading,
+      formatProfileDate,
+      activeCertificate,
+      balance,
+      balanceText,
+      rechargeVisible,
+      rechargeAmount,
+      rechargeLoading,
+      rechargeError,
+      rechargeQr,
+      rechargeStatus,
+      openRecharge,
+      createRecharge,
+      stopRechargePolling,
     };
   },
 };
 </script>
 <style scoped>
-.default-cert-card {
-  margin-bottom: 20px;
-}
-
-.default-cert-card h3 {
-  margin: 0 0 20px;
-  font-size: 18px;
-  color: #1a2a6c;
-}
-
 .personal-center {
   width: 100%;
   height: 100%;
   max-width: 100vw;
-  max-height: 100vh;
   background: #f5f6fa;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
-}
-
-.info-container {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.input-box {
-  flex: 1;
-  max-width: 300px;
-  padding: 10px;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-
-.btn-group-container {
-  margin-left: auto;
-  display: flex;
-  gap: 10px;
+  font-family: "IBM Plex Sans", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 .main-content {
@@ -627,78 +884,274 @@ onMounted(async () => {
 .content {
   flex: 1;
   padding: 20px;
-  background: #f5f6fa;
+  background: #fff;
 }
 
-.title {
-  font-size: 36px;
-  font-weight: bold;
-  color: #1a2a6c;
-  margin-bottom: 30px;
-  text-align: left;
-}
-
-.personal-info-container {
-  margin-bottom: 50px;
-}
-
-.buttons {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 20px;
-}
-
-.el-alert {
-  margin-top: 20px;
-}
-
-.info-item {
-  margin-bottom: 10px;
-}
-
-.table {
+.page {
   width: 100%;
+  min-height: calc(100vh - 80px);
+  padding: 20px 30px 28px;
+  background: #fff;
   box-sizing: border-box;
 }
 
-/* 子内容样式 */
-.details-container {
-  padding: 10px 20px;
-  background-color: #fafafa;
-  border: 1px solid #eaeaea;
-  border-radius: 4px;
+.title {
+  margin: 0 0 20px;
+  padding-top: 10px;
+  font-size: 24px;
+  font-weight: 600;
+  color: #333;
+  letter-spacing: -0.01em;
 }
 
-.detail-item {
+.top-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 2.4fr) minmax(280px, 0.8fr);
+  gap: 28px;
+  margin-bottom: 24px;
+}
+
+.info-panel {
+  min-width: 0;
+}
+
+.section-title {
+  margin: 0 0 16px;
+  font-size: 15px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px 28px;
+}
+
+.info-item {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.info-item.span-2 {
+  grid-column: 1 / -1;
+}
+
+.info-label {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.info-value {
+  color: #111827;
+  font-size: 14px;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.balance-card {
+  background: #f7f7f7;
+  border-radius: 12px;
+  padding: 20px 22px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-height: 150px;
+}
+
+.balance-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
 }
 
-.detail-label {
-  font-weight: bold;
-  width: 100px;
-  color: #606266;
+.balance-label {
+  color: #8a8f98;
+  font-size: 13px;
 }
 
-.detail-value {
-  flex: 1;
-  margin-left: 10px;
-  color: #303133;
-  line-height: 1.5;
+.balance-value {
+  color: #111;
+  font-size: 32px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
 }
 
-.detail-item:not(:last-child) {
-  border-bottom: 1px solid #eaeaea;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
+.currency {
+  color: #9ca3af;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: 0;
 }
 
-.detail-value span {
-  font-weight: bold;
+.recharge-qr {
+  position: relative;
+  width: 220px;
+  height: 220px;
+  margin: 0 auto;
+  border: 1px solid #eef2f7;
+  border-radius: 10px;
+  padding: 10px;
+  box-sizing: content-box;
 }
 
-.title:hover {
-  animation-play-state: paused;
+.recharge-qr img {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.recharge-paid {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.9);
+  color: #047857;
+  font-size: 18px;
+  font-weight: 600;
+  border-radius: 10px;
+}
+
+.recharge-amount-line {
+  margin-top: 14px;
+  text-align: center;
+  color: #4b5563;
+  font-size: 14px;
+}
+
+.recharge-amount-line strong {
+  color: #111827;
+  font-size: 18px;
+}
+
+.recharge-tip {
+  margin-top: 6px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 12px;
+}
+
+.cert-section {
+  border-top: 1px solid #eef2f7;
+  padding-top: 22px;
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.section-head .section-title {
+  margin: 0;
+}
+
+.cert-surface {
+  background: #f7f7f7;
+  border-radius: 12px;
+  padding: 20px 22px;
+}
+
+.cert-main {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.cert-name {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.cert-org {
+  margin-top: 4px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.cert-badge {
+  color: #047857;
+  background: #ecfdf5;
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.cert-badge.expired {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.cert-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px 28px;
+}
+
+.cert-item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+
+.cert-item.span-2 {
+  grid-column: 1 / -1;
+}
+
+.cert-item span {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.cert-item strong {
+  color: #111827;
+  font-size: 13px;
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.mono {
+  font-family: "IBM Plex Mono", "SFMono-Regular", Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.page-message {
+  margin-top: 12px;
+}
+
+@media (max-width: 900px) {
+  .top-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .page {
+    padding: 16px 20px 22px;
+  }
+
+  .info-grid,
+  .cert-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .info-item.span-2,
+  .cert-item.span-2 {
+    grid-column: auto;
+  }
 }
 </style>

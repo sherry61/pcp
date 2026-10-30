@@ -242,7 +242,10 @@
 
 <div class="form-row auction-config-row">
   <div class="form-group">
-    <label for="trade-mode">定价模式</label>
+    <label for="trade-mode">
+      <span class="required-asterisk">*</span>
+      交易方式
+    </label>
     <select id="trade-mode" v-model="form.tradeMode">
       <option value="fixed">固定价</option>
       <option value="auction">拍卖</option>
@@ -258,7 +261,8 @@
 <div class="form-row">
   <div class="form-group">
     <label for="asset-price">
-      资产估值
+      <span class="required-asterisk">*</span>
+      资产估值（元）
     </label>
     <input
       type="number"
@@ -305,7 +309,10 @@
             <!-- 可出售权益 -->
             <div class="form-row">
               <div class="form-group">
-                <label class="full-width-label left-align rights-selection-label">权益选择</label>
+                <label class="full-width-label left-align rights-selection-label">
+                  <span class="required-asterisk">*</span>
+                  权益选择
+                </label>
                 <div class="radio-group rights-selection-options">
                   <div class="radio-item">
                     <el-checkbox v-model="form.isSellBody">持有权</el-checkbox>
@@ -357,16 +364,13 @@
             <p><strong>资产类别:</strong> {{ form.assetCategory }}</p>
 
             <p><strong>资产等级:</strong> {{ form.assetType }}</p>
-            <p><strong>资产估值:</strong> {{ form.price || '未填写' }}</p>
+            <p><strong>资产估值（元）:</strong> {{ form.price || '未填写' }}</p>
 <p><strong>分类方法:</strong> {{ getMethodLabelByOptions(classificationMethods, form.classificationMethod) }}</p>
 <p><strong>分级方法:</strong> {{ getMethodLabelByOptions(gradingMethods, form.gradingMethod) }}</p>
             <p><strong>地址:</strong> {{ form.address }}</p>
             <p><strong>数据资产上链登记内容:</strong> {{ form.description }}</p>
             <p><strong>存证方法:</strong> {{ getIdentifierMethodLabel(form.algorithm) }}</p>
             <p><strong>资产交付方法:</strong> {{ getPcTypeLabel(form.pcType) }}</p>
-            <p><strong>模型选择:</strong>
-  {{ form.modelSelection === 'weighted_average' ? '加权平均' : form.modelSelection }}
-</p>
             
             <div class="form-group centered-button">
               <button @click="confirmForm" style="margin-right: 20px;">确认</button>
@@ -801,7 +805,6 @@ gradingMethods: [
         isSellReadRight: false,  // 允许出售查阅权
         isSellProcessRight: false,  // 允许出售加工权
         allow_resale: 0,  // 初始为不允许二次交易
-        modelSelection: '',
         pcType: '',
         teeDataFile: null,
         teeWeightFile: null,
@@ -1600,6 +1603,12 @@ openValuationModal() {
     useValuationExample() {
       this.params = { ...this.valuationExample };
     },
+    valuationToYuan(value, unit = '万元') {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return '';
+      const factor = String(unit || '').includes('万') ? 10000 : 1;
+      return (numeric * factor).toFixed(2);
+    },
     async submitValuation() {
       const selectedMethodLabel = this.getMethodLabel(this.selectedValuationMethod);
 
@@ -1621,7 +1630,7 @@ openValuationModal() {
           item => item.valuation !== null && item.valuation !== undefined
         );
         if (firstValid) {
-          this.form.price = Number(firstValid.valuation).toFixed(2);
+          this.form.price = this.valuationToYuan(firstValid.valuation, '万元');
         }
 
         this.showValuationResultModal = true;
@@ -1688,7 +1697,10 @@ openValuationModal() {
         this.valuationResultStatus = `${selectedMethodLabel}完成，结果已更新`;
 
         if (valuation !== null) {
-          this.form.price = valuation.toFixed(2);
+          this.form.price = this.valuationToYuan(
+            valuation,
+            this.valuationResultDetail?.valuationUnit || '万元'
+          );
           this.$message.success(`${selectedMethodLabel}完成，已写入资产估值`);
         } else {
           this.$message.success(`${selectedMethodLabel}完成`);
@@ -2633,6 +2645,24 @@ async openConfirmation() {
     return;
   }
 
+  if (!this.form.tradeMode) {
+    this.showError = true;
+    this.errorMessage = '请选择交易方式。';
+    return;
+  }
+
+  if (!(Number(this.form.price) > 0)) {
+    this.showError = true;
+    this.errorMessage = '请填写资产估值。';
+    return;
+  }
+
+  if (!this.form.isSellBody && !this.form.isSellReadRight && !this.form.isSellProcessRight) {
+    this.showError = true;
+    this.errorMessage = '请至少选择一项权益。';
+    return;
+  }
+
   // 分类分级是可选的：未执行模型分析时使用可登记的默认值，便于测试流程。
   if (!this.form.assetCategory) {
     this.form.assetCategory = '其他数据';
@@ -2645,6 +2675,19 @@ async openConfirmation() {
   if (!this.form.analysisResultText) {
     this.form.analysisResultText =
       '资产类别：其他数据；资产等级：一般数据（默认值）';
+  }
+
+  // 重要数据不能使用可信执行环境或代理重加密交付。
+  const isImportantData = [
+    this.form.assetCategory,
+    this.form.assetType,
+    this.form.analysisResultText
+  ].some((value) => String(value || '').includes('重要数据'));
+  const selectedPcType = String(this.form.pcType || '').trim().toUpperCase();
+  if (isImportantData && ['TEE', 'PRE'].includes(selectedPcType)) {
+    this.showError = true;
+    this.errorMessage = '分类分级结果为重要数据时，交付方式不能选择可信执行环境或代理重加密。';
+    return;
   }
 
   if (!this.form.industry) {
@@ -3070,7 +3113,6 @@ async gradeAssetLevel() {
       formData.append('can_sell_process', this.form.isSellProcessRight ? '1':'0');
       formData.append('can_sell_view', this.form.isSellReadRight ? '1':'0');
       formData.append('allow_resale', this.form.allow_resale); // 将 allow_resale 传递到后端
-      formData.append('model_selection', this.form.modelSelection);
       formData.append('pc_type', this.form.pcType);
       if (String(this.form.pcType || '').toUpperCase() === 'TEE' && (!this.form.teeDataFile || !this.form.teeWeightFile)) {
         this.errorMessage = 'TEE 资产必须同时选择 data.csv 和 weight.csv';
@@ -3189,8 +3231,7 @@ formData.append('trade_location', tradeLocation);
         picture: this.form.picture ? this.form.picture : '', // 确保有文件时传递路径
         isProxied: this.form.isProxied,
         number: this.form.quantity, // 数量
-         modelSelection: this.form.modelSelection,
-         
+        
         allowedLocations: allowedLocations.length ? allowedLocations : undefined, // 如果有交易地点则传入，没选则不传
       }
     };

@@ -50,11 +50,10 @@
             <table v-else class="styled-table table-hover-row">
               <thead>
                 <tr>
-                  <th class="nowrap">用户 ID</th>
                   <th>资产名称</th>
                   <th class="nowrap">安全等级</th>
                   <th>资产介绍</th>
-                  <th v-if="isSeller" class="nowrap">数量</th>
+                  <th v-if="isSeller" class="nowrap">剩余数量</th>
                   <!--<th>性质</th>-->
                   <th>状态</th>
                   <th>可出售权益</th> <!-- 新增字段 -->
@@ -66,24 +65,16 @@
               </thead>
              <tbody>
   <tr v-for="item in currentPageData" :key="item.id">
-    <td>{{ item.userId }}</td>
     <td>{{ item.assetName }}</td>
     <td>{{ item.assetType }}</td>
     <td class="center-cell">{{ item.description }}</td>
     <td v-if="isSeller" class="nowrap">{{ item.number }}</td>
     <!--<td class="nowrap">{{ isIndivisible(item.industry) ? '不可分割' : '可分割' }}</td>-->
     <td class="nowrap" :class="{
-      'gray-text': item.txperm === 0 || item.txperm === 1 || item.txperm === 2 || item.txperm === 9,
-      'green-text': item.txperm === 3,
+      'gray-text': Number(item.number) <= 0 || item.txperm !== 3,
+      'green-text': Number(item.number) > 0 && item.txperm === 3,
     }">
-      {{
-        item.txperm === 0 ? '已登记' :
-         // item.txperm === 1 ? '已登记' :
-           // item.txperm === 2 ? '已定价' :
-              item.txperm === 3 ? '开放交易' :
-               // item.txperm === 9 ? '锁定中' :
-                 '已登记'
-      }}
+      {{ Number(item.number) <= 0 ? '已售罄' : (item.txperm === 3 ? '开放交易' : '已登记') }}
     </td>
 
     <!-- 可出售权益字段，根据已购买或已登记资产来显示 -->
@@ -218,6 +209,13 @@
             <div class="form-group">
               <label for="asset-name-modal">资产名称</label>
               <input type="text" id="asset-name-modal" v-model="editAsset.assetName" />
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label for="asset-number-modal">可售数量</label>
+              <input id="asset-number-modal" type="number" min="0" step="1" v-model.number="editAsset.number" :disabled="editAsset.industry === 'WH'" />
+              <small style="color:#909399; display:block; margin-top:4px;">0 表示售罄；填写数量并选择“开放交易”后会重新上架。</small>
             </div>
           </div>
           <div class="form-row">
@@ -463,6 +461,7 @@ export default {
         address: '',
         user_id: '', // 新增字段
         txperm: '',
+        number: 1,
         customAlgorithm: '',
         industry: '',
         canSellAsset: false,   // 是否允许出售本体
@@ -2319,6 +2318,7 @@ updatePurchasedAssetsPagination() {
     openEditModal(asset) {
   this.editAsset = {
     ...asset,
+    number: Number(asset.number ?? 1),
     canSellAsset: !!asset.canSellAsset,
     canSellView: !!asset.canSellView,
     canSellProcess: !!asset.canSellProcess
@@ -2483,6 +2483,7 @@ async confirmEdit() {
         address: this.editAsset.address,
         userId: this.editAsset.userId,
         txperm: this.editAsset.txperm,
+        number: this.editAsset.number,
         can_sell_asset: this.editAsset.canSellAsset ? 1 : 0,   // 选中则传 1，未选中传 0
         can_sell_view: this.editAsset.canSellView ? 1 : 0,
         can_sell_process: this.editAsset.canSellProcess ? 1 : 0,
@@ -2751,65 +2752,59 @@ body {
   table-layout: fixed; /* 关键：固定表格布局 */
 }
 
-/* 设置各列固定宽度 */
-.styled-table th:nth-child(1), /* 资产哈希 */
+/* 设置各列固定宽度（卖家视角） */
+.styled-table th:nth-child(1), /* 资产名称 */
 .styled-table td:nth-child(1) {
-  width: 120px;
-  min-width: 120px;
+  width: 180px;
+  min-width: 180px;
 }
 
-.styled-table th:nth-child(2), /* 用户 ID */
+.styled-table th:nth-child(2), /* 安全等级 */
 .styled-table td:nth-child(2) {
-  width: 80px;
-  min-width: 80px;
-}
-
-.styled-table th:nth-child(3), /* 资产名称 */
-.styled-table td:nth-child(3) {
-  width: 100px;
-  min-width: 100px;
-}
-
-.styled-table th:nth-child(4), /* 安全等级 */
-.styled-table td:nth-child(4) {
-  width: 80px;
-  min-width: 80px;
-}
-
-.styled-table th:nth-child(5), /* 资产介绍 */
-.styled-table td:nth-child(5) {
-  width: 200px; /* 给资产介绍固定宽度 */
-  min-width: 200px;
-  max-width: 200px;
-  word-wrap: break-word;
-  white-space: normal;
-}
-
-.styled-table th:nth-child(6), /* 数量 */
-.styled-table td:nth-child(6) {
-  width: 80px;
-  min-width: 80px;
-}
-
-.styled-table th:nth-child(7), /* 性质 */
-.styled-table td:nth-child(7) {
   width: 90px;
   min-width: 90px;
 }
 
-.styled-table th:nth-child(8), /* 状态 */
-.styled-table td:nth-child(8) {
+.styled-table th:nth-child(3), /* 资产介绍 */
+.styled-table td:nth-child(3) {
+  width: 220px;
+  min-width: 220px;
+  max-width: 220px;
+  word-wrap: break-word;
+  white-space: normal;
+}
+
+.styled-table th:nth-child(4), /* 剩余数量 */
+.styled-table td:nth-child(4) {
+  width: 90px;
+  min-width: 90px;
+}
+
+.styled-table th:nth-child(5), /* 状态 */
+.styled-table td:nth-child(5) {
   width: 100px;
   min-width: 100px;
 }
 
-.styled-table th:nth-child(9), /* 可出售权益 - 固定宽度 */
-.styled-table td:nth-child(9) {
+.styled-table th:nth-child(6), /* 可出售权益 */
+.styled-table td:nth-child(6) {
   width: 120px;
   min-width: 120px;
   max-width: 120px;
   word-wrap: break-word;
   white-space: normal;
+}
+
+.styled-table th:nth-child(7), /* 编辑 */
+.styled-table td:nth-child(7) {
+  width: 70px;
+  min-width: 70px;
+}
+
+.styled-table th:nth-child(8), /* 代理托管 */
+.styled-table td:nth-child(8) {
+  width: 160px;
+  min-width: 160px;
 }
 
 
@@ -2834,8 +2829,8 @@ body {
 }
 
 /* 资产介绍和可出售权益的特殊处理 */
-.styled-table td:nth-child(5),
-.styled-table td:nth-child(9) {
+.styled-table td:nth-child(3),
+.styled-table td:nth-child(6) {
   text-align: center;
   vertical-align: middle;
   line-height: 1.4;
