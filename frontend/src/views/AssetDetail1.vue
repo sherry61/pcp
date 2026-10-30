@@ -99,13 +99,6 @@
       >
         产品详情
       </div>
-      <div
-        class="tab-item"
-        :class="{ active: activeTab === 'dataItems' }"
-        @click="activeTab = 'dataItems'"
-      >
-        数据项
-      </div>
       <!--<div
         class="tab-item"
         :class="{ active: activeTab === 'usageLimit' }"
@@ -120,21 +113,11 @@
       >
         用户指南
       </div>-->
-      <div
-        class="tab-item"
-        :class="{ active: activeTab === 'portrait' }"
-        @click="activeTab = 'portrait'"
-      >
-        产品画像
-      </div>
     </div>
 
     <div class="tab-body">
       <div v-if="activeTab === 'detail'">
         <p class="tab-text">{{ asset.description || '暂无产品详情' }}</p>
-      </div>
-
-      <div v-else-if="activeTab === 'dataItems'">
         <p class="tab-text">
           资产名称：{{ asset.asset_name || '暂无' }}
         </p>
@@ -143,12 +126,6 @@
         </p>
         <p class="tab-text">
           行业领域：{{ asset.industry_raw_name || industryMap[asset.industry] || '暂无' }}
-        </p>
-        <p class="tab-text">
-          算法信息：{{ asset.algorithm || '无' }}
-        </p>
-        <p class="tab-text">
-          自定义算法：{{ asset.custom_algorithm || '无' }}
         </p>
         <p class="tab-text">
           可售所有权：{{ asset.can_sell_asset ? '是' : '否' }}
@@ -182,15 +159,6 @@
         </p>
       </div>
 
-      <div v-else-if="activeTab === 'portrait'">
-        <div class="portrait-box">
-          <img
-            :src="`data:image/jpeg;base64,${asset.picture}`"
-            alt="产品画像"
-            class="portrait-image"
-          />
-        </div>
-      </div>
     </div>
   </div>
 </div>
@@ -1605,19 +1573,6 @@ body {
   color: #374151;
   line-height: 1.9;
   margin-bottom: 14px;
-}
-
-.portrait-box {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-}
-
-.portrait-image {
-  width: 320px;
-  max-width: 100%;
-  border-radius: 8px;
-  object-fit: cover;
 }
 
 /* ===== 弹窗遮罩 ===== */
