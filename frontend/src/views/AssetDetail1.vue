@@ -27,23 +27,29 @@
         <span v-if="asset.is_proxy" class="proxy-detail-tag">代理销售</span>
       </div>
 
-      <p class="asset-subtitle">
-        {{ asset.description || '暂无简介' }}
-      </p>
-
       <div class="asset-meta-row">
         <span class="meta-label">行业领域：</span>
         <span class="meta-value">{{ asset.industry_raw_name || industryMap[asset.industry] }}</span>
       </div>
 
       <div class="asset-meta-row">
-        <span class="meta-label">资产ID：</span>
-        <span class="meta-value hash-text">{{ asset.file_hash }}</span>
+        <span class="meta-label">资产类型：</span>
+        <span class="meta-value">{{ asset.asset_type || '暂无' }}</span>
       </div>
 
       <div class="asset-meta-row">
         <span class="meta-label">卖家：</span>
         <span class="meta-value">{{ asset.seller_username || asset.owner_username || '未知卖家' }}</span>
+      </div>
+
+      <div class="asset-meta-row">
+        <span class="meta-label">剩余数量：</span>
+        <span class="meta-value">{{ Number(asset.number ?? 0) }}</span>
+      </div>
+
+      <div class="asset-meta-row">
+        <span class="meta-label">交付方法：</span>
+        <span class="meta-value">{{ getPcTypeLabel(asset.pc_type) }}</span>
       </div>
 
       <div class="asset-price-row">
@@ -117,15 +123,6 @@
       <div v-if="activeTab === 'detail'">
         <p class="tab-text">{{ asset.description || '暂无产品详情' }}</p>
         <p class="tab-text">
-          资产名称：{{ asset.asset_name || '暂无' }}
-        </p>
-        <p class="tab-text">
-          资产类型：{{ asset.asset_type || '暂无' }}
-        </p>
-        <p class="tab-text">
-          行业领域：{{ asset.industry_raw_name || industryMap[asset.industry] || '暂无' }}
-        </p>
-        <p class="tab-text">
           可售所有权：{{ asset.can_sell_asset ? '是' : '否' }}
         </p>
         <p class="tab-text">
@@ -133,6 +130,9 @@
         </p>
         <p class="tab-text">
           可售使用权：{{ asset.can_sell_process ? '是' : '否' }}
+        </p>
+        <p class="tab-text">
+          资产ID：<span class="hash-text">{{ asset.file_hash }}</span>
         </p>
       </div>
 
@@ -1348,13 +1348,6 @@ body {
   font-weight: 500;
 }
 
-.asset-subtitle {
-  margin: 0 0 18px 0;
-  font-size: 17px;
-  color: #7b8794;
-  line-height: 1.8;
-}
-
 .asset-meta-row {
   margin-bottom: 14px;
   font-size: 16px;
@@ -1981,10 +1974,6 @@ body {
 
   .asset-title {
     font-size: 28px;
-  }
-
-  .asset-subtitle {
-    font-size: 16px;
   }
 
   .asset-meta-row {
