@@ -63,9 +63,7 @@
       </div>
 
       <div class="action-buttons">
-        <button class="share-button">分享</button>
         <button v-if="asset.trade_mode !== 'auction' || $route.query.auctionWinner === '1'" class="buy-button" @click="openPurchaseModal">{{ $route.query.auctionWinner === '1' ? '提交交易申请' : '申请购买' }}</button>
-        <button class="follow-button">收藏</button>
       </div>
     </div>
 
@@ -1427,9 +1425,7 @@ body {
   flex-wrap: wrap;
 }
 
-.share-button,
-.buy-button,
-.follow-button {
+.buy-button {
   min-width: 124px;
   height: 48px;
   border-radius: 8px;
@@ -1438,34 +1434,12 @@ body {
   cursor: pointer;
   border: none;
   transition: all 0.2s ease;
-}
-
-.share-button {
-  background: #fff;
-  color: #2a5bd7;
-  border: 1px solid #2a5bd7;
-}
-
-.share-button:hover {
-  background: #eef4ff;
-}
-
-.buy-button {
   background: #2a5bd7;
   color: #fff;
 }
 
 .buy-button:hover {
   background: #2048b0;
-}
-
-.follow-button {
-  background: #efbf4f;
-  color: #fff;
-}
-
-.follow-button:hover {
-  background: #dfa936;
 }
 
 /* ===== 右侧联系方式区域 ===== */
@@ -2148,11 +2122,6 @@ body {
   border-color: #007bff;
   color: #fff;
   cursor: pointer;
-}
-
-.follow-button {
-  padding: 10px 50px;
-  margin: 10px;
 }
 
 .transaction-table-container {
