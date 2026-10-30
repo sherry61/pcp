@@ -3063,7 +3063,18 @@ app.get('/api/available-assets', (req, res) => {
 
   app.get('/api/get-asset2', (req, res) => {
     // 查询最新的一条数据，按id排序
-    const query = 'SELECT asset_name, asset_type, email, address, description, algorithm, custom_algorithm, file_hash, industry, txperm, user_id, owner_address, current_owner_address, agent_addr, is_proxied, number, can_sell_asset, can_sell_view, can_sell_process FROM asset_registrations';
+    const query = `
+      SELECT ar.asset_name, ar.asset_type, ar.email, ar.address, ar.description,
+             ar.algorithm, ar.custom_algorithm, ar.file_hash, ar.industry, ar.txperm,
+             ar.user_id, ar.owner_address, ar.current_owner_address, ar.agent_addr,
+             ar.is_proxied, ar.number, ar.can_sell_asset, ar.can_sell_view, ar.can_sell_process,
+             (SELECT u.username
+              FROM certificate_registry cr
+              JOIN users u ON u.id = cr.user_id
+              WHERE cr.address = ar.agent_addr AND cr.user_id IS NOT NULL
+              LIMIT 1) AS agent_username
+      FROM asset_registrations ar
+    `;
     
     db.query(query, (err, results) => {
         if (err) {

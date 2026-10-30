@@ -102,7 +102,9 @@
   </template>
   <template v-else>
     <template v-if="isAssetProxied(item)">
-      <div class="proxy-owner-hint" :title="item.agentAddr">托管给 {{ shortenHash(item.agentAddr) }}</div>
+      <div class="proxy-owner-hint" :title="item.agentName ? `${item.agentName} (${item.agentAddr})` : item.agentAddr">
+        托管给用户 {{ item.agentName || shortenHash(item.agentAddr) }}
+      </div>
       <button
         type="button"
         class="edit-button revoke-button"
@@ -2319,6 +2321,7 @@ updatePurchasedAssetsPagination() {
             industry: item.industry,
             algorithm: item.algorithm,
             agentAddr: item.agent_addr,
+            agentName: item.agent_username,
             ownerAddress: item.current_owner_address || item.owner_address,
             userId: item.user_id,
             txperm: item.txperm,
