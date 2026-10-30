@@ -67,3 +67,9 @@ AGENTS.md
 
 # Independent front-end preview copy (demo only)
 frontend-progress-preview/
+
+# Local backend logic preview copy (contains its own env/storage)
+backend-logic-preview/
+
+# Local TEE demo model fixture
+demo_model.c
