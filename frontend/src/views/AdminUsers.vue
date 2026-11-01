@@ -12,7 +12,7 @@
             <el-button size="small" :loading="loading" @click="fetchUsers">刷新</el-button>
           </div>
 
-          <el-table :data="users" v-loading="loading" stripe style="width: 100%">
+          <el-table :data="pagedUsers" v-loading="loading" stripe style="width: 100%">
             <el-table-column prop="id" label="ID" width="70" />
             <el-table-column prop="username" label="用户名" min-width="120" />
             <el-table-column prop="email" label="邮箱" min-width="160" />
@@ -33,6 +33,18 @@
               </template>
             </el-table-column>
           </el-table>
+
+          <div class="pagination-row">
+            <el-pagination
+              background
+              layout="total, sizes, prev, pager, next"
+              :total="users.length"
+              :page-sizes="[10, 20, 50]"
+              v-model:current-page="page"
+              v-model:page-size="pageSize"
+              @size-change="page = 1"
+            />
+          </div>
         </section>
 
         <section class="panel">
@@ -152,9 +164,17 @@ export default {
         auditor_target: ''
       },
       saving: false,
+      page: 1,
+      pageSize: 10,
       nodeForms: {},
       nodeSaving: {}
     };
+  },
+  computed: {
+    pagedUsers() {
+      const start = (this.page - 1) * this.pageSize;
+      return this.users.slice(start, start + this.pageSize);
+    }
   },
   mounted() {
     this.fetchUsers();
@@ -299,19 +319,29 @@ export default {
 .admin-users-page {
   width: 100%;
   height: 100%;
+  overflow: hidden;
   background: #f5f7fb;
 }
 
 .main-content {
   display: flex;
-  min-height: calc(100vh - 64px);
+  height: calc(100vh - 64px);
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .content {
   flex: 1;
+  min-width: 0;
   padding: 24px 28px;
   max-width: 1280px;
   box-sizing: border-box;
+}
+
+.pagination-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 .page-title {

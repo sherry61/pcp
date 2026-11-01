@@ -4,13 +4,11 @@
       <div class="logo">
 
   {{
-    loginRole === 'user'
-      ? '数字资产流通系统'
-      : loginRole === 'regulator'
+    loginRole === 'regulator'
       ? '数字资产监管平台'
       : loginRole === 'auditor'
       ? '数字资产审计平台'
-      : '数字资产流通系统 · 管理'
+      : '数字资产流通系统'
   }}
 
 </div>
