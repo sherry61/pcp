@@ -2284,12 +2284,8 @@ updatePurchasedAssetsPagination() {
     //////////////////////////////////////////////////////////
     // 获取资产数据的方法
     fetchAssetData() {
-      // 判断是否为管理员
-      if (this.username === 'rrrao' || this.username === 'liu') {
-        this.isAdmin = true;
-      } else {
-        this.isAdmin = false;
-      }
+      // 判断是否为管理员：角色来自登录接口
+      this.isAdmin = localStorage.getItem('login_role') === 'admin';
       // 获取资产数据
       return axios.get(`http://10.112.191.163:3000/api/get-asset2`)
         .then(response => {

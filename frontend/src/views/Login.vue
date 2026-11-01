@@ -12,50 +12,6 @@
           <input type="password" v-model="password" id="password" required />
         </div>
 
-        <div class="form-group">
-  <label>登录身份:</label>
-
-  <div class="role-group">
-    <label class="role-item">
-      <input
-        type="radio"
-        value="user"
-        v-model="loginRole"
-      />
-      普通用户
-    </label>
-
-    <label class="role-item">
-      <input
-        type="radio"
-        value="regulator"
-        v-model="loginRole"
-      />
-      监管方
-    </label>
-
-    <label
-      class="role-item"
-    >
-      <input
-        type="radio"
-        value="auditor"
-        v-model="loginRole"
-      />
-      审计方
-    </label>
-
-    <label class="role-item">
-      <input
-        type="radio"
-        value="admin"
-        v-model="loginRole"
-      />
-      管理员
-    </label>
-  </div>
-</div>
-
         <button type="submit" class="login-button" :disabled="loading">
           {{ loading ? "登录中..." : "登录" }}
         </button>
@@ -75,8 +31,6 @@ export default {
     username: "",
     password: "",
 
-    loginRole: "user",
-
     loading: false
     // userIP: "" // IP 归属地功能已停用
   }
@@ -95,66 +49,82 @@ export default {
       return response.data?.entry_url;
     },
 
+    async enterAuditTarget(target, token) {
+      if (!target) {
+        alert('管理员尚未分配审计入口，请联系管理员');
+        return;
+      }
+
+      if (target === 'HUB') {
+        const pamEntryUrl = await this.fetchPamEntryUrl(token);
+        if (!pamEntryUrl) {
+          throw new Error('审计平台未返回跳转地址');
+        }
+        window.location.href = pamEntryUrl;
+        return;
+      }
+
+      if (String(target).startsWith('NODE:')) {
+        const response = await axios.post(
+          'http://10.112.191.163:3000/api/pam/node-ticket',
+          { node_id: String(target).slice(5) },
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!response.data?.url) {
+          throw new Error(response.data?.message || '生成审计节点入口失败');
+        }
+        const launchPath = response.data.url;
+        // HTTPS 页面下走 devServer 的 /node-api 同源代理，避免混合内容拦截。
+        window.location.href = window.location.protocol === 'https:'
+          ? `/node-api${launchPath}`
+          : `http://10.112.191.163:3000${launchPath}`;
+        return;
+      }
+
+      throw new Error('管理员分配的审计入口无效，请联系管理员');
+    },
+
     async login() {
       this.loading = true; // 启用加载状态
       try {
-        // 1. 发送登录请求
         const response = await axios.post("http://10.112.191.163:3000/api/login", {
           username: this.username,
           password: this.password,
         });
 
-        console.log("登录成功", response.data);
-        localStorage.setItem("token", response.data.token);
-        localStorage.setItem( "login_role", this.loginRole);
-        if (this.loginRole === 'admin') {
-          localStorage.setItem('user_role', 'admin');
-        } else if (this.loginRole === 'regulator') {
-          localStorage.setItem('user_role', 'buyer');
-        } else if (!localStorage.getItem('user_role')) {
-          localStorage.setItem('user_role', 'buyer');
-        }
+        const token = response.data.token;
+        const user = response.data.user || {};
+        const role = String(user.role || 'USER').toUpperCase();
+        const tradeRole = String(user.trade_role || 'BOTH').toUpperCase();
+
+        localStorage.setItem("token", token);
+        localStorage.setItem("login_role", role.toLowerCase());
+        localStorage.setItem(
+          'user_role',
+          role === 'USER' && tradeRole === 'SELLER' ? 'seller' : 'buyer'
+        );
 
         // IP 归属地记录已停用：GoSDK /pre/Ipaddr 只查日志，不落库
         // await this.getUserIP();
         // await this.sendIPToBackend();
 
-        // 4. 跳转到主页
-        if (this.loginRole === 'user') {
-
-  localStorage.setItem(
-    'user_role',
-    'buyer'
-  );
-
-  this.$router.push({
-    path: '/market'
-  });
-
-} else if (
-  this.loginRole === 'regulator'
-) {
-
-  this.$router.push({
-    name: 'Supervision'
-  });
-} else if (this.loginRole === 'admin') {
-  this.$router.push({
-    name: 'Home'
-  });
-} else if (
-  this.loginRole === 'auditor'
-) {
-  const pamEntryUrl = await this.fetchPamEntryUrl(response.data.token);
-  if (!pamEntryUrl) {
-    throw new Error('未获取到审计平台跳转地址');
-  }
-  window.location.href = pamEntryUrl;
-
-}
+        if (role === 'ADMIN') {
+          this.$router.push({ name: 'AdminUsers' });
+        } else if (role === 'REGULATOR') {
+          this.$router.push({ name: 'Supervision' });
+        } else if (role === 'AUDITOR') {
+          await this.enterAuditTarget(user.auditor_target, token);
+        } else {
+          this.$router.push({ path: '/market' });
+        }
       } catch (error) {
         console.error("登录失败", error.response?.data);
-        alert(error.response?.data?.error || "登录失败，请检查用户名和密码");
+        alert(
+          error.response?.data?.error ||
+          error.response?.data?.message ||
+          error.message ||
+          "登录失败，请检查用户名和密码"
+        );
       } finally {
         this.loading = false; // 结束加载状态
       }

@@ -27,6 +27,7 @@
 
     <template v-if="isAdministrator">
       <router-link to="/home">主页</router-link>
+      <router-link to="/admin/users">用户与角色管理</router-link>
     </template>
 
     <template v-else-if="isRegulator">
@@ -152,15 +153,10 @@ export default {
               this.setUserId(this.userId);
               console.log('获取的用户ID:', this.userId);
 
-              // 判断是否是管理员
-              if (this.username === 'rrrao' || this.username === 'liu') {
-                this.setAdminStatus(true); // 使用 Vuex mutation 更新状态
-                console.log('管理员状态设置为: true');
-                this.isAdminVisible = true; // 只有确认是管理员后才设置为 true
-              } else {
-                this.setAdminStatus(false); // 使用 Vuex mutation 更新状态
-                console.log('管理员状态设置为: false');
-              }
+              // 角色由登录接口返回，前端不再按用户名硬编码管理员
+              const isAdmin = localStorage.getItem('login_role') === 'admin';
+              this.setAdminStatus(isAdmin);
+              this.isAdminVisible = isAdmin;
             } else {
               console.error('获取用户ID失败:', response.data);
             }

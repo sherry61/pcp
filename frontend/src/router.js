@@ -12,6 +12,7 @@ import AdminDashboard from '@/views/AdminDashboard.vue'
 import Login from '@/views/Login.vue'
 import Register from '@/views/Register.vue'
 import UserManagement from './views/UserManagement.vue' 
+import AdminUsers from './views/AdminUsers.vue'
 import UserCenter from './views/UserCenter.vue'
 import AssetPictureView from './views/AssetPictureView.vue'
 import AssetDetail from './views/AssetDetail1.vue'
@@ -57,6 +58,7 @@ const routes = [
   //{ path: '/market/details', component: MarketDetails, meta: { requiresAuth: true } },
   { path: '/permission-management', component: PermissionManagementView, meta: { requiresAuth: true } },
   { path: '/admin-dashboard', component: AdminDashboard, meta: { requiresAuth: true } },
+  { path: '/admin/users', name: 'AdminUsers', component: AdminUsers, meta: { requiresAuth: true, requiresAdmin: true } },
   { path: '/user-management', component: UserManagement, meta: { requiresAuth: true } },
   //{ path: '/user-center', component:UserCenter, meta: { requiresAuth: true } },
   { path: '/asset-picture', component: AssetPictureView, meta: { requiresAuth: true } },
@@ -79,12 +81,6 @@ const routes = [
   */
  redirect: () => {
     const role = localStorage.getItem('user_role') || 'seller';
-
-    if (role === 'auditor') {
-      window.location.href = 'http://10.112.191.163:8081';
-      return '/login';
-    }
-
     return role === 'seller' ? '/delivery/seller' : '/delivery/buyer';
   },
   meta: { requiresAuth: true, roles: ['buyer','seller','auditor'] }
@@ -123,8 +119,12 @@ router.beforeEach((to, from, next) => {
   const token = localStorage.getItem('token');
   //const role = localStorage.getItem('user_role') || 'buyer';
 
-  // 管理员当前仅开放主页，访问其他系统页面时统一回到主页。
-  if (loginRole === 'admin' && to.name !== 'Home' && to.name !== 'Login') {
+  // 管理员只开放主页和用户与角色管理。
+  const adminAllowedRoutes = ['Home', 'Login', 'AdminUsers'];
+  if (loginRole === 'admin' && !adminAllowedRoutes.includes(to.name)) {
+    return next('/home');
+  }
+  if (to.meta.requiresAdmin && loginRole !== 'admin') {
     return next('/home');
   }
 

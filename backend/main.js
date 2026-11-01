@@ -238,6 +238,110 @@ function dbQuery(sql, params = []) {
   });
 }
 
+// ===== 角色与审计节点凭据 =====
+
+const PAM_NODE_CREDENTIAL_KEY_HEX = process.env.PAM_NODE_CREDENTIAL_KEY || '';
+
+function getNodeCredentialKey() {
+  if (!/^[0-9a-fA-F]{64}$/.test(PAM_NODE_CREDENTIAL_KEY_HEX)) {
+    throw new Error('PAM_NODE_CREDENTIAL_KEY 未配置或长度不是 32 字节');
+  }
+  return Buffer.from(PAM_NODE_CREDENTIAL_KEY_HEX, 'hex');
+}
+
+function encryptSecret(plainText) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', getNodeCredentialKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(String(plainText), 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return [iv.toString('hex'), tag.toString('hex'), encrypted.toString('hex')].join(':');
+}
+
+function decryptSecret(payload) {
+  const parts = String(payload || '').split(':');
+  if (parts.length !== 3) throw new Error('节点凭据格式无效');
+  const [ivHex, tagHex, dataHex] = parts;
+  const decipher = crypto.createDecipheriv(
+    'aes-256-gcm',
+    getNodeCredentialKey(),
+    Buffer.from(ivHex, 'hex')
+  );
+  decipher.setAuthTag(Buffer.from(tagHex, 'hex'));
+  return Buffer.concat([
+    decipher.update(Buffer.from(dataHex, 'hex')),
+    decipher.final()
+  ]).toString('utf8');
+}
+
+function escapeHtml(value) {
+  return String(value == null ? '' : value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+let pamNodeCache = { at: 0, nodes: [] };
+async function fetchPamNodes(force = false) {
+  if (!force && Date.now() - pamNodeCache.at < 30 * 1000) {
+    return pamNodeCache.nodes;
+  }
+  const result = await hubApiFetch('/hub/web/node-directory');
+  const nodes = Array.isArray(result.nodes) ? result.nodes : [];
+  pamNodeCache = { at: Date.now(), nodes };
+  return nodes;
+}
+
+const pamNodeTickets = new Map();
+function createPamNodeTicket(userId, nodeId) {
+  const ticket = crypto.randomBytes(24).toString('hex');
+  pamNodeTickets.set(ticket, {
+    userId,
+    nodeId,
+    expiresAt: Date.now() + 60 * 1000
+  });
+  return ticket;
+}
+
+function takePamNodeTicket(ticket) {
+  const item = pamNodeTickets.get(ticket);
+  if (!item) return null;
+  pamNodeTickets.delete(ticket);
+  if (item.expiresAt < Date.now()) return null;
+  return item;
+}
+
+function extractBearerToken(req) {
+  const header = req.headers.authorization || '';
+  if (/^Bearer\s+/i.test(header)) return header.replace(/^Bearer\s+/i, '');
+  return null;
+}
+
+function requireRoles(...allowedRoles) {
+  return async (req, res, next) => {
+    try {
+      const token = extractBearerToken(req);
+      if (!token) return res.status(401).json({ message: '缺少登录令牌' });
+      const claims = jwt.verify(token, secretKey);
+      const rows = await dbQuery(
+        'SELECT id, username, role, trade_role, auditor_target FROM users WHERE id = ? LIMIT 1',
+        [claims.id]
+      );
+      if (!rows.length) return res.status(401).json({ message: '用户不存在' });
+      const user = rows[0];
+      const role = String(user.role || 'USER').toUpperCase();
+      if (!allowedRoles.includes(role)) {
+        return res.status(403).json({ message: '当前账号没有访问权限' });
+      }
+      req.authUser = { ...user, role };
+      next();
+    } catch (error) {
+      return res.status(401).json({ message: '登录已过期，请重新登录' });
+    }
+  };
+}
+
 function firstDefined(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null && value !== '') {
@@ -462,7 +566,7 @@ module.exports = { sm4CbcEncryptCompat };
 
 app.use(cors({
   origin: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
@@ -2123,25 +2227,60 @@ app.post('/api/login', (req, res) => {
             return res.status(400).json({ error: '用户名或密码错误' });
         }
 
-        // 生成 JWT 令牌
-        const token = jwt.sign({ id: user.id, username: user.username }, secretKey, { expiresIn: '1h' });
+        const role = String(user.role || 'USER').toUpperCase();
+        const tradeRole = String(user.trade_role || 'BOTH').toUpperCase();
 
-        rlog.info('登录成功', { username, userId: user.id });
-        res.json({ message: '登录成功', token });
+        // 生成 JWT 令牌
+        const token = jwt.sign(
+            { id: user.id, username: user.username, role },
+            secretKey,
+            { expiresIn: '1h' }
+        );
+
+        rlog.info('登录成功', { username, userId: user.id, role });
+        res.json({
+            message: '登录成功',
+            token,
+            user: {
+                id: user.id,
+                username: user.username,
+                role,
+                trade_role: tradeRole,
+                auditor_target: user.auditor_target || null
+            }
+        });
     });
 });
 
-app.all('/api/pam/entry-start', (req, res) => {
+app.all('/api/pam/entry-start', async (req, res) => {
     const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.body?.token || req.query.token;
 
     if (!token) {
         return res.status(401).json({ error: '缺少登录令牌' });
     }
 
+    let claims;
     try {
-        jwt.verify(token, secretKey);
+        claims = jwt.verify(token, secretKey);
     } catch (error) {
         return res.status(401).json({ error: '登录已过期，请重新登录' });
+    }
+
+    try {
+        const rows = await dbQuery(
+            'SELECT role, auditor_target FROM users WHERE id = ? LIMIT 1',
+            [claims.id]
+        );
+        const user = rows[0];
+        const role = String(user?.role || 'USER').toUpperCase();
+        if (!user || !['AUDITOR', 'ADMIN'].includes(role)) {
+            return res.status(403).json({ error: '当前账号没有审计入口权限' });
+        }
+        if (role === 'AUDITOR' && String(user.auditor_target || '') !== 'HUB') {
+            return res.status(403).json({ error: '管理员尚未分配 Hub 审计入口' });
+        }
+    } catch (error) {
+        return res.status(500).json({ error: '校验审计权限失败' });
     }
 
     if (!HUB_WEB_ORIGIN || !HUB_TRADING_TOKEN) {
@@ -2208,6 +2347,286 @@ app.get(PAM_TRADING_AUTHORIZE_PATH, async (req, res) => {
     }
 });
 
+
+// ===== 审计节点目录与管理员角色分配 =====
+
+app.get('/api/pam/nodes', requireRoles('ADMIN', 'AUDITOR'), async (req, res) => {
+    try {
+        const nodes = await fetchPamNodes(true);
+        return res.json({ nodes });
+    } catch (error) {
+        console.error('获取审计节点目录失败:', error.message);
+        return res.status(502).json({ message: '获取审计节点目录失败' });
+    }
+});
+
+app.get('/api/admin/users', requireRoles('ADMIN'), async (req, res) => {
+    try {
+        const users = await dbQuery(
+            `SELECT id, username, email, role, trade_role, auditor_target, created_at
+             FROM users
+             ORDER BY id ASC`
+        );
+        return res.json({ users });
+    } catch (error) {
+        console.error('查询用户角色失败:', error.message);
+        return res.status(500).json({ message: '查询用户角色失败' });
+    }
+});
+
+app.patch('/api/admin/users/:id/role', requireRoles('ADMIN'), async (req, res) => {
+    const userId = Number(req.params.id);
+    const role = String(req.body?.role || '').toUpperCase();
+    const tradeRole = String(req.body?.trade_role || 'BOTH').toUpperCase();
+    let auditorTarget = String(req.body?.auditor_target || '').trim();
+
+    if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ message: '无效的用户 ID' });
+    }
+    if (!['USER', 'REGULATOR', 'AUDITOR', 'ADMIN'].includes(role)) {
+        return res.status(400).json({ message: '无效的角色' });
+    }
+    if (!['BUYER', 'SELLER', 'BOTH'].includes(tradeRole)) {
+        return res.status(400).json({ message: '无效的交易模式' });
+    }
+    if (auditorTarget && auditorTarget !== 'HUB' && !auditorTarget.startsWith('NODE:')) {
+        return res.status(400).json({ message: '审计入口必须是 HUB 或 NODE:<node_id>' });
+    }
+    if (role !== 'AUDITOR') {
+        auditorTarget = '';
+    }
+    if (auditorTarget.startsWith('NODE:')) {
+        const nodeId = auditorTarget.slice(5);
+        try {
+            const nodes = await fetchPamNodes(true);
+            if (!nodes.some((node) => node.node_id === nodeId)) {
+                return res.status(400).json({ message: '审计节点不存在或未启用' });
+            }
+        } catch (error) {
+            return res.status(502).json({ message: '获取审计节点目录失败' });
+        }
+    }
+
+    try {
+        const rows = await dbQuery('SELECT id, username, role FROM users WHERE id = ? LIMIT 1', [userId]);
+        if (!rows.length) {
+            return res.status(404).json({ message: '用户不存在' });
+        }
+        if (rows[0].role === 'ADMIN' && role !== 'ADMIN') {
+            const adminRows = await dbQuery("SELECT COUNT(*) AS total FROM users WHERE role = 'ADMIN'");
+            if (Number(adminRows[0]?.total || 0) <= 1) {
+                return res.status(409).json({ message: '不能降级最后一个管理员' });
+            }
+        }
+
+        await dbQuery(
+            `UPDATE users
+             SET role = ?, trade_role = ?, auditor_target = ?
+             WHERE id = ?`,
+            [role, tradeRole, auditorTarget || null, userId]
+        );
+
+        return res.json({
+            success: true,
+            user: {
+                id: userId,
+                username: rows[0].username,
+                role,
+                trade_role: tradeRole,
+                auditor_target: auditorTarget || null
+            }
+        });
+    } catch (error) {
+        console.error('更新用户角色失败:', error.message);
+        return res.status(500).json({ message: '更新用户角色失败' });
+    }
+});
+
+app.get('/api/admin/nodes', requireRoles('ADMIN'), async (req, res) => {
+    try {
+        const nodes = await fetchPamNodes(true);
+        const credentialRows = await dbQuery(
+            'SELECT node_id, node_name, username, updated_at FROM pam_node_credentials'
+        );
+        const credentialMap = new Map(credentialRows.map((row) => [row.node_id, row]));
+        const result = nodes.map((node) => {
+            const credential = credentialMap.get(node.node_id);
+            return {
+                ...node,
+                has_credentials: Boolean(credential),
+                username: credential?.username || '',
+                credentials_updated_at: credential?.updated_at || null
+            };
+        });
+        return res.json({ nodes: result });
+    } catch (error) {
+        console.error('查询节点凭据失败:', error.message);
+        return res.status(502).json({ message: '查询节点凭据失败' });
+    }
+});
+
+app.post('/api/admin/nodes/:nodeId/credentials', requireRoles('ADMIN'), async (req, res) => {
+    const nodeId = String(req.params.nodeId || '').trim();
+    const username = String(req.body?.username || '').trim();
+    const password = String(req.body?.password || '');
+
+    if (!nodeId || !username) {
+        return res.status(400).json({ message: '缺少节点 ID 或节点账号' });
+    }
+
+    try {
+        const nodes = await fetchPamNodes(true);
+        const node = nodes.find((item) => item.node_id === nodeId);
+        if (!node) {
+            return res.status(404).json({ message: '节点不存在或未启用' });
+        }
+
+        const existing = await dbQuery(
+            'SELECT node_id FROM pam_node_credentials WHERE node_id = ? LIMIT 1',
+            [nodeId]
+        );
+
+        if (!existing.length) {
+            if (!password) {
+                return res.status(400).json({ message: '首次配置节点凭据时必须填写密码' });
+            }
+            await dbQuery(
+                `INSERT INTO pam_node_credentials (node_id, node_name, username, password_enc)
+                 VALUES (?, ?, ?, ?)`,
+                [nodeId, node.node_name || nodeId, username, encryptSecret(password)]
+            );
+        } else if (password) {
+            await dbQuery(
+                `UPDATE pam_node_credentials
+                 SET node_name = ?, username = ?, password_enc = ?
+                 WHERE node_id = ?`,
+                [node.node_name || nodeId, username, encryptSecret(password), nodeId]
+            );
+        } else {
+            await dbQuery(
+                `UPDATE pam_node_credentials
+                 SET node_name = ?, username = ?
+                 WHERE node_id = ?`,
+                [node.node_name || nodeId, username, nodeId]
+            );
+        }
+
+        return res.json({ success: true, message: '节点凭据已保存' });
+    } catch (error) {
+        console.error('保存节点凭据失败:', error.message);
+        return res.status(500).json({ message: '保存节点凭据失败' });
+    }
+});
+
+app.post('/api/pam/node-ticket', requireRoles('ADMIN', 'AUDITOR'), async (req, res) => {
+    const authUser = req.authUser;
+    let nodeId = '';
+
+    if (authUser.role === 'ADMIN' && req.body?.node_id) {
+        nodeId = String(req.body.node_id).trim();
+    } else {
+        const target = String(authUser.auditor_target || '');
+        if (!target.startsWith('NODE:')) {
+            return res.status(400).json({ message: '管理员尚未分配审计节点入口' });
+        }
+        nodeId = target.slice(5);
+    }
+
+    if (!nodeId) {
+        return res.status(400).json({ message: '缺少审计节点' });
+    }
+
+    try {
+        const nodes = await fetchPamNodes(true);
+        const node = nodes.find((item) => item.node_id === nodeId);
+        if (!node) {
+            return res.status(404).json({ message: '审计节点不存在或未启用' });
+        }
+
+        const credentials = await dbQuery(
+            'SELECT node_id FROM pam_node_credentials WHERE node_id = ? LIMIT 1',
+            [nodeId]
+        );
+        if (!credentials.length) {
+            return res.status(503).json({ message: '该节点的查看凭据尚未配置，请联系管理员' });
+        }
+
+        const ticket = createPamNodeTicket(authUser.id, nodeId);
+        return res.json({
+            success: true,
+            node: { node_id: node.node_id, node_name: node.node_name, online: node.online },
+            url: `/api/pam/node-launch?ticket=${encodeURIComponent(ticket)}`
+        });
+    } catch (error) {
+        console.error('生成审计节点跳转失败:', error.message);
+        return res.status(502).json({ message: '生成审计节点跳转失败' });
+    }
+});
+
+app.get('/api/pam/node-launch', async (req, res) => {
+    const ticket = String(req.query.ticket || '').trim();
+    const item = ticket ? takePamNodeTicket(ticket) : null;
+
+    res.set('Cache-Control', 'no-store');
+    res.set('Referrer-Policy', 'no-referrer');
+
+    if (!item) {
+        return res.status(400).type('html').send(
+            '<!doctype html><meta charset="utf-8"><p>审计入口已过期，请返回交易系统重新进入。</p>'
+        );
+    }
+
+    try {
+        const nodes = await fetchPamNodes(true);
+        const node = nodes.find((entry) => entry.node_id === item.nodeId);
+        if (!node || !node.web_origin) {
+            throw new Error('审计节点不存在或缺少页面地址');
+        }
+
+        const credentialRows = await dbQuery(
+            'SELECT username, password_enc FROM pam_node_credentials WHERE node_id = ? LIMIT 1',
+            [item.nodeId]
+        );
+        if (!credentialRows.length) {
+            throw new Error('该节点的查看凭据尚未配置');
+        }
+
+        const username = credentialRows[0].username;
+        const password = decryptSecret(credentialRows[0].password_enc);
+        const action = `${String(node.web_origin).replace(/\/$/, '')}/auditor/web/login`;
+
+        const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <title>正在进入审计节点</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: flex; min-height: 100vh; align-items: center; justify-content: center; color: #374151; background: #f8fafc; }
+    .box { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 28px 34px; box-shadow: 0 10px 30px rgba(15, 23, 42, .08); text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <p>正在进入 ${escapeHtml(node.node_name || node.node_id)}…</p>
+    <form id="node-login-form" method="post" action="${escapeHtml(action)}">
+      <input type="hidden" name="username" value="${escapeHtml(username)}">
+      <input type="hidden" name="password" value="${escapeHtml(password)}">
+      <noscript><button type="submit">继续进入节点</button></noscript>
+    </form>
+  </div>
+  <script>document.getElementById('node-login-form').submit();</script>
+</body>
+</html>`;
+
+        return res.type('html').send(html);
+    } catch (error) {
+        console.error('审计节点自动登录失败:', error.message);
+        return res.status(500).type('html').send(
+            `<!doctype html><meta charset="utf-8"><p>审计节点登录失败：${escapeHtml(error.message)}</p>`
+        );
+    }
+});
 
 // 查询资产的API端点
 app.get('/api/query-asset-hash', (req, res) => {
