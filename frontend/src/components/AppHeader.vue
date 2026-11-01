@@ -34,7 +34,7 @@
   </select>
 </div>
 
-      <span class="welcome-text">欢迎, {{ displayUsername }} (ID: {{ displayUserId }})</span>
+      <span class="welcome-text">欢迎, {{ displayUsername }}</span>
 
       <button @click="logout">登出</button>
     </div>
@@ -60,9 +60,6 @@ export default {
     },
     displayUsername() {
       return this.username || localStorage.getItem('username') || '用户';
-    },
-    displayUserId() {
-      return this.userId || localStorage.getItem('userId') || '-';
     }
   },
   
