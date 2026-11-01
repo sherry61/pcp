@@ -613,7 +613,7 @@ export default {
     bridgeMetaDesc: 'mint after peer burn',
 
     // CB-Out 需要
-    bridgeToEvm: '',            // CB-Out 的 to（示例是 0x...）
+    bridgeToEvm: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8', // CB-Out 的 to（EVM 接收地址）
     bridgeOwnerAddress: 'db15ba88c399e2998ebd65e4c127db31b1b37d34', // CB-Out 的 ownerAddress（必须是证书地址）
 
     bridgeSubmitting: false,
@@ -912,7 +912,7 @@ if (this.role === 'buyer') {
     this.bridgeSubmitting = false;
 
     this.bridgeToChainmaker = 'db15ba88c399e2998ebd65e4c127db31b1b37d34';
-    this.bridgeToEvm = '';
+    this.bridgeToEvm = '0x70997970C51812dc3A010C7d01b50e0d17dc79C8';
     this.bridgeOwnerAddress = 'db15ba88c399e2998ebd65e4c127db31b1b37d34';
 
     // 你原来的 UI 字段如果还要保留也行
