@@ -2182,7 +2182,9 @@ app.post('/api/register', async (req, res) => {
 
         // 插入新用户数据
         const insertUserQuery = 'INSERT INTO users (username, password, email, phone_number, address) VALUES (?, ?, ?, ?, ?)';
-        db.query(insertUserQuery, [username, hashedPassword, email || null, phoneNumber || null, address || null], (err, results) => {
+        // users.email 是 NOT NULL，注册页邮箱可以留空，这里用空字符串兜底。
+        const safeEmail = String(email || '').trim() || '';
+        db.query(insertUserQuery, [username, hashedPassword, safeEmail, phoneNumber || null, address || null], (err, results) => {
             if (err) {
                 console.error('插入数据失败:', err);
                 return res.status(500).json({ error: '服务器内部错误' });
