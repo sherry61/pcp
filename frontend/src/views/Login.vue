@@ -95,16 +95,12 @@ export default {
         const token = response.data.token;
         const user = response.data.user || {};
         const role = String(user.role || 'USER').toUpperCase();
-        const tradeRole = String(user.trade_role || 'BOTH').toUpperCase();
 
         localStorage.setItem("token", token);
         localStorage.setItem("login_role", role.toLowerCase());
         localStorage.setItem("username", user.username || this.username);
         localStorage.setItem("userId", String(user.id || ''));
-        localStorage.setItem(
-          'user_role',
-          role === 'USER' && tradeRole === 'SELLER' ? 'seller' : 'buyer'
-        );
+        localStorage.setItem('user_role', 'buyer');
 
         // IP 归属地记录已停用：GoSDK /pre/Ipaddr 只查日志，不落库
         // await this.getUserIP();

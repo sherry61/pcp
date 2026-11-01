@@ -325,7 +325,7 @@ function requireRoles(...allowedRoles) {
       if (!token) return res.status(401).json({ message: '缺少登录令牌' });
       const claims = jwt.verify(token, secretKey);
       const rows = await dbQuery(
-        'SELECT id, username, role, trade_role, auditor_target FROM users WHERE id = ? LIMIT 1',
+        'SELECT id, username, role, auditor_target FROM users WHERE id = ? LIMIT 1',
         [claims.id]
       );
       if (!rows.length) return res.status(401).json({ message: '用户不存在' });
@@ -2228,7 +2228,6 @@ app.post('/api/login', (req, res) => {
         }
 
         const role = String(user.role || 'USER').toUpperCase();
-        const tradeRole = String(user.trade_role || 'BOTH').toUpperCase();
 
         // 生成 JWT 令牌
         const token = jwt.sign(
@@ -2245,7 +2244,6 @@ app.post('/api/login', (req, res) => {
                 id: user.id,
                 username: user.username,
                 role,
-                trade_role: tradeRole,
                 auditor_target: user.auditor_target || null
             }
         });
@@ -2363,7 +2361,7 @@ app.get('/api/pam/nodes', requireRoles('ADMIN', 'AUDITOR'), async (req, res) => 
 app.get('/api/admin/users', requireRoles('ADMIN'), async (req, res) => {
     try {
         const users = await dbQuery(
-            `SELECT id, username, email, role, trade_role, auditor_target, created_at
+            `SELECT id, username, email, role, auditor_target, created_at
              FROM users
              ORDER BY id ASC`
         );
@@ -2377,7 +2375,6 @@ app.get('/api/admin/users', requireRoles('ADMIN'), async (req, res) => {
 app.patch('/api/admin/users/:id/role', requireRoles('ADMIN'), async (req, res) => {
     const userId = Number(req.params.id);
     const role = String(req.body?.role || '').toUpperCase();
-    const tradeRole = String(req.body?.trade_role || 'BOTH').toUpperCase();
     let auditorTarget = String(req.body?.auditor_target || '').trim();
 
     if (!Number.isInteger(userId) || userId <= 0) {
@@ -2385,9 +2382,6 @@ app.patch('/api/admin/users/:id/role', requireRoles('ADMIN'), async (req, res) =
     }
     if (!['USER', 'REGULATOR', 'AUDITOR', 'ADMIN'].includes(role)) {
         return res.status(400).json({ message: '无效的角色' });
-    }
-    if (!['BUYER', 'SELLER', 'BOTH'].includes(tradeRole)) {
-        return res.status(400).json({ message: '无效的交易模式' });
     }
     if (auditorTarget && auditorTarget !== 'HUB' && !auditorTarget.startsWith('NODE:')) {
         return res.status(400).json({ message: '审计入口必须是 HUB 或 NODE:<node_id>' });
@@ -2421,9 +2415,9 @@ app.patch('/api/admin/users/:id/role', requireRoles('ADMIN'), async (req, res) =
 
         await dbQuery(
             `UPDATE users
-             SET role = ?, trade_role = ?, auditor_target = ?
+             SET role = ?, auditor_target = ?
              WHERE id = ?`,
-            [role, tradeRole, auditorTarget || null, userId]
+            [role, auditorTarget || null, userId]
         );
 
         return res.json({
@@ -2432,7 +2426,6 @@ app.patch('/api/admin/users/:id/role', requireRoles('ADMIN'), async (req, res) =
                 id: userId,
                 username: rows[0].username,
                 role,
-                trade_role: tradeRole,
                 auditor_target: auditorTarget || null
             }
         });

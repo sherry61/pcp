@@ -21,9 +21,6 @@
                 <el-tag :type="roleTagType(row.role)" size="small">{{ roleLabel(row.role) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="交易模式" width="100">
-              <template #default="{ row }">{{ tradeLabel(row.trade_role) }}</template>
-            </el-table-column>
             <el-table-column label="审计入口" min-width="170">
               <template #default="{ row }">{{ targetLabel(row.auditor_target) }}</template>
             </el-table-column>
@@ -58,13 +55,6 @@
                 <el-option label="监管方" value="REGULATOR" />
                 <el-option label="审计方" value="AUDITOR" />
                 <el-option label="管理员" value="ADMIN" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="交易模式">
-              <el-select v-model="editUser.trade_role" style="width: 100%">
-                <el-option label="买家和卖家" value="BOTH" />
-                <el-option label="买家" value="BUYER" />
-                <el-option label="卖家" value="SELLER" />
               </el-select>
             </el-form-item>
             <el-form-item v-if="editUser.role === 'AUDITOR'" label="审计入口">
@@ -110,7 +100,6 @@ export default {
         id: null,
         username: '',
         role: 'USER',
-        trade_role: 'BOTH',
         auditor_target: ''
       },
       saving: false,
@@ -150,9 +139,6 @@ export default {
         ADMIN: 'danger'
       }[role] || 'info';
     },
-    tradeLabel(value) {
-      return { BUYER: '买家', SELLER: '卖家', BOTH: '买家/卖家' }[value] || '买家/卖家';
-    },
     targetLabel(value) {
       if (!value) return '未分配';
       if (value === 'HUB') return '全局审计总览（Hub）';
@@ -187,7 +173,6 @@ export default {
         id: user.id,
         username: user.username,
         role: user.role || 'USER',
-        trade_role: user.trade_role || 'BOTH',
         auditor_target: user.auditor_target || ''
       };
       this.editVisible = true;
@@ -204,7 +189,6 @@ export default {
           `${API_BASE}/api/admin/users/${this.editUser.id}/role`,
           {
             role: this.editUser.role,
-            trade_role: this.editUser.trade_role,
             auditor_target: this.editUser.role === 'AUDITOR' ? this.editUser.auditor_target : ''
           },
           { headers: this.headers() }
