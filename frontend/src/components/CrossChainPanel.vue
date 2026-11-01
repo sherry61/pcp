@@ -1,151 +1,115 @@
 <template>
-  <div class="cc-panel">
+  <div class="cross-chain-panel">
     <!-- 左：跨平台检索 -->
-    <div class="cc-left">
-      <div class="cc-title">跨平台检索</div>
+    <section class="panel-column left-column">
+      <h3 class="panel-title">跨平台检索</h3>
 
-      <div class="cc-search-wrap">
-        <input
-          v-model="crossSearchTerm"
-          class="cc-search-input"
-          placeholder="输入资产名称 / 编码 / 机构"
-          @keyup.enter="crossSearchAssets"
-        />
-        <button class="cc-search-btn" @click="crossSearchAssets" :disabled="searching" aria-label="search">
-          {{ searching ? '…' : '🔍' }}
-        </button>
-      </div>
+      <el-input
+        v-model="crossSearchTerm"
+        placeholder="输入资产名称 / 编码 / 机构"
+        clearable
+        @keyup.enter="crossSearchAssets"
+      >
+        <template #append>
+          <el-button :loading="searching" @click="crossSearchAssets">检索</el-button>
+        </template>
+      </el-input>
 
-      <div class="cc-card">
-        <div class="cc-card-title">检索结果</div>
+      <el-table
+        :data="crossSearchResults"
+        v-loading="searching"
+        height="440"
+        size="small"
+        class="result-table"
+        :row-class-name="rowClassName"
+        :empty-text="emptyText"
+        @row-click="selectCrossAsset"
+      >
+        <el-table-column prop="asset_name" label="资产名称" min-width="170" show-overflow-tooltip />
+        <el-table-column label="所在平台（链）" min-width="210" show-overflow-tooltip>
+          <template #default="{ row }">{{ getCrossPlatform(row) }}</template>
+        </el-table-column>
+        <el-table-column label="唯一标识" min-width="150">
+          <template #default="{ row }">
+            <span class="mono">{{ truncateHash(row.file_hash) }}</span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </section>
 
-        <div class="cc-table">
-          <div class="cc-row cc-head">
-            <div class="cc-col1">资产名称</div>
-            <div class="cc-col2">所在平台（链）</div>
-            <div class="cc-col3">唯一标识</div>
-          </div>
-
-          <div
-            v-for="(a, idx) in crossSearchResults"
-            :key="(a.file_hash || a.asset_id || idx) + '-' + idx"
-            class="cc-row cc-body"
-            :class="{ selected: selectedCrossAsset && (selectedCrossAsset.file_hash === a.file_hash) }"
-            @click="selectCrossAsset(a)"
-          >
-            <div class="cc-col1 cc-asset">
-              <span class="cc-token-dot">◎</span>
-              <span class="cc-asset-name">{{ a.asset_name || 'Unknown' }}</span>
-            </div>
-            <div class="cc-col2">{{ getCrossPlatform(a) }}</div>
-            <div class="cc-col3 cc-mono">{{ truncateHash(a.file_hash || a.asset_id || '') }}</div>
-          </div>
-
-          <div v-if="crossSearched && !searching && crossSearchResults.length === 0" class="cc-empty">
-            未找到匹配结果
-          </div>
-          <div v-if="!crossSearched" class="cc-empty">
-            输入关键词后回车检索目录链
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 中间分割线 -->
-    <div class="cc-divider"></div>
+    <div class="panel-divider"></div>
 
     <!-- 右：资产跨链调配 -->
-    <div class="cc-right">
-      <div class="cc-title">资产跨链调配</div>
+    <section class="panel-column right-column">
+      <h3 class="panel-title">资产跨链调配</h3>
 
-      <div class="cc-swap-card">
-        <!-- 顶部：模式切换 -->
-        <div class="cc-bridge-tabs">
-          <button
-            class="cc-tab"
-            :class="{ active: bridgeMode === 'in' }"
-            @click="bridgeMode = 'in'"
-            type="button"
-          >转入</button>
+      <el-radio-group v-model="bridgeMode" class="mode-switch">
+        <el-radio-button label="in">转入</el-radio-button>
+        <el-radio-button label="out">转出</el-radio-button>
+      </el-radio-group>
 
-          <button
-            class="cc-tab"
-            :class="{ active: bridgeMode === 'out' }"
-            @click="bridgeMode = 'out'"
-            type="button"
-          >转出</button>
-        </div>
+      <p class="mode-hint">
+        {{ bridgeMode === 'in'
+          ? '转入：EVM → ChainMaker，先在 EVM 销毁，再在 ChainMaker 铸造'
+          : '转出：ChainMaker → EVM，先在 EVM 铸造，再在 ChainMaker 销毁' }}
+      </p>
 
-        <div class="cc-mode-hint">
-          {{ bridgeMode === 'in' ? 'EVM → ChainMaker：先在 EVM 销毁，再在 ChainMaker 铸造' : 'ChainMaker → EVM：先在 EVM 铸造，再在 ChainMaker 销毁' }}
-        </div>
+      <el-form label-position="top" class="bridge-form">
+        <el-form-item label="TokenId（唯一标识）">
+          <el-input
+            :model-value="bridgeTokenId ? truncateHash(bridgeTokenId) : ''"
+            placeholder="请先在左侧选择资产"
+            disabled
+          />
+        </el-form-item>
 
-        <!-- 通用：tokenId / amount -->
-        <div class="cc-form">
-          <div class="cc-field">
-            <div class="cc-field-label">TokenId（唯一标识）</div>
-            <div class="cc-field-value cc-mono">
-              {{ bridgeTokenId ? truncateHash(bridgeTokenId) : '—（请先在左侧选择资产）' }}
-            </div>
-          </div>
+        <el-form-item label="Amount">
+          <el-input v-model="bridgeAmount" placeholder="例如 1 / 100" />
+        </el-form-item>
 
-          <div class="cc-field">
-            <div class="cc-field-label">Amount</div>
-            <input class="cc-input" v-model="bridgeAmount" placeholder="例如 1 / 100" />
-          </div>
+        <template v-if="bridgeMode === 'in'">
+          <el-form-item label="To（ChainMaker 地址）">
+            <el-input v-model="bridgeToChainmaker" placeholder="例如 64b6a0f6..." />
+          </el-form-item>
 
-          <!-- 转入：CB-In -->
-          <template v-if="bridgeMode === 'in'">
-            <div class="cc-field">
-              <div class="cc-field-label">To（ChainMaker 地址）</div>
-              <input class="cc-input" v-model="bridgeToChainmaker" placeholder="例如 64b6a0f6..." />
-            </div>
+          <el-form-item label="CategoryName">
+            <el-input v-model="bridgeCategoryName" placeholder="例如 WH" />
+          </el-form-item>
 
-            <div class="cc-field">
-              <div class="cc-field-label">CategoryName</div>
-              <input class="cc-input" v-model="bridgeCategoryName" placeholder="例如 WH" />
-            </div>
+          <el-form-item label="Metadata.source">
+            <el-input v-model="bridgeMetaSource" placeholder="peer-burn" />
+          </el-form-item>
 
-            <div class="cc-field">
-              <div class="cc-field-label">Metadata.source</div>
-              <input class="cc-input" v-model="bridgeMetaSource" placeholder="peer-burn" />
-            </div>
+          <el-form-item label="Metadata.desc">
+            <el-input v-model="bridgeMetaDesc" placeholder="mint after peer burn" />
+          </el-form-item>
+        </template>
 
-            <div class="cc-field">
-              <div class="cc-field-label">Metadata.desc</div>
-              <input class="cc-input" v-model="bridgeMetaDesc" placeholder="mint after peer burn" />
-            </div>
-          </template>
+        <template v-else>
+          <el-form-item label="OwnerAddress（ChainMaker 拥有者地址）">
+            <el-input v-model="bridgeOwnerAddress" placeholder="例如 64b6a0f6..." />
+          </el-form-item>
 
-          <!-- 转出：CB-Out -->
-          <template v-else>
-            <div class="cc-field">
-              <div class="cc-field-label">OwnerAddress（ChainMaker 拥有者地址）</div>
-              <input class="cc-input" v-model="bridgeOwnerAddress" placeholder="例如 64b6a0f6..." />
-            </div>
+          <el-form-item label="To（EVM 接收地址）">
+            <el-input v-model="bridgeToEvm" placeholder="例如 0x70997970..." />
+          </el-form-item>
+        </template>
+      </el-form>
 
-            <div class="cc-field">
-              <div class="cc-field-label">To（EVM 接收地址）</div>
-              <input class="cc-input" v-model="bridgeToEvm" placeholder="例如 0x70997970..." />
-            </div>
-          </template>
-        </div>
+      <el-button
+        type="primary"
+        class="submit-button"
+        :loading="bridgeSubmitting"
+        @click="submitBridge"
+      >
+        {{ bridgeSubmitting ? '提交中...' : (bridgeMode === 'in' ? '执行转入' : '执行转出') }}
+      </el-button>
 
-        <!-- 执行按钮 -->
-        <button class="cc-connect" @click="submitBridge" :disabled="bridgeSubmitting">
-          <span class="cc-wallet">⚡</span>
-          {{ bridgeSubmitting ? '提交中...' : (bridgeMode === 'in' ? '执行转入' : '执行转出') }}
-        </button>
-
-        <!-- 返回结果 -->
-        <div v-if="bridgeLastResp" class="cc-resp">
-          <div class="cc-resp-title">返回：</div>
-          <pre class="cc-resp-pre">{{ JSON.stringify(bridgeLastResp, null, 2) }}</pre>
-        </div>
+      <div v-if="bridgeLastResp" class="result-box">
+        <div class="result-title">返回</div>
+        <pre class="result-pre">{{ JSON.stringify(bridgeLastResp, null, 2) }}</pre>
       </div>
-
-      <div class="cc-spark">✦</div>
-    </div>
+    </section>
   </div>
 </template>
 
@@ -165,7 +129,7 @@ export default {
       crossSearched: false,
       selectedCrossAsset: null,
 
-      bridgeMode: 'in', // 'in' 转入 | 'out' 转出
+      bridgeMode: 'in',
       bridgeAmount: '1',
       bridgeTokenId: '',
       bridgeCategoryName: 'WH',
@@ -178,6 +142,13 @@ export default {
       bridgeLastResp: null
     };
   },
+  computed: {
+    emptyText() {
+      if (this.searching) return '检索中...';
+      if (this.crossSearched) return '未找到匹配结果';
+      return '输入关键词后回车检索目录链';
+    }
+  },
   methods: {
     truncateHash(hash) {
       const value = String(hash || '');
@@ -189,6 +160,10 @@ export default {
       const platform = asset.platform_name || asset.chain_type || 'ChainMaker(chain1)';
       const did = asset.orgDID || asset.orgId || '';
       return did ? `${platform} / ${did}` : platform;
+    },
+    rowClassName({ row }) {
+      if (!this.selectedCrossAsset) return '';
+      return this.selectedCrossAsset.file_hash === row.file_hash ? 'is-selected' : '';
     },
     selectCrossAsset(asset) {
       this.selectedCrossAsset = asset;
@@ -377,322 +352,121 @@ export default {
 </script>
 
 <style scoped>
-.cc-panel {
-  position: relative;
-  width: 100%;
-  height: calc(100vh - 230px);
-  min-height: 560px;
-  border-radius: 20px;
-  background: rgba(30, 33, 37, 0.94);
-  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.25);
+.cross-chain-panel {
   display: grid;
-  grid-template-columns: 1fr 1px 1fr;
-  overflow: hidden;
-  padding: 26px 26px 22px;
+  grid-template-columns: minmax(0, 1.15fr) 1px minmax(0, 1fr);
+  gap: 0;
+  width: 100%;
+  height: calc(100vh - 200px);
+  min-height: 620px;
+  padding: 20px 24px;
   box-sizing: border-box;
+  background: #fff;
+  border: 1px solid #eef2f7;
+  border-radius: 12px;
 }
 
-.cc-left,
-.cc-right {
-  position: relative;
+.panel-column {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  color: rgba(255, 255, 255, 0.88);
+  min-width: 0;
   min-height: 0;
+}
+
+.left-column {
+  padding-right: 24px;
+}
+
+.right-column {
+  padding-left: 24px;
   overflow-y: auto;
-  padding-right: 6px;
 }
 
-.cc-left::-webkit-scrollbar,
-.cc-right::-webkit-scrollbar {
-  width: 8px;
+.panel-title {
+  margin: 0 0 14px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #111827;
 }
 
-.cc-left::-webkit-scrollbar-thumb,
-.cc-right::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.18);
-  border-radius: 10px;
-}
-
-.cc-left::-webkit-scrollbar-track,
-.cc-right::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.cc-divider {
+.panel-divider {
   width: 1px;
-  background: rgba(255, 255, 255, 0.1);
-  margin: 0 18px;
+  background: #eef2f7;
 }
 
-.cc-title {
-  font-size: 22px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
+.result-table {
+  margin-top: 14px;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
 }
 
-.cc-search-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-  padding: 4px 6px;
-  height: 44px;
-  border-radius: 12px;
-  background:
-    linear-gradient(rgba(15, 18, 22, 0.65), rgba(15, 18, 22, 0.65)) padding-box,
-    linear-gradient(135deg, rgba(132, 255, 222, 0.9), rgba(90, 170, 255, 0.8), rgba(150, 120, 255, 0.7)) border-box;
-  border: 1.5px solid transparent;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-.cc-search-input {
-  flex: 1;
-  background: transparent;
-  border: none;
-  outline: none;
-  font-size: 14px;
-  line-height: 1.2;
-  padding: 3px 4px;
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.cc-search-input::placeholder {
-  color: rgba(255, 255, 255, 0.4);
-}
-
-.cc-search-btn {
-  width: 32px;
-  height: 32px;
-  margin-left: 4px;
-  border-radius: 10px;
-  border: none;
-  cursor: pointer;
-  background: linear-gradient(135deg, rgba(132, 255, 222, 0.25), rgba(90, 170, 255, 0.25));
-  color: rgba(255, 255, 255, 0.85);
-  transition: background 0.2s ease, transform 0.15s ease;
-}
-
-.cc-search-btn:hover {
-  background: linear-gradient(135deg, rgba(132, 255, 222, 0.4), rgba(150, 120, 255, 0.35));
-  transform: translateY(-1px);
-}
-
-.cc-search-btn:disabled {
-  cursor: wait;
-  opacity: 0.7;
-}
-
-.cc-card {
-  flex: 1;
-  border-radius: 16px;
-  background: rgba(14, 16, 20, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  padding: 14px 14px 10px;
-  overflow: hidden;
-}
-
-.cc-card-title {
-  font-size: 20px;
-  font-weight: 800;
+.mode-switch {
   margin-bottom: 10px;
 }
 
-.cc-table {
-  border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  overflow: hidden;
-}
-
-.cc-row {
-  display: grid;
-  grid-template-columns: 1.2fr 1.2fr 1.3fr;
-  gap: 10px;
-  align-items: center;
-  padding: 12px 14px;
-  font-size: 14px;
-}
-
-.cc-head {
-  background: rgba(255, 255, 255, 0.06);
-  font-weight: 700;
-}
-
-.cc-body {
-  background: rgba(255, 255, 255, 0.02);
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
-  cursor: pointer;
-}
-
-.cc-body:hover {
-  background: rgba(132, 255, 222, 0.06);
-}
-
-.cc-body.selected {
-  outline: 2px solid rgba(132, 255, 222, 0.45);
-  outline-offset: -2px;
-}
-
-.cc-asset {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.cc-token-dot {
-  color: rgba(132, 255, 222, 0.95);
-}
-
-.cc-asset-name {
-  font-weight: 600;
-}
-
-.cc-mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
-  opacity: 0.9;
-}
-
-.cc-empty {
-  padding: 14px;
-  color: rgba(255, 255, 255, 0.6);
-}
-
-.cc-swap-card {
-  flex: 1;
-  border-radius: 18px;
-  background: rgba(14, 16, 20, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  padding: 16px 16px 18px;
-  position: relative;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-  min-height: 0;
-  overflow-y: auto;
-}
-
-.cc-bridge-tabs {
-  display: flex;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-
-.cc-tab {
-  flex: 1;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.85);
-  border-radius: 12px;
-  padding: 10px 12px;
-  cursor: pointer;
-  font-weight: 700;
-}
-
-.cc-tab.active {
-  border-color: rgba(132, 255, 222, 0.45);
-  background: rgba(132, 255, 222, 0.18);
-  color: rgba(255, 255, 255, 0.95);
-}
-
-.cc-mode-hint {
-  margin-bottom: 12px;
-  color: rgba(255, 255, 255, 0.55);
+.mode-hint {
+  margin: 0 0 14px;
+  color: #9ca3af;
   font-size: 12px;
   line-height: 1.5;
 }
 
-.cc-form {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+.bridge-form {
+  flex: 1;
 }
 
-.cc-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px 10px;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+.bridge-form :deep(.el-form-item) {
+  margin-bottom: 14px;
 }
 
-.cc-field-label {
+.bridge-form :deep(.el-form-item__label) {
+  padding-bottom: 4px;
+  color: #4b5563;
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.65);
-  font-weight: 700;
+  line-height: 1.4;
 }
 
-.cc-field-value {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.88);
-}
-
-.cc-input {
-  border: none;
-  outline: none;
-  border-radius: 12px;
-  padding: 10px 10px;
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: rgba(255, 255, 255, 0.9);
-}
-
-.cc-input::placeholder {
-  color: rgba(255, 255, 255, 0.35);
-}
-
-.cc-connect {
+.submit-button {
   width: 100%;
-  margin-top: 18px;
-  padding: 14px 16px;
-  border: none;
-  border-radius: 14px;
-  cursor: pointer;
-  background: rgba(132, 255, 222, 0.75);
-  color: rgba(10, 12, 14, 0.92);
-  font-weight: 900;
-  letter-spacing: 0.2px;
-  box-shadow: 0 10px 26px rgba(0, 0, 0, 0.35);
 }
 
-.cc-connect:disabled {
-  cursor: wait;
-  opacity: 0.65;
+.result-box {
+  margin-top: 14px;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid #eef2f7;
+  border-radius: 8px;
 }
 
-.cc-wallet {
-  margin-right: 10px;
-}
-
-.cc-resp {
-  margin-top: 10px;
-  padding: 10px;
-  border-radius: 14px;
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.cc-resp-title {
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.65);
-  font-weight: 700;
+.result-title {
   margin-bottom: 6px;
-}
-
-.cc-resp-pre {
-  margin: 0;
+  color: #6b7280;
   font-size: 12px;
-  line-height: 1.3;
-  color: rgba(255, 255, 255, 0.8);
-  max-height: 180px;
-  overflow: auto;
+  font-weight: 600;
 }
 
-.cc-spark {
-  position: absolute;
-  right: 18px;
-  bottom: 14px;
-  color: rgba(255, 255, 255, 0.25);
-  font-size: 22px;
+.result-pre {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  color: #334155;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  color: #4b5563;
+}
+
+:deep(.el-table__row) {
+  cursor: pointer;
+}
+
+:deep(.el-table__row.is-selected > td) {
+  background: #eef6ff !important;
 }
 </style>

@@ -4,15 +4,7 @@
     <div class="main-content">
       <AppSidebar />
       <div class="content">
-        <div class="page-head">
-          <div>
-            <h2 class="page-title">跨链跨平台</h2>
-            <p class="page-hint">
-              仅管理员可用。左侧检索目录链资产，右侧在 ChainMaker 与 EVM 之间执行转入 / 转出。
-            </p>
-          </div>
-        </div>
-
+        <h2 class="page-title">跨链跨平台</h2>
         <CrossChainPanel />
       </div>
     </div>
@@ -53,24 +45,9 @@ export default {
   box-sizing: border-box;
 }
 
-.page-head {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 16px;
-  margin-bottom: 16px;
-}
-
 .page-title {
-  margin: 0;
+  margin: 0 0 20px;
   font-size: 22px;
   color: #1f2937;
-}
-
-.page-hint {
-  margin: 6px 0 0;
-  color: #6b7280;
-  font-size: 12px;
-  line-height: 1.6;
 }
 </style>
