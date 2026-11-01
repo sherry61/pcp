@@ -74,10 +74,9 @@ export default {
           throw new Error(response.data?.message || '生成审计节点入口失败');
         }
         const launchPath = response.data.url;
-        // HTTPS 页面下走 devServer 的 /node-api 同源代理，避免混合内容拦截。
-        window.location.href = window.location.protocol === 'https:'
-          ? `/node-api${launchPath}`
-          : `http://10.112.191.163:3000${launchPath}`;
+        // 自动提交页必须走 HTTP：节点本身是 HTTP，
+        // 如果从 HTTPS 页面直接提交表单，Chrome 会拦截并提示“提交的信息不安全”。
+        window.location.href = `http://10.112.191.163:3000${launchPath}`;
         return;
       }
 
