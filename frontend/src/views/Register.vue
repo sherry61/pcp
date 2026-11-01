@@ -1,7 +1,7 @@
 <template>
   <div class="auth-page">
     <div class="auth-container">
-      <h2 class="auth-title">注册到数据资产交易平台</h2>
+      <h2 class="auth-title">注册</h2>
       <form @submit.prevent="register">
         <div class="form-group">
           <label for="username">用户名:</label>
