@@ -158,8 +158,8 @@ export default {
 .content {
   flex: 1;
   min-width: 0;
-  padding: 24px 28px;
-  max-width: 1280px;
+  width: 100%;
+  padding: 24px 32px;
   box-sizing: border-box;
 }
 

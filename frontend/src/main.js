@@ -6,6 +6,7 @@ import store from './store';
 import userInfoMixin from './mixins/userInfo';  // 混入
 import axios from 'axios';
 import ElementPlus from 'element-plus';
+import zhCn from 'element-plus/es/locale/lang/zh-cn';
 import 'element-plus/dist/index.css';
 
 // 创建 Vue 应用
@@ -41,7 +42,7 @@ axios.interceptors.request.use(
 );
 
 // 使用 Element Plus UI 框架
-app.use(ElementPlus);
+app.use(ElementPlus, { locale: zhCn });
 
 // 注册路由和 Vuex store
 app.mixin(userInfoMixin)  // 混入
