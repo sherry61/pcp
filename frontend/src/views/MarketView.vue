@@ -2227,7 +2227,11 @@ filterByAssetType(type) {
     assetPictureUrl(asset) {
       const hash = asset && asset.file_hash;
       if (hash) {
-        return `http://10.112.191.163:3000/api/asset-picture/${hash}`;
+        // HTTPS 页面下图片也走同源 /node-api 代理，避免被浏览器按混合内容拦截。
+        const base = window.location.protocol === 'https:'
+          ? '/node-api'
+          : 'http://10.112.191.163:3000';
+        return `${base}/api/asset-picture/${encodeURIComponent(hash)}`;
       }
       if (asset && asset.picture) {
         return `data:image/jpeg;base64,${asset.picture}`;

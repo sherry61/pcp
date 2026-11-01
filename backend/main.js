@@ -3281,8 +3281,10 @@ app.get('/api/auction/won/:bidderUserId', (req, res) => {
 // 按 file_hash 返回资产图片原始字节（懒加载用），带缓存头。
 // asset_registrations 优先，找不到再查 resalable_assets。
 app.get('/api/asset-picture/:fileHash', (req, res) => {
-  const fileHash = String(req.params.fileHash || '').trim().toLowerCase();
-  if (!/^[a-f0-9]{64}$/.test(fileHash)) {
+  // 历史资产里有非十六进制的 64 位 file_hash，不能强制按小写 hex 校验，
+  // 否则这些资产的图片会直接 400。
+  const fileHash = String(req.params.fileHash || '').trim();
+  if (!/^[A-Za-z0-9._~-]{1,255}$/.test(fileHash)) {
     return res.status(400).json({ error: 'file_hash 格式非法' });
   }
 
@@ -3309,6 +3311,12 @@ app.get('/api/asset-picture/:fileHash', (req, res) => {
       type = 'image/png';
     } else if (buffer.length > 3 && buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) {
       type = 'image/gif';
+    } else if (
+      buffer.length > 12 &&
+      buffer.toString('ascii', 0, 4) === 'RIFF' &&
+      buffer.toString('ascii', 8, 12) === 'WEBP'
+    ) {
+      type = 'image/webp';
     }
     res.set('Content-Type', type);
     res.set('Cache-Control', 'public, max-age=86400');
