@@ -99,6 +99,8 @@ export default {
 
         localStorage.setItem("token", token);
         localStorage.setItem("login_role", role.toLowerCase());
+        localStorage.setItem("username", user.username || this.username);
+        localStorage.setItem("userId", String(user.id || ''));
         localStorage.setItem(
           'user_role',
           role === 'USER' && tradeRole === 'SELLER' ? 'seller' : 'buyer'

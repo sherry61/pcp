@@ -8,7 +8,9 @@
       ? '数字资产流通系统'
       : loginRole === 'regulator'
       ? '数字资产监管平台'
-      : '数字资产审计平台'
+      : loginRole === 'auditor'
+      ? '数字资产审计平台'
+      : '数字资产流通系统 · 管理'
   }}
 
 </div>
@@ -36,7 +38,7 @@
   </select>
 </div>
 
-      <span class="welcome-text">欢迎, {{ username }} (ID: {{ userId }})</span>
+      <span class="welcome-text">欢迎, {{ displayUsername }} (ID: {{ displayUserId }})</span>
 
       <button @click="logout">登出</button>
     </div>
@@ -47,8 +49,8 @@
 export default {
   name: 'AppHeader',
   props: {
-    username: { type: String, required: true },
-    userId: { type: String, required: true }
+    username: { type: String, default: '' },
+    userId: { type: String, default: '' }
   },
   data() {
     return {
@@ -59,6 +61,12 @@ export default {
    computed: {
     loginRole() {
       return localStorage.getItem('login_role') || 'user';
+    },
+    displayUsername() {
+      return this.username || localStorage.getItem('username') || '用户';
+    },
+    displayUserId() {
+      return this.userId || localStorage.getItem('userId') || '-';
     }
   },
   
@@ -85,6 +93,9 @@ export default {
     logout() {
       localStorage.removeItem('token');
       localStorage.removeItem('user_role');
+      localStorage.removeItem('login_role');
+      localStorage.removeItem('username');
+      localStorage.removeItem('userId');
       window.dispatchEvent(new Event('role-changed'));
       this.$router.push('/login');
     }

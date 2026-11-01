@@ -221,12 +221,12 @@ export default {
   flex: 0 0 220px;
   position: sticky;
   top: 0;
-  align-self: flex-start;
+  align-self: stretch;
   box-sizing: border-box;
   background: #333;
   color: #fff;
-  height: 100%;
-  min-height: 0;
+  height: auto;
+  min-height: calc(100vh - 64px);
   display: flex;
   flex-direction: column;
   padding: 20px;
