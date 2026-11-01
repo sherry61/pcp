@@ -14,10 +14,6 @@
   }}
 
 </div>
-
-      <div class="search-box">
-        <input type="text" placeholder="Search" />
-      </div>
     </div>
 
     <div class="user-info">
@@ -121,35 +117,6 @@ export default {
 .logo {
   font-size: 24px;
   font-weight: bold;
-}
-
-.search-box {
-  margin-left: 30px;
-  background-color: #F5F6FA;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  padding: 5px 10px;
-}
-
-.search-box input {
-  width: 300px;
-  padding: 5px 10px;
-  font-size: 16px;
-  border: none;
-  background-color: #F5F6FA;
-  outline: none;
-}
-
-.search-box::before {
-  content: "";
-  display: block;
-  width: 20px;
-  height: 20px;
-  background-image: url('@/assets/search-icon.png');
-  background-size: contain;
-  background-repeat: no-repeat;
-  margin-right: 10px;
 }
 
 .user-info {
