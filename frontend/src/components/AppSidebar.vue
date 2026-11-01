@@ -28,7 +28,6 @@
     <template v-if="isAdministrator">
       <router-link to="/home">主页</router-link>
       <router-link to="/admin/users">用户与角色管理</router-link>
-      <router-link to="/admin/audit-nodes">审计节点配置</router-link>
     </template>
 
     <template v-else-if="isRegulator">
