@@ -47,55 +47,6 @@
           </div>
         </section>
 
-        <section class="panel">
-          <div class="panel-head">
-            <h3>节点查看凭据</h3>
-            <el-button size="small" :loading="nodesLoading" @click="fetchNodes">刷新节点</el-button>
-          </div>
-          <p class="panel-hint">这些凭据只用于演示环境自动进入审计节点，密码加密保存，不会回显。</p>
-
-          <el-table :data="nodes" v-loading="nodesLoading" style="width: 100%">
-            <el-table-column prop="node_name" label="节点" min-width="160" />
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <span :class="['status-dot', row.online ? 'online' : 'offline']">
-                  {{ row.online ? '在线' : '离线' }}
-                </span>
-              </template>
-            </el-table-column>
-            <el-table-column label="节点账号" min-width="160">
-              <template #default="{ row }">
-                <el-input
-                  v-model="nodeForms[row.node_id].username"
-                  size="small"
-                  placeholder="节点查看账号"
-                />
-              </template>
-            </el-table-column>
-            <el-table-column label="节点密码" min-width="180">
-              <template #default="{ row }">
-                <el-input
-                  v-model="nodeForms[row.node_id].password"
-                  size="small"
-                  type="password"
-                  show-password
-                  :placeholder="row.has_credentials ? '不修改则留空' : '请输入节点密码'"
-                />
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="90">
-              <template #default="{ row }">
-                <el-button
-                  size="small"
-                  type="primary"
-                  :loading="Boolean(nodeSaving[row.node_id])"
-                  @click="saveNodeCredentials(row)"
-                >保存</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </section>
-
         <el-dialog v-model="editVisible" title="编辑用户角色" width="460px">
           <el-form label-width="90px">
             <el-form-item label="用户名">
@@ -154,7 +105,6 @@ export default {
       users: [],
       nodes: [],
       loading: false,
-      nodesLoading: false,
       editVisible: false,
       editUser: {
         id: null,
@@ -165,9 +115,7 @@ export default {
       },
       saving: false,
       page: 1,
-      pageSize: 10,
-      nodeForms: {},
-      nodeSaving: {}
+      pageSize: 10
     };
   },
   computed: {
@@ -227,26 +175,11 @@ export default {
       }
     },
     async fetchNodes() {
-      this.nodesLoading = true;
       try {
         const response = await axios.get(`${API_BASE}/api/admin/nodes`, { headers: this.headers() });
         this.nodes = response.data?.nodes || [];
-        const forms = { ...this.nodeForms };
-        this.nodes.forEach((node) => {
-          if (!forms[node.node_id]) {
-            forms[node.node_id] = { username: node.username || '', password: '' };
-          } else {
-            forms[node.node_id] = {
-              username: forms[node.node_id].username || node.username || '',
-              password: forms[node.node_id].password || ''
-            };
-          }
-        });
-        this.nodeForms = forms;
       } catch (error) {
         ElMessage.error(error.response?.data?.message || '加载节点失败');
-      } finally {
-        this.nodesLoading = false;
       }
     },
     openEdit(user) {
@@ -283,32 +216,6 @@ export default {
         ElMessage.error(error.response?.data?.message || '保存角色失败');
       } finally {
         this.saving = false;
-      }
-    },
-    async saveNodeCredentials(node) {
-      const form = this.nodeForms[node.node_id] || { username: '', password: '' };
-      if (!form.username) {
-        ElMessage.warning('请填写节点账号');
-        return;
-      }
-      if (!node.has_credentials && !form.password) {
-        ElMessage.warning('首次配置必须填写节点密码');
-        return;
-      }
-
-      this.nodeSaving = { ...this.nodeSaving, [node.node_id]: true };
-      try {
-        await axios.post(
-          `${API_BASE}/api/admin/nodes/${encodeURIComponent(node.node_id)}/credentials`,
-          { username: form.username, password: form.password },
-          { headers: this.headers() }
-        );
-        ElMessage.success('节点凭据已保存');
-        await this.fetchNodes();
-      } catch (error) {
-        ElMessage.error(error.response?.data?.message || '保存节点凭据失败');
-      } finally {
-        this.nodeSaving = { ...this.nodeSaving, [node.node_id]: false };
       }
     }
   }
@@ -371,22 +278,4 @@ export default {
   color: #111827;
 }
 
-.panel-hint {
-  margin: 0 0 12px;
-  color: #6b7280;
-  font-size: 12px;
-}
-
-.status-dot {
-  color: #6b7280;
-  font-size: 12px;
-}
-
-.status-dot.online {
-  color: #047857;
-}
-
-.status-dot.offline {
-  color: #b91c1c;
-}
 </style>
