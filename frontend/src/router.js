@@ -14,6 +14,7 @@ import Register from '@/views/Register.vue'
 import UserManagement from './views/UserManagement.vue' 
 import AdminUsers from './views/AdminUsers.vue'
 import AdminAuditNodes from './views/AdminAuditNodes.vue'
+import AdminCrossChain from './views/AdminCrossChain.vue'
 import UserCenter from './views/UserCenter.vue'
 import AssetPictureView from './views/AssetPictureView.vue'
 import AssetDetail from './views/AssetDetail1.vue'
@@ -61,6 +62,7 @@ const routes = [
   { path: '/admin-dashboard', component: AdminDashboard, meta: { requiresAuth: true } },
   { path: '/admin/users', name: 'AdminUsers', component: AdminUsers, meta: { requiresAuth: true, requiresAdmin: true } },
   { path: '/admin/audit-nodes', name: 'AdminAuditNodes', component: AdminAuditNodes, meta: { requiresAuth: true, requiresAdmin: true } },
+  { path: '/admin/cross-chain', name: 'AdminCrossChain', component: AdminCrossChain, meta: { requiresAuth: true, requiresAdmin: true } },
   { path: '/user-management', component: UserManagement, meta: { requiresAuth: true } },
   //{ path: '/user-center', component:UserCenter, meta: { requiresAuth: true } },
   { path: '/asset-picture', component: AssetPictureView, meta: { requiresAuth: true } },
@@ -122,7 +124,7 @@ router.beforeEach((to, from, next) => {
   //const role = localStorage.getItem('user_role') || 'buyer';
 
   // 管理员只开放主页和用户与角色管理。
-  const adminAllowedRoutes = ['Home', 'Login', 'AdminUsers', 'AdminAuditNodes'];
+  const adminAllowedRoutes = ['Home', 'Login', 'AdminUsers', 'AdminAuditNodes', 'AdminCrossChain'];
   if (loginRole === 'admin' && !adminAllowedRoutes.includes(to.name)) {
     return next('/home');
   }

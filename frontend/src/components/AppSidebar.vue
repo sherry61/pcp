@@ -28,6 +28,7 @@
     <template v-if="isAdministrator">
       <router-link to="/home">主页</router-link>
       <router-link to="/admin/users">用户与角色管理</router-link>
+      <router-link to="/admin/cross-chain">跨链跨平台</router-link>
     </template>
 
     <template v-else-if="isRegulator">

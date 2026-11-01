@@ -96,6 +96,9 @@ const DIGITAL_CONTRACT_BASE_URL =
 const SUMMARY_API_BASE = 'http://10.112.191.163:8022';
 const DATA_CATALOG_BASE_URL =
   process.env.DATA_CATALOG_BASE_URL || 'http://127.0.0.1:8008';
+// 跨链 mint/burn 服务（CB-In / CB-Out）
+const MINT_BASE_URL =
+  process.env.MINT_BASE_URL || 'http://127.0.0.1:8009';
 // 数据目录发布开关：8008 服务维护期间默认关闭，优先保证上链登记主流程
 // 需要恢复目录发布时，启动时加 DATA_CATALOG_ENABLED=1 即可
 const DATA_CATALOG_ENABLED = process.env.DATA_CATALOG_ENABLED === '1';
@@ -2512,6 +2515,78 @@ app.post('/api/admin/nodes/:nodeId/credentials', requireRoles('ADMIN'), async (r
         return res.status(500).json({ message: '保存节点凭据失败' });
     }
 });
+
+// ===== 跨链跨平台：仅管理员可用 =====
+app.get('/api/admin/cross-chain/catalog', requireRoles('ADMIN'), async (req, res) => {
+    const pageSize = Math.min(Math.max(Number(req.query.page_size) || 50, 1), 50);
+    const params = { page_size: String(pageSize) };
+    const pageToken = String(req.query.page_token || '').trim();
+    if (pageToken) {
+        params.page_token = pageToken;
+    }
+
+    try {
+        const response = await axios.get(
+            `${DATA_CATALOG_BASE_URL}/contract/datacatalog/list`,
+            { params, timeout: 60000, validateStatus: () => true }
+        );
+        return res.status(response.status).json(response.data);
+    } catch (error) {
+        console.error('[admin/cross-chain/catalog] error:', error.message);
+        return res.status(502).json({ message: '读取目录链失败' });
+    }
+});
+
+const buildCrossChainPayload = (mode, body) => {
+    const common = {
+        amount: String(body?.amount ?? '').trim(),
+        to: String(body?.to ?? '').trim(),
+        tokenId: String(body?.tokenId ?? '').trim()
+    };
+
+    if (mode === 'in') {
+        return {
+            ...common,
+            categoryName: String(body?.categoryName ?? '').trim(),
+            metadata: body?.metadata && typeof body.metadata === 'object' ? body.metadata : {}
+        };
+    }
+
+    return {
+        ...common,
+        ownerAddress: String(body?.ownerAddress ?? '').trim()
+    };
+};
+
+const registerCrossChainBridgeRoute = (mode) => {
+    const endpoint = mode === 'in' ? 'CB-In' : 'CB-Out';
+
+    app.post(`/api/admin/cross-chain/bridge/${mode}`, requireRoles('ADMIN'), async (req, res) => {
+        const payload = buildCrossChainPayload(mode, req.body);
+
+        if (!payload.tokenId || !payload.to || !(Number(payload.amount) > 0)) {
+            return res.status(400).json({ message: '缺少 tokenId、to 或有效的 amount' });
+        }
+        if (mode === 'out' && !payload.ownerAddress) {
+            return res.status(400).json({ message: '缺少 ownerAddress' });
+        }
+
+        try {
+            const response = await axios.post(
+                `${MINT_BASE_URL}/pre/${endpoint}`,
+                payload,
+                { timeout: 60000, validateStatus: () => true }
+            );
+            return res.status(response.status).json(response.data);
+        } catch (error) {
+            console.error(`[admin/cross-chain/bridge/${mode}] error:`, error.message);
+            return res.status(502).json({ message: `${endpoint} 调用失败` });
+        }
+    });
+};
+
+registerCrossChainBridgeRoute('in');
+registerCrossChainBridgeRoute('out');
 
 app.post('/api/pam/node-ticket', requireRoles('ADMIN', 'AUDITOR'), async (req, res) => {
     const authUser = req.authUser;
