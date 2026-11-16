@@ -6,6 +6,7 @@ const FormData = require('form-data');
 const { execFile } = require('child_process');
 
 const { createPcpClient } = require('./client');
+const { getPccCallbackUrl } = require('./callback');
 const { PCP_FL_RESULT_ROLES } = require('./constants');
 const {
   buildFlContractPayload,
@@ -1058,11 +1059,13 @@ function registerFlRoutes({
           batchSize: 32,
           lossFunction: 'CrossEntropy',
           dpNoiseScale: 0,
-          dpClippingThreshold: 1
+          dpClippingThreshold: 1,
+          callbackUrl: getPccCallbackUrl()
         });
 
         const form = new FormData();
         form.append('metadata', JSON.stringify(contractPayload));
+        form.append('callback_url', getPccCallbackUrl());
         form.append('top_model_initial_package', topModelInitialPackage.buffer, {
           filename: topModelInitialPackage.originalname || 'top-model.zip',
           contentType: topModelInitialPackage.mimetype || 'application/zip'
@@ -1323,7 +1326,8 @@ function registerFlRoutes({
           const attemptResp = await client.post(
             `/fl/${encodeURIComponent(existing.pcp_contract_id)}/attempts`,
             {
-              idempotency_key: `${existing.pcp_contract_id}-attempt`
+              idempotency_key: `${existing.pcp_contract_id}-attempt`,
+              callback_url: getPccCallbackUrl()
             }
           );
           currentAttemptId = firstDefined(

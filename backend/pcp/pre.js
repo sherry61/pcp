@@ -16,7 +16,7 @@ function serializeJsonOrNull(value) {
   return JSON.stringify(value);
 }
 
-function buildPreContractPayload({ transaction, businessContractId }) {
+function buildPreContractPayload({ transaction, businessContractId, callbackUrl }) {
   if (!transaction) {
     throw new Error('transaction is required');
   }
@@ -34,7 +34,8 @@ function buildPreContractPayload({ transaction, businessContractId }) {
     pre_params: {
       curve: 'bn254',
       cipher_format: 'scheme-native'
-    }
+    },
+    ...(callbackUrl === undefined ? {} : { callback_url: callbackUrl })
   };
 }
 

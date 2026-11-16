@@ -13,7 +13,8 @@ function buildHeContractPayload({
   businessContractId,
   encType,
   operation,
-  sellerFileCount = 2
+  sellerFileCount = 2,
+  callbackUrl
 }) {
   if (!transaction) {
     throw new Error('transaction is required');
@@ -34,7 +35,8 @@ function buildHeContractPayload({
     trade_contract_id: sourceContractId,
     seller_ids: buildHeLogicalSellerIds(sellerId, sellerFileCount),
     he_compute_mode: heComputeMode,
-    csv_format: 'SINGLE_CIPHER_COLUMN'
+    csv_format: 'SINGLE_CIPHER_COLUMN',
+    ...(callbackUrl === undefined ? {} : { callback_url: callbackUrl })
   };
 }
 

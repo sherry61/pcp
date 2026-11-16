@@ -11,6 +11,7 @@ const {
   HE_OPERATIONS
 } = require('./constants');
 const { createPcpClient } = require('./client');
+const { getPccCallbackUrl } = require('./callback');
 const {
   buildHeContractPayload,
   buildHeAttemptMetadata,
@@ -904,7 +905,8 @@ function registerHeRoutes({
             businessContractId: digitalContract.contract_id,
             encType,
             operation,
-            sellerFileCount: orderedFiles.length
+            sellerFileCount: orderedFiles.length,
+            callbackUrl: getPccCallbackUrl()
           });
 
           const contractResp = await heClient.post('/he/contract', contractPayload);
@@ -929,6 +931,7 @@ function registerHeRoutes({
           publicKey: buildPcpHePublicKey(encType, publicKeys),
           sellerFileFields
         })));
+        form.append('callback_url', getPccCallbackUrl());
         orderedFiles.forEach((file, index) => {
           form.append(sellerFileFields[index], file.buffer, {
             filename: file.originalname || `${sellerFileFields[index]}.csv`,
@@ -1519,7 +1522,8 @@ function registerPreRoutes({
 
     const contractPayload = buildPreContractPayload({
       transaction,
-      businessContractId: digitalContract.contract_id
+      businessContractId: digitalContract.contract_id,
+      callbackUrl: getPccCallbackUrl()
     });
     const client = createPcpClient({
       baseUrl: getPcpPreBaseUrl()
@@ -1592,6 +1596,7 @@ function registerPreRoutes({
       targetPublicKey: mappedRecord.buyer_public_key,
       reencryptionKey: mappedRecord.reencryption_key
     })));
+    form.append('callback_url', getPccCallbackUrl());
     form.append('source_cipher_zip', sourceCipherZipFile.buffer, {
       filename: sourceCipherZipFile.originalname || 'source.zip',
       contentType: sourceCipherZipFile.mimetype || 'application/zip'

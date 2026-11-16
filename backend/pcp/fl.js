@@ -128,7 +128,8 @@ function buildFlContractPayload({
   batchSize,
   lossFunction,
   dpNoiseScale,
-  dpClippingThreshold
+  dpClippingThreshold,
+  callbackUrl
 }) {
   if (!transaction) {
     throw new Error('transaction is required');
@@ -165,7 +166,8 @@ function buildFlContractPayload({
     buyer_result_public_key: buildRsaPublicKeyObjectFromPemHex(
       buyerResultPublicKey,
       'buyer-result-key'
-    )
+    ),
+    ...(callbackUrl === undefined ? {} : { callback_url: callbackUrl })
   };
 }
 
