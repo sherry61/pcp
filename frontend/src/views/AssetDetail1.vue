@@ -153,7 +153,7 @@
 
       <div v-else-if="activeTab === 'guide'">
         <p class="tab-text">
-          用户可通过本页面查看资产详情、选择相应权益并提交购买申请。购买前请确认所选证书、购买数量、权益类型以及模型信息无误。
+          用户可通过本页面查看资产详情、选择相应权益并提交购买申请。购买前请确认所选证书、权益类型以及模型信息无误。
         </p>
       </div>
 
@@ -239,15 +239,9 @@
   />
 </div>
 
-            <div class="form-row">
-              <!-- 购买数量输入框 -->
-              <label for="purchase-quantity">购买数量：</label>
-              <input id="purchase-quantity" type="number" class="form-control" v-model.number="purchaseQuantity" min="1"
-                :max="Number(asset.number ?? 1)" :disabled="Number(asset.number ?? 1) <= 0"
-                placeholder="请输入购买数量" @input="validateInput">
-              <small style="color:#909399;">剩余数量：{{ Number(asset.number ?? 1) }}</small>
+            <div class="form-row" v-if="errorMessage">
               <!-- 提示信息 -->
-              <small v-if="errorMessage" class="text-danger">{{ errorMessage }}</small>
+              <small class="text-danger">{{ errorMessage }}</small>
             </div>
 
             <div class="form-row">
@@ -752,15 +746,6 @@ export default {
       } catch (error) {
         console.error('获取代理资产信息失败:', error);
         this.errorMessage = error.response?.data?.message || error.message || '获取代理资产信息失败';
-      }
-    },
-
-    validateInput() {
-      // 清除之前的错误提示
-      this.errorMessage = '';
-
-      if (!Number.isSafeInteger(this.purchaseQuantity) || this.purchaseQuantity < 1) {
-        this.errorMessage = '购买数量必须为大于 0 的整数';
       }
     },
 
