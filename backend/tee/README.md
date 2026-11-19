@@ -5,14 +5,9 @@
 默认远端地址为 `http://10.112.14.6`：
 
 - `8000`：`POST /api/v2/vms`、`POST /api/v2/vms/{vmId}/start`
-- `28080`：宿主机独立 `receive-key` 服务（源码仅接收 `ecPublicKey`，生成并封装 SM4 密钥）
-- `8080`：`POST /api/receive-key`
-- `8081`：`POST /api/receive-json`
-- `8082`：`POST /api/receive-file`
-- `8083`：`POST /api/get-result`
-- `18080`：虚机 nginx 网关；根路径返回 404 代表服务已就绪
+- `18080`：唯一业务入口，提供 receive-key、receive-json、receive-file、result-status、get-result；根路径 404 表示服务就绪。
 
-可通过以下环境变量覆盖：`TEE_HOST`、`TEE_VM_API_PORT`、`TEE_HOST_KEY_PORT`、`TEE_KEY_PORT`、`TEE_JSON_PORT`、`TEE_FILE_PORT`、`TEE_RESULT_PORT`、`TEE_GATEWAY_PORT`、`TEE_VM_API_TOKEN`、`TEE_REQUEST_TIMEOUT_MS`、`TEE_READY_TIMEOUT_MS`、`TEE_READY_POLL_MS`。
+新 CSV2 链路不使用 28080 或来宾内部 8080～8083 的直连端口。配置可通过 `TEE_HOST`、`TEE_VM_API_PORT`、`TEE_GATEWAY_PORT`、`TEE_VM_API_TOKEN`、`TEE_CREATE_TIMEOUT_MS`、`TEE_START_TIMEOUT_MS`、`TEE_REQUEST_TIMEOUT_MS`、`TEE_READY_TIMEOUT_MS`、`TEE_READY_POLL_MS` 覆盖。
 
 平台路由：
 
@@ -41,4 +36,36 @@
 - `TEE_HOST_SCRIPTS_DIR`（默认 `/opt/vm-api-service/stable_scripts/v2`）
 - `TEE_HOST_SSH_TIMEOUT_MS`（默认 `120000`）
 
-`receive-key` 的请求体会原样保留源码支持的 `fileType`、`role`、`kind`、`name` 字段；源码要求先上传 `data`，再申请 `weight` 密钥，路由不绕过该约束。
+新编排的 receive-key 只发送 vmId、ecPublicKey、fileType，严格遵守 model → contract → data → weight 顺序。
+
+## 当前模型和合约流程
+
+购买阶段只保留 `.c` 文件 SHA-256，卖方确认时生成数字合约。交付依次执行：建 VM → 启动及远程证明 → WAITING_MODEL → 买方再次上传同一模型 → 协商独立合约密钥并验证合约 → data → weight → 轮询结果 → 校验及归档。不存在自动交付跳过合约校验的分支。
+
+- `POST /api/privacy/tee/model`：内存接收模型，完成模型和合约处理后继续后台计算。
+- `POST /api/privacy/tee/attempt-result`：按交易及轮次下载成功结果。
+- 当前轮次首次下载安排两分钟后精确清理 VM；密文和解密归档保留，重复下载不延长倒计时。
+- 合约有效期限制发起新交付，不覆盖已完成交付的成功/失败状态；已有结果仍可下载。交付列表不显示过期标签，过期时禁用请求/执行入口。
+
+## 迁移和验证
+
+已有基础表后按需应用 `sql/2026-10-06-tee-csv2-adaptation.sql`、`sql/2026-10-07-tee-contract-model-hash-delivery-limit.sql`，两者可重复执行；当前数据库已具备这些字段。不要为历史合约编造模型摘要或交付次数。
+
+从 backend 目录运行：
+
+```bash
+node --test tests/tee*.test.js
+```
+
+前端回归检查从 frontend 目录运行 `node --test src/utils/tee*.test.js src/utils/deliveryUi.test.js`。真实数据库写入集成测试默认跳过。`scripts/csv2-e2e-test.js` 及 fixtures 已从副本保留，它是历史联调脚本，不能把恢复文件等同于通过当前正式下单规则的新实机验收。
+
+迁移副本存储前先预检查，再应用：
+
+```bash
+node scripts/migrate-tee-preview-storage.js
+node scripts/migrate-tee-preview-storage.js --apply
+```
+
+迁移脚本复制并核对文件 SHA-256，不覆盖不同内容；文件成功复制后，在事务内切换素材及买方权重路径，保留副本原文件。现存目录属于不同运行账号，应用迁移需要有权写入正式存储的账号。复制旧密文不会凭空恢复缺失的历史解密材料。
+
+当前交付前仍会清理宿主全部 VM；跨订单并发互相影响的问题尚未改动。TEE 接口的身份及订单归属校验也需单独补齐。

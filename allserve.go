@@ -63,6 +63,12 @@ func main() {
 				"PCC_PRE_ROOT":     "/home/super/tr/pcc-engine",
 				// PCC 跑在容器里，回调地址必须是宿主机可达地址。
 				"PCC_CALLBACK_URL": "http://10.112.191.163:3000/api/privacy/result-notify",
+				// MPC 审计提交 PAM Hub（凭据文件已 gitignore）。
+				"PCC_HUB_BASE_URL":     "http://127.0.0.1:18140",
+				"PCC_AUDIT_TOKEN_FILE": "/home/super/fqh/backend/.pcc-audit-token",
+				// 每条样本一个 Groth16 证明；Hub 约 5 分钟超时，默认抽样 20 条送审。
+				// 设为 0 表示全量送审（大订单会超时）。
+				"MPC_AUDIT_MAX_SAMPLES": "20",
 			},
 		},
 		// chainmaker-ca(8090): 前端 /api/ca 代理 + autocert 的 /api/ca/gencert。

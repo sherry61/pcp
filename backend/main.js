@@ -1,6 +1,7 @@
 // ====== 顶部：所有 require 放一起（确保在任何使用 cron.schedule 之前）======
 const express = require('express');
 const mysql = require('mysql');
+const { createDbQueryPools } = require('./dbQueryPools');
 const bodyParser = require('body-parser');
 const cors = require('cors');
 const bcrypt = require('bcryptjs');
@@ -18,10 +19,17 @@ const { spawn,exec } = require('child_process');
 const FormData = require('form-data');
 const { registerFlRoutes, registerHeRoutes, registerPreRoutes } = require('./pcp');
 const { registerMpcRoutes } = require('./mpc');
+const { registerMpcAuditRoutes } = require('./mpc_audit');
 const { registerTeeRoutes, createTeeClient } = require('./tee');
 const { createModelHashStorage } = require('./tee/modelHashStorage');
+const { createModelRegistry, registerModelRegistryRoutes } = require('./tee/modelRegistry');
+const { createAssetModelCatalog } = require('./tee/assetModels');
+const { registerTeeNotificationRoutes } = require('./tee/notifications');
+const { createRegistrationSubmission, registerRegistrationSubmissionRoute } = require('./tee/registrationSubmission');
+const { registerDeliveryStatusRoutes } = require('./deliveryStatusSummary');
 const { validateTeeTransactionProposal, buildTeeDigitalContract } = require('./tee/contractFinalization');
 const alipay = require('./config/alipay');
+const { createAssetPaymentQr, registerAssetPaymentQrRoute } = require('./assetPaymentQr');
 const logger = require('./logger');
 
 logger.patchConsole();
@@ -811,7 +819,7 @@ const MAIN_DB_CONFIG = {
     password: '123456',
     database: MAIN_DB_NAME
 };
-const db = mysql.createConnection(MAIN_DB_CONFIG);
+const db = createDbQueryPools(MAIN_DB_CONFIG);
 
 function withMainDbTransaction(work) {
   const connection = mysql.createConnection(MAIN_DB_CONFIG);
@@ -830,11 +838,12 @@ function withMainDbTransaction(work) {
     .finally(end);
 }
 
-db.connect(err => {
+db.getConnection((err, connection) => {
     if (err) {
         console.error(`MySQL ${MAIN_DB_NAME} 连接失败:`, err);
         return;
     }
+    connection.release();
     console.log(`MySQL ${MAIN_DB_NAME} 连接成功`);
     
 });
@@ -1062,6 +1071,35 @@ registerMpcRoutes({
   upload,
   dbQuery
 });
+
+registerMpcAuditRoutes({
+  app,
+  upload,
+  dbQuery
+});
+
+const registrationChainPost = async (operation, payload) => {
+  const response = await axios.post(`${MINT_BASE_URL}/pre/${operation}`, payload, { timeout: 60000 });
+  return response.data;
+};
+const submitRegistration = createRegistrationSubmission({ chainPost: registrationChainPost });
+const modelRegistry = createModelRegistry({ dbQuery, chainPost: registrationChainPost, submitRegistration });
+const assetModelCatalog = createAssetModelCatalog({ dbQuery, chainPost: registrationChainPost });
+const modelRegistryAuth = requireRoles('USER', 'ADMIN');
+registerTeeNotificationRoutes({ app, authenticate: modelRegistryAuth, dbQuery });
+registerDeliveryStatusRoutes({ app, dbQuery });
+const requireTeeBuyer = async (req, res, next) => {
+  try {
+    const rows = await dbQuery('SELECT pc_type FROM asset_registrations WHERE file_hash=? LIMIT 1', [req.body?.asset_id]);
+    const configured = String(rows[0]?.pc_type || '').trim().toUpperCase();
+    if (configured) req.body.pc_type = configured;
+    if (String(req.body?.pc_type || '').trim().toUpperCase() !== 'TEE') return next();
+    return modelRegistryAuth(req, res, next);
+  } catch (error) { return res.status(500).json({ message: '无法核对商品交付方式' }); }
+};
+registerModelRegistryRoutes({ app, registry: modelRegistry, catalog: assetModelCatalog, authenticate: modelRegistryAuth });
+registerRegistrationSubmissionRoute({ app, registry: modelRegistry, authenticate: modelRegistryAuth,
+  upload: acceptTeeModelUpload, getRegisterCertificate: getDefaultRegisterCertInfoByUserId, submitRegistration });
 
 registerTeeRoutes({
   app,
@@ -3746,6 +3784,7 @@ app.get('/api/asset/:id', (req, res) => {
 
   const query = `
     SELECT 
+      id,
       asset_name,
       asset_type,
       asset_category,
@@ -4356,6 +4395,8 @@ function insertTransaction(payload, cb) {
         processing_type,
         expiration_time,
         model_file_hash,
+        model_registration_id,
+        model_snapshot_json,
         delivery_limit,
         pc_type,
         price,
@@ -4412,13 +4453,15 @@ function insertTransaction(payload, cb) {
                 processing_type,
                 expiration_time,
                 model_file_hash,
+                model_registration_id,
+                model_snapshot_json,
                 delivery_limit,
                 pc_type,
                 stock_reserved,
                 delegation_id,
                 seller_type,
                 owner_address
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
         const values = [
             asset_id,
@@ -4433,6 +4476,8 @@ function insertTransaction(payload, cb) {
             processing_type,
             formattedExpirationTime,
             model_file_hash,
+            model_registration_id || null,
+            model_snapshot_json || null,
             safeDeliveryLimit,
             pc_type || null,
             stockReserved,
@@ -4516,7 +4561,7 @@ function insertTransaction(payload, cb) {
     });
 }
 
-app.post('/api/save-transaction', acceptTeeModelUpload, (req, res) => {
+app.post('/api/save-transaction', requireTeeBuyer, async (req, res) => {
     const {
         asset_id,
         owner_id,
@@ -4535,16 +4580,16 @@ app.post('/api/save-transaction', acceptTeeModelUpload, (req, res) => {
 
     let proposal;
     try {
-        proposal = validateTeeTransactionProposal({
+        const selected = String(pc_type || '').trim().toUpperCase() === 'TEE'
+          ? await assetModelCatalog.resolveSelection({ id: req.body.model_registration_id,
+              userId: req.authUser.id, buyerAddress: buyer_address }) : null;
+        proposal = { ...validateTeeTransactionProposal({
             pcType: pc_type,
-            modelFileHash: req.file?.modelHash,
+            modelFileHash: selected?.modelFileHash,
             purchaseQuantity: quantity
-        });
-        if (req.file && proposal.pcType !== 'TEE') {
-            return res.status(400).json({ message: '只有 TEE 交易可以上传计算模型' });
-        }
+        }), ...selected };
     } catch (error) {
-        return res.status(400).json({ message: error.message });
+        return res.status(error.statusCode || 400).json({ message: error.message });
     }
 
     // 检查请求体是否缺少必要参数
@@ -4563,6 +4608,8 @@ app.post('/api/save-transaction', acceptTeeModelUpload, (req, res) => {
         processing_type,
         expiration_time,
         model_file_hash: proposal.modelFileHash,
+        model_registration_id: proposal.modelRegistrationId || null,
+        model_snapshot_json: proposal.modelSnapshotJson || null,
         delivery_limit: proposal.pcType === 'TEE' ? proposal.deliveryLimit : 10,
         pc_type: proposal.pcType
     }, (err, transactionId) => {
@@ -5079,11 +5126,11 @@ app.post('/api/balance/pay', async (req, res) => {
     }
 });
 
-// 创建支付订单并返回二维码
-app.post('/api/create-payment', acceptTeeModelUpload, async (req, res) => {
-    if (!alipay.enabled) {
-        return res.status(503).json({ message: '支付宝支付未配置' });
-    }
+const prepareAssetPaymentQr = createAssetPaymentQr({ alipay });
+registerAssetPaymentQrRoute({ app, authenticate: modelRegistryAuth, dbQuery, prepareQr: prepareAssetPaymentQr });
+
+// A local order is usable for balance payment independently of Alipay.
+app.post('/api/create-payment', requireTeeBuyer, async (req, res) => {
     const b = req.body || {};
     const { asset_id, buyer_address, subject } = b;
     let { seller_address } = b;
@@ -5093,16 +5140,16 @@ app.post('/api/create-payment', acceptTeeModelUpload, async (req, res) => {
 
     let proposal;
     try {
-        proposal = validateTeeTransactionProposal({
+        const selected = String(b.pc_type || '').trim().toUpperCase() === 'TEE'
+          ? await assetModelCatalog.resolveSelection({ id: b.model_registration_id,
+              userId: req.authUser.id, buyerAddress: buyer_address }) : null;
+        proposal = { ...validateTeeTransactionProposal({
             pcType: b.pc_type,
-            modelFileHash: req.file?.modelHash,
+            modelFileHash: selected?.modelFileHash,
             purchaseQuantity: b.quantity
-        });
-        if (req.file && proposal.pcType !== 'TEE') {
-            return res.status(400).json({ message: '只有 TEE 交易可以上传计算模型' });
-        }
+        }), ...selected };
     } catch (error) {
-        return res.status(400).json({ message: error.message });
+        return res.status(error.statusCode || 400).json({ message: error.message });
     }
 
     const requestedQuantity = Math.max(1, Math.floor(Number(b.quantity) || 1));
@@ -5176,7 +5223,7 @@ app.post('/api/create-payment', acceptTeeModelUpload, async (req, res) => {
         amount = Number(amount);
 
         const outTradeNo = 'ALI' + Date.now() + Math.floor(Math.random() * 1000);
-        const parsedBuyerId = Number(b.buyer_id);
+        const parsedBuyerId = Number(proposal.pcType === 'TEE' ? req.authUser.id : b.buyer_id);
         const payload = {
             asset_id,
             owner_id: b.owner_id,
@@ -5192,6 +5239,8 @@ app.post('/api/create-payment', acceptTeeModelUpload, async (req, res) => {
             processing_type: b.processing_type,
             expiration_time: b.expiration_time,
             model_file_hash: proposal.modelFileHash,
+        model_registration_id: proposal.modelRegistrationId || null,
+        model_snapshot_json: proposal.modelSnapshotJson || null,
             delivery_limit: proposal.pcType === 'TEE' ? proposal.deliveryLimit : 10,
             pc_type: proposal.pcType
         };
@@ -5205,26 +5254,9 @@ app.post('/api/create-payment', acceptTeeModelUpload, async (req, res) => {
              payload.seller_id || null, seller_address, amount.toFixed(2), finalSubject, JSON.stringify(payload)]
         );
 
-        const bizContent = {
-            out_trade_no: outTradeNo,
-            total_amount: amount.toFixed(2),
-            subject: finalSubject,
-            timeout_express: '10m'
-        };
-        if (alipay.notifyUrl) bizContent.notify_url = alipay.notifyUrl;
-
-        const result = await alipay.sdk.exec('alipay.trade.precreate', { bizContent });
-        if (result && result.code === '10000' && result.qrCode) {
-            return res.status(201).json({
-                message: '订单已创建',
-                out_trade_no: outTradeNo,
-                qr_code: result.qrCode,
-                amount: amount.toFixed(2)
-            });
-        }
-
-        console.error('支付宝下单失败:', result);
-        return res.status(502).json({ message: '支付宝下单失败', detail: result && (result.subMsg || result.msg) });
+        const order = { out_trade_no: outTradeNo, amount: amount.toFixed(2), subject: finalSubject };
+        const qr = b.prepare_only === true ? { qr_status: 'NOT_REQUESTED' } : await prepareAssetPaymentQr(order);
+        return res.status(201).json({ message: '订单已创建', out_trade_no: outTradeNo, amount: order.amount, ...qr });
     } catch (error) {
         console.error('创建支付订单失败:', error);
         return res.status(500).json({ message: '创建订单失败' });
@@ -5331,7 +5363,13 @@ app.post('/api/payment-notify', (req, res) => {
 
 
 
-app.post('/api/save-digital-contract', (req, res) => {
+app.post('/api/save-digital-contract', async (req, res) => {
+  try {
+    const rows = await dbQuery('SELECT pc_type FROM transactions WHERE transaction_id=? LIMIT 1', [req.body.transaction_id]);
+    if (String(rows[0]?.pc_type || req.body.pc_type || '').trim().toUpperCase() === 'TEE') {
+      return res.status(409).json({ message: 'TEE 数字合约由卖方确认交易时生成，不能单独提交或修改模型摘要' });
+    }
+  } catch (error) { return res.status(500).json({ message: '查询交易失败' }); }
   const {
     transaction_id,      // 必填：对应哪一条交易
     contract_id,         // 必填：例如 CONTRACT-120
@@ -5611,14 +5649,15 @@ app.post('/api/seller-confirm-transaction', async (req, res) => {
                    (contract_id, transaction_id, contract_name, product_name, token_id,
                     contract_description, seller_address, buyer_address, operations,
                     expiration_time, quantity_limit, processing_type, pc_type,
-                    model_file_hash, delivery_limit)
-                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                    model_file_hash, delivery_limit, model_registration_id, model_snapshot_json)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                   [
                     contract.contract_id, contract.transaction_id, contract.contract_name,
                     contract.product_name, contract.token_id, contract.contract_description,
                     contract.seller_address, contract.buyer_address, contract.operations,
                     contract.expiration_time, contract.quantity_limit, contract.processing_type,
-                    contract.pc_type, contract.model_file_hash, contract.delivery_limit
+                    contract.pc_type, contract.model_file_hash, contract.delivery_limit,
+                    contract.model_registration_id || null, contract.model_snapshot_json || null
                   ]
                 );
             }

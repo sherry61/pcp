@@ -38,6 +38,16 @@ function buildTeeDigitalContract({ transaction, asset } = {}) {
   });
   if (terms.pcType !== 'TEE') throw new TypeError('transaction is not TEE');
   const productName = asset?.asset_name || '数字产品';
+  let modelReference = {};
+  if (transaction.model_registration_id) {
+    let snapshot;
+    try { snapshot = JSON.parse(transaction.model_snapshot_json); } catch (_) { throw new TypeError('TEE registered model snapshot is missing'); }
+    if (snapshot.registrationId !== transaction.model_registration_id || snapshot.modelFileHash !== terms.modelFileHash ||
+        snapshot.resourceType !== 'TEE_COMPUTATION_MODEL' || !snapshot.tokenId || !snapshot.version) {
+      throw new TypeError('TEE registered model snapshot does not match transaction');
+    }
+    modelReference = { model_registration_id: transaction.model_registration_id, model_snapshot_json: JSON.stringify(snapshot) };
+  }
   return {
     contract_id: `CONTRACT-${transaction.transaction_id}`,
     transaction_id: transaction.transaction_id,
@@ -53,7 +63,8 @@ function buildTeeDigitalContract({ transaction, asset } = {}) {
     processing_type: transaction.processing_type || null,
     pc_type: terms.pcType,
     model_file_hash: terms.modelFileHash,
-    delivery_limit: terms.deliveryLimit
+    delivery_limit: terms.deliveryLimit,
+    ...modelReference
   };
 }
 

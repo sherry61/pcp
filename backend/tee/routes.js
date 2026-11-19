@@ -15,7 +15,9 @@ const {
   encryptModelPayload,
   buildEncryptedContractPayload
 } = require('./modelContractProtocol');
-const { extractWeightSchema, validateWeightCsv, buildWeightTemplate, buildDataFormatTemplate } = require('./csvSchema');
+const { extractWeightSchema, validateWeightCsv } = require('./csvSchema');
+const { buildWeightTemplate, buildDataFormatTemplate } = require('./weightTemplate');
+const { normalizeTeeWeightCsv, assertTeeWeightResult } = require('./weightEncoding');
 const {
   resolveBoundVmId,
   assertVmBindingAvailable,
@@ -337,10 +339,11 @@ function registerTeeRoutes({ app, upload, modelUpload = null, dbQuery, withDbTra
     if (!isCurrentAttempt(attempt, job)) return false;
     try { return Boolean(await resolveAttemptResultBundle(attempt, job)); } catch (_) { return false; }
   };
-  const validateAndPersistResult = async (transactionId, vmId, result, key) => {
+  const validateAndPersistResult = async (transactionId, vmId, result, key, expectedWeights) => {
     const startedAt = Date.now();
     try {
       const parsed = decryptAndValidateResult(result, key, vmId);
+      if (expectedWeights) assertTeeWeightResult(parsed, expectedWeights);
       await persistEncryptedResult(transactionId, vmId, result);
       await recordTeeEvent(transactionId, 'RESULT_VALIDATE_AND_PERSIST', 'SUCCESS', startedAt, {
         code: parsed.code, message: 'encrypted result persisted after local validation', vmId,
@@ -372,6 +375,7 @@ function registerTeeRoutes({ app, upload, modelUpload = null, dbQuery, withDbTra
     // 买方在本轮请求时上传的 weight.csv 覆盖资产登记时的默认权重。
     const weightFilePath = job?.buyer_weight_file_path || material?.weight_file_path;
     if (!material?.data_file_path || !weightFilePath) throw new Error('TEE 资产尚未同时上传 data.csv 和 weight.csv');
+    const expectedWeights = validateWeightCsv(fs.readFileSync(weightFilePath), extractWeightSchema(fs.readFileSync(material.data_file_path)));
     // The reference integration creates a separate EC key pair for each file
     // session. Do not reuse the buyer key or send non-documented role/kind
     // fields: the remote services may include these values in their state key.
@@ -383,7 +387,9 @@ function registerTeeRoutes({ app, upload, modelUpload = null, dbQuery, withDbTra
       const sm4Key = decryptEnvelope(keyResp.envelope || keyResp, privateKey);
       let retainForResult = false;
       try {
-        const encrypted = encryptSm4(require('fs').readFileSync(filePath), sm4Key);
+        const originalBytes = fs.readFileSync(filePath);
+        const deliveryBytes = fileType === 'weight' ? normalizeTeeWeightCsv(originalBytes) : originalBytes;
+        const encrypted = encryptSm4(deliveryBytes, sm4Key);
         const result = await callTeeStage(transactionId, `${fileType.toUpperCase()}_UPLOAD`, () => teeClient.receiveFile({ vmId, fileType, name: `${fileType}.csv`, ...encrypted }));
         if (fileType === 'weight') {
           weightSm4Key = sm4Key;
@@ -425,7 +431,7 @@ function registerTeeRoutes({ app, upload, modelUpload = null, dbQuery, withDbTra
       // Even when the weight upload reports ready, confirm through the documented
       // status endpoint before retrieving the encrypted result exactly once.
       const encryptedResult = await waitForResult(transactionId, vmId);
-      await validateAndPersistResult(transactionId, vmId, encryptedResult, weightSm4Key);
+      await validateAndPersistResult(transactionId, vmId, encryptedResult, weightSm4Key, expectedWeights);
       await updateJob(transactionId, { step: 'RESULT_READY', result_status: 'READY', last_error: null });
       return result;
     } finally {
@@ -487,7 +493,7 @@ function registerTeeRoutes({ app, upload, modelUpload = null, dbQuery, withDbTra
       res.json({
         success: true,
         material,
-        weightSchema: weightSchema ? { ...weightSchema, templateHasHeader: true, templateFileName: 'weight-template.csv' } : null
+        weightSchema: weightSchema ? { ...weightSchema, templateHasHeader: false, templateFileName: 'weight-template.csv' } : null
       });
     } catch (error) { fail(res, error, '读取 TEE 权重结构失败'); }
   });
@@ -499,7 +505,7 @@ function registerTeeRoutes({ app, upload, modelUpload = null, dbQuery, withDbTra
       const template = buildWeightTemplate(extractWeightSchema(fs.readFileSync(row.data_file_path)));
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
       res.setHeader('Content-Disposition', 'attachment; filename="weight-template.csv"');
-      res.send(`\uFEFF${template}`);
+      res.send(template);
     } catch (error) { fail(res, error, '生成权重模板失败'); }
   });
 
@@ -511,8 +517,8 @@ function registerTeeRoutes({ app, upload, modelUpload = null, dbQuery, withDbTra
       }
       const template = buildDataFormatTemplate(extractWeightSchema(fs.readFileSync(row.data_file_path)));
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-      res.setHeader('Content-Disposition', 'attachment; filename="asset-data-format-template.csv"');
-      return res.send(`\uFEFF${template}`);
+      res.setHeader('Content-Disposition', 'attachment; filename="weight-template.csv"');
+      return res.send(template);
     } catch (error) {
       return fail(res, error, '生成资产数据格式模板失败');
     }
