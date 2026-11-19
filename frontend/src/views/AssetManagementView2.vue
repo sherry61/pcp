@@ -34,6 +34,9 @@
             </div>
           </div>
 
+          <p v-if="selectingModel">请选择本人或已获使用授权的计算模型。</p>
+          <p v-if="selectingModel && modelListError" role="alert">{{ modelListError }} <button type="button" @click="fetchAllAssets">重试</button></p>
+
           <!-- 根据选择的数据源显示不同的信息 -->
           <div v-if="dataSource === 'buy'">
 
@@ -56,7 +59,9 @@
                   <th v-if="isSeller" class="nowrap">剩余数量</th>
                   <!--<th>性质</th>-->
                   <th>状态</th>
-                  <th>可出售权益</th> <!-- 新增字段 -->
+                  <th v-if="!selectingModel">可出售权益</th>
+                  <th v-if="selectingModel">模型版本</th>
+                  <th v-if="selectingModel">操作</th> <!-- 新增字段 -->
                 
                  <!--<th>备注</th>-->
 <th v-if="isSeller">编辑</th>
@@ -67,6 +72,7 @@
   <tr v-for="item in currentPageData" :key="item.rowKey || item.id">
     <td>
       {{ item.assetName }}
+      <span v-if="item.modelType" class="proxy-badge">计算模型</span>
       <span v-if="item.isProxy" class="proxy-badge">代理</span>
     </td>
     <td>{{ item.assetType }}</td>
@@ -77,16 +83,18 @@
       'gray-text': Number(item.number) <= 0 || item.txperm !== 3,
       'green-text': Number(item.number) > 0 && item.txperm === 3,
     }">
-      {{ Number(item.number) <= 0 ? '已售罄' : (item.txperm === 3 ? '开放交易' : '已登记') }}
+      {{ selectingModel ? '已登记' : (Number(item.number) <= 0 ? '已售罄' : (item.txperm === 3 ? '开放交易' : '已登记')) }}
     </td>
 
     <!-- 可出售权益字段，根据已购买或已登记资产来显示 -->
-    <td>
+    <td v-if="!selectingModel">
       {{ item.canSellAsset ? '持有' : '' }} 
       {{ item.canSellView ? '经营' : '' }} 
       {{ item.canSellProcess ? '加工' : '' }}
     </td>
 
+    <td v-if="selectingModel">{{ item.version }}</td>
+    <td v-if="selectingModel"><button type="button" class="edit-button" @click="selectModel(item)">选择此模型</button></td>
     <!--<td>{{ formatRemarks(item.email, item.address) }}</td>-->
 
 <td v-if="isSeller" class="action-cell center-cell">
@@ -120,6 +128,7 @@
 </td>
 
   </tr>
+  <tr v-if="selectingModel && !currentPageData.length"><td colspan="6">暂无可用模型</td></tr>
 </tbody>
 
             </table>
@@ -450,6 +459,8 @@
 import AppHeader from '@/components/AppHeader.vue'
 import AppSidebar from '@/components/AppSidebar.vue'
 import axios from 'axios'
+import registeredModelsApi from '@/utils/registeredModelsApi'
+import { modelReturnLocation } from '@/utils/assetModelNavigation'
 
 export default {
   name: 'AssetManagement',
@@ -463,6 +474,8 @@ export default {
 
       registeredAssets: [],
       purchasedAssets: [],
+      selectableModels: [],
+      modelListError: '',
 
       pagination: {
         total: 0,
@@ -916,7 +929,9 @@ certAddr: '',                     // 单个证书对应地址
 
   
 // ✅ 兜底：永远返回数组
+  selectingModel() { return this.isBuyer && this.$route.query.selectModel === '1'; },
   activeAssets() {
+    if (this.selectingModel) return this.selectableModels;
     const arr = this.isSeller ? this.registeredAssets : this.purchasedAssets;
     return Array.isArray(arr) ? arr : [];
   },
@@ -934,6 +949,11 @@ certAddr: '',                     // 单个证书对应地址
 
 
   methods: {
+    selectModel(item) {
+      const location = modelReturnLocation(this.$route.query.returnTo, item.id);
+      if (!location) { this.$message.error('请从交易页面进入模型选择'); return; }
+      this.$router.push(location);
+    },
 
     openValuationModal(asset) {
       this.selectedAssetForValuation = asset;
@@ -1958,13 +1978,21 @@ async fetchAllAssets() {
   else this.registeredAssets = [];
 
   try {
-    if (this.isSeller) {
+    if (this.selectingModel) {
+      this.modelListError = '';
+      this.selectableModels = [];
+      const models = await registeredModelsApi.list();
+      this.selectableModels = models.filter(model => model.status === 'REGISTERED').map(model => ({
+        ...model, assetName: model.name, assetType: '计算模型', modelType: 'COMPUTATION_MODEL', txperm: 1, number: 1
+      }));
+    } else if (this.isSeller) {
       await this.fetchAssetData();        // 只拉登记资产
     } else {
       await this.fetchPurchasedAssets();  // 只拉购买资产
     }
   } catch (e) {
     console.error('获取资产失败:', e);
+    if (this.selectingModel) this.modelListError = e.response?.data?.message || '模型列表加载失败，请重试';
   } finally {
     this.isLoading = false;
     this.setPagination();
@@ -2310,6 +2338,7 @@ updatePurchasedAssetsPagination() {
             id: item.id,
             assetName: item.asset_name,
             assetType: item.asset_type,
+            modelType: item.model_type,
             description: item.description,
             fileHash: item.file_hash,
             email: item.email,
@@ -2740,6 +2769,9 @@ async confirmEdit() {
       }).join(''));
       return JSON.parse(jsonPayload);
     }
+  },
+  watch: {
+    '$route.query.selectModel'() { if (this.userId) this.fetchAllAssets(); }
   },
   mounted() {
     

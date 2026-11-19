@@ -11,6 +11,15 @@
             <span>数字资产上链登记</span>
           </div>
           <form @submit.prevent="openConfirmation">
+            <div class="form-row">
+              <div class="form-group">
+                <label for="asset-purpose">资产用途</label>
+                <select id="asset-purpose" v-model="form.modelSelection" @change="changeAssetPurpose">
+                  <option value="">普通资产</option>
+                  <option value="COMPUTATION_MODEL">计算模型</option>
+                </select>
+              </div>
+            </div>
 
             <div class="form-row">
               <div class="form-group">
@@ -84,13 +93,14 @@
       存证方法选择
     </label>
     <div class="radio-group">
-      <div class="radio-item">
+      <span v-if="isModelAsset">SHA2_256</span>
+      <div v-else class="radio-item">
         <input type="radio" id="fingerprint" value="FINGERPRINT" v-model="form.algorithm" checked />
         <el-tooltip content="根据文件内容生成唯一数字指纹，用于校验文件是否被篡改。" placement="top" :show-after="300">
           <label for="fingerprint" class="radio-label">数字指纹</label>
         </el-tooltip>
       </div>
-      <el-button size="small" class="similarity-check-btn" :loading="form.similarityChecking" @click="checkOmniPrintSimilarity">相似度检测</el-button>
+      <el-button v-if="!isModelAsset" size="small" class="similarity-check-btn" :loading="form.similarityChecking" @click="checkOmniPrintSimilarity">相似度检测</el-button>
     </div>
   </div>
 
@@ -114,12 +124,12 @@
                   选择文件
                 </label>
                 <div class="asset-file-picker">
-                  <input class="asset-file-input" type="file" id="file" @change="handleFileChange" required />
-                  <span class="asset-file-hint">请上传数字资产描述文件，避免包含个人隐私或敏感信息。</span>
+                  <input class="asset-file-input" type="file" id="file" :accept="isModelAsset ? '.c' : undefined" @change="handleFileChange" required />
+                  <span class="asset-file-hint">{{ isModelAsset ? '请选择要登记的 .c 计算模型文件。' : '请上传数字资产描述文件，避免包含个人隐私或敏感信息。' }}</span>
                 </div>
               </div>
             </div>
-            <div class="form-row">
+            <div v-if="!isModelAsset" class="form-row">
 <div class="form-group">
 <label for="pc-type">
 <span class="required-asterisk">*</span>
@@ -139,7 +149,7 @@
 </el-select>
 </div>
 </div>
-<div v-if="form.pcType === 'TEE'" class="form-row">
+<div v-if="!isModelAsset && form.pcType === 'TEE'" class="form-row">
   <div class="form-group">
     <label>TEE data 文件</label>
     <input type="file" accept=".csv,text/csv" @change="form.teeDataFile = $event.target.files?.[0] || null" />
@@ -291,7 +301,7 @@
                   <span class="required-asterisk" title="必填：用于生成资产元数据名称。">*</span>
                   数量
                 </label>
-                <input type="number" id="quantity" v-model="form.quantity" :disabled="isQuantityLocked" min="1"
+                <input type="number" id="quantity" v-model="form.quantity" min="1"
                   required />
               </div>
             </div>
@@ -789,6 +799,7 @@ gradingMethods: [
         address: '',
         description: '',
         algorithm: 'FINGERPRINT',
+        modelSelection: '',
         customAlgorithm: '',
         industry: '',  // 新增行业字段,
 
@@ -824,8 +835,6 @@ similarityChecking: false,
       
 classificationRationale: '',
 gradeRationale: '',
-
-      isQuantityLocked: false, // 控制数量输入框是否可编辑
 
       certificates: [], // 存储从接口获取的证书列表
       certAddr: '',
@@ -1213,6 +1222,7 @@ gradeRationale: '',
     }
   },
   computed:{
+    isModelAsset() { return this.form.modelSelection === 'COMPUTATION_MODEL'; },
     selectedValuationSection(){
         return this.valuationSections.find(
             x=>x.method===this.selectedValuationMethod
@@ -1224,7 +1234,7 @@ gradeRationale: '',
 },
   watch: {
     'form.industryRaw': function () {
-    this.handleIndustryChange();  // ✅ 统一在这里做映射 + 证书 + 数量锁定
+    this.handleIndustryChange();  // ✅ 统一在这里做领域映射和证书逻辑
     }
   },
   mounted() {
@@ -1243,6 +1253,18 @@ gradeRationale: '',
   },
 
   methods: {
+    changeAssetPurpose() {
+      this.form.algorithm = this.isModelAsset ? 'SHA2_256' : 'FINGERPRINT';
+      this.form.file = null;
+      this.form.fingerprint = '';
+      this.hashValue = '';
+      this.hashSuccess = false;
+      this.form.pcType = '';
+      this.form.teeDataFile = null;
+      this.form.teeWeightFile = null;
+      const input = document.getElementById('file');
+      if (input) input.value = '';
+    },
     minimumAuctionEndTime() {
       const d = new Date(Date.now() + 60 * 1000);
       const pad = value => String(value).padStart(2, '0');
@@ -1585,13 +1607,7 @@ if (indivisibleRawSet.has(raw)) return 'WH';
   // 3) 证书逻辑
   //this.fetchCertificates(this.form.industry);
 
-  // 4) 数量锁定：只有 WH 不可分割
-  if (this.form.industry === 'WH') {
-    this.isQuantityLocked = true;
-    this.form.quantity = 1;
-  } else {
-    this.isQuantityLocked = false;
-  }
+  // 数量由用户自行填写，不再按资产领域强制为 1。
 },
 
 openValuationModal() {
@@ -2604,6 +2620,11 @@ getCatalogPublishMessage() {
     },
 
 async openConfirmation() {
+  if (this.isModelAsset && !/\.c$/i.test(this.form.file?.name || '')) {
+    this.showError = true;
+    this.errorMessage = '请选择 .c 计算模型文件。';
+    return;
+  }
   if (this.form.tradeMode === 'auction') {
     const startPrice = Number(this.form.price);
     if (!Number.isInteger(startPrice) || startPrice <= 0) {
@@ -2863,10 +2884,11 @@ async confirmForm() {
     );
 
     const entries = response.data.entries || [];
-    const first = entries[0] || {};
+    const fileResult = response.data.file_result || {};
+    const first = entries[0] || fileResult || {};
 
-    const classification = first.classification || '';
-    const grade = first.grade || '';
+    const classification = first.classification || response.data.classification || '';
+    const grade = first.grade || response.data.grade || '';
 
     if (!classification || !grade) {
       throw new Error('分类分级结果为空');
@@ -2876,8 +2898,8 @@ async confirmForm() {
     this.form.assetType = grade;
     this.form.analysisResultText = `资产类别：${classification}；资产等级：${grade}`;
 
-    this.classificationRationale = first.classification_rationale || '';
-    this.gradeRationale = first.grade_rationale || '';
+    this.classificationRationale = first.classification_rationale || fileResult.classification_rationale || '';
+    this.gradeRationale = first.grade_rationale || fileResult.grade_rationale || '';
 
     this.form.classificationMethod = response.data.classification_method_code || '';
     this.form.gradingMethod = response.data.grading_method_code || '';
@@ -2959,10 +2981,11 @@ async analyzeAssetCombined() {
     }
 
     const entries = response.data.entries || [];
-    const first = entries[0] || {};
+    const fileResult = response.data.file_result || {};
+    const first = entries[0] || fileResult || {};
 
-    const classification = first.classification || '';
-    const grade = first.grade || '';
+    const classification = first.classification || response.data.classification || '';
+    const grade = first.grade || response.data.grade || '';
 
     if (!classification || !grade) {
       throw new Error('分类分级结果为空');
@@ -2972,8 +2995,8 @@ async analyzeAssetCombined() {
     this.form.assetType = grade;
     this.form.analysisResultText = `资产类别：${classification}；资产等级：${grade}`;
 
-    this.classificationRationale = first.classification_rationale || '';
-    this.gradeRationale = first.grade_rationale || '';
+    this.classificationRationale = first.classification_rationale || fileResult.classification_rationale || '';
+    this.gradeRationale = first.grade_rationale || fileResult.grade_rationale || '';
 
     this.form.classificationMethod =
       response.data.classification_method_code ||
@@ -3113,6 +3136,7 @@ async gradeAssetLevel() {
       formData.append('can_sell_process', this.form.isSellProcessRight ? '1':'0');
       formData.append('can_sell_view', this.form.isSellReadRight ? '1':'0');
       formData.append('allow_resale', this.form.allow_resale); // 将 allow_resale 传递到后端
+      formData.append('model_selection', this.form.modelSelection);
       formData.append('pc_type', this.form.pcType);
       if (String(this.form.pcType || '').toUpperCase() === 'TEE' && (!this.form.teeDataFile || !this.form.teeWeightFile)) {
         this.errorMessage = 'TEE 资产必须同时选择 data.csv 和 weight.csv';
@@ -3190,7 +3214,7 @@ formData.append('trade_location', tradeLocation);
   async saveToChainmaker() { 
   console.log('表单数据:', this.form); // 检查表单数据
 
-  const chainType = this.isDivisibleIndustry(this.form.industry) ? 'divisible' : 'indivisible';
+  const chainType = !this.isModelAsset && this.isDivisibleIndustry(this.form.industry) ? 'divisible' : 'indivisible';
   console.log('上链类型:', chainType);  // 打印判断的上链类型
 
   // 准备 Mint 或 En-Mint 接口的请求体
@@ -3218,7 +3242,7 @@ formData.append('trade_location', tradeLocation);
     const mintPayload = {
       to: this.certAddr, // 接收方地址
       tokenId: this.hashValue, // 使用文件哈希值作为 tokenId
-      categoryName: this.form.industry, // 使用行业作为分类名称
+      categoryName: this.isModelAsset ? 'WH' : this.form.industry, // 使用行业作为分类名称
       metadata: {
         assetName: this.form.assetName,
         assetType: this.form.assetType,
@@ -3227,6 +3251,7 @@ formData.append('trade_location', tradeLocation);
         address: this.form.address,
         description: this.form.description,
         algorithm: this.form.algorithm,
+        ...(this.isModelAsset ? { resourceType: 'TEE_COMPUTATION_MODEL', modelFileHash: this.hashValue } : {}),
         customAlgorithm: '',
         picture: this.form.picture ? this.form.picture : '', // 确保有文件时传递路径
         isProxied: this.form.isProxied,
@@ -3243,22 +3268,11 @@ formData.append('trade_location', tradeLocation);
 
 
 
-    // 根据上链类型选择不同的接口
-    if (chainType === 'divisible') {
-      // 可分割的，调用 En-Mint 接口
-      response = await axios.post('http://10.112.191.163:8009/pre/En-Mint', payload, {
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-    } else {
-      // 不可分割的，调用 Mint 接口
-      response = await axios.post('http://10.112.191.163:8009/pre/Mint', mintPayload, {
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-    }
+    response = await axios.post('http://10.112.191.163:3000/api/registrations/submit', {
+      resourceType: 'DIGITAL_ASSET',
+      chainType,
+      payload: chainType === 'divisible' ? payload : mintPayload
+    }, { timeout: 180000 });
 
     console.log("Mint 或 En-Mint 接口响应:", response.data);
 
@@ -3357,6 +3371,7 @@ formData.append('trade_location', tradeLocation);
 </script>
 
 <style scoped>
+
 .delivery-method-option{
 display:flex;
 align-items:center;

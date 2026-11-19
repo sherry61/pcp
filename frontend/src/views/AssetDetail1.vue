@@ -27,6 +27,11 @@
         <span v-if="asset.is_proxy" class="proxy-detail-tag">代理销售</span>
       </div>
 
+      <div v-if="asset.id" class="asset-meta-row">
+        <span class="meta-label">资产编号：</span>
+        <span class="meta-value">{{ asset.id }}</span>
+      </div>
+
       <div class="asset-meta-row">
         <span class="meta-label">行业领域：</span>
         <span class="meta-value">{{ asset.industry_raw_name || industryMap[asset.industry] }}</span>
@@ -217,7 +222,7 @@
                       plain
                       :loading="teeTemplateDownloading"
                       @click="downloadTeeDataFormatTemplate"
-                    >下载格式模板</el-button>
+                    >下载权重模板</el-button>
                   </div>
                   <div class="schema-fields">
                     <el-tag v-for="field in teeAssetFields" :key="field" size="small" effect="plain">{{ field }}</el-tag>
@@ -249,15 +254,21 @@
               <div class="form-control">{{ getPcTypeLabel(selectedPcType || asset.pc_type) }}</div>
             </div>
 
-            <!-- TEE 交易在申请阶段提交模型哈希来源。 -->
             <div class="form-row" v-if="isTeeAsset">
               <label for="purchase-model"><strong>计算模型文件：</strong></label>
-              <input id="purchase-model" type="file" accept=".c" class="form-control file-control"
-                @change="onTeeModelChange">
+              <select id="purchase-model" v-model="selectedTeeModelId" class="form-control" :disabled="teeModelsLoading">
+                <option value="">{{ teeModelsLoading ? '正在加载已上链模型…' : '请选择已上链的计算模型' }}</option>
+                <option v-for="model in teeRegisteredModels" :key="model.id" :value="model.id">{{ model.name }}{{ model.version && !model.version.startsWith('资产 #') && model.version !== '登记版本' ? '（' + model.version + '）' : '' }}</option>
+              </select>
               <small class="form-help">
-                仅支持 .c 文件。后端只进行流式 SHA-256 计算，不保存文件内容。
+                请选择本人或已获使用授权的模型。
               </small>
-              <small v-if="teeModelFile" class="selected-file">已选择：{{ teeModelFile.name }}</small>
+              <small v-if="teeModelsError" class="model-selection-error" role="alert">{{ teeModelsError }}</small>
+              <small v-else-if="!teeModelsLoading && !teeRegisteredModels.length" class="form-help">暂无本人或已获使用授权的模型。</small>
+              <div class="model-selection-actions">
+                <router-link :to="{ path: '/asset-management2', query: { selectModel: '1', returnTo: $route.fullPath } }">从资产管理选择</router-link>
+                <el-button size="small" text :loading="teeModelsLoading" @click="loadRegisteredTeeModels">刷新模型列表</el-button>
+              </div>
             </div>
 
             <!-- 交易地点暂仅用于前端申请信息展示，不提交后端或上链。 -->
@@ -285,7 +296,7 @@
     <div v-if="showPaymentModal" class="modal" @click.self="closePaymentModal">
       <div class="modal-content payment-modal">
         <div class="modal-header">
-          <h2>扫码支付</h2>
+          <h2>订单支付</h2>
           <button class="close-btn" @click="closePaymentModal">✕</button>
         </div>
 
@@ -304,7 +315,10 @@
               账户余额 <strong>¥ {{ userBalance }}</strong>
             </div>
 
+            <p v-if="paymentQrMessage" class="payment-qr-message" role="status">{{ paymentQrMessage }}</p>
             <div class="payment-qr-wrap" :class="{ 'is-paid': paymentStatus === 'PAID' }">
+              <div v-if="paymentQrLoading" class="payment-loading"><span class="spinner"></span>正在获取支付宝二维码…</div>
+              <button v-else-if="!paymentQr && paymentStatus === 'PENDING'" type="button" :disabled="payingWithBalance || !paymentOrderNo" @click="loadPaymentQr">{{ paymentQrMessage ? '重试支付宝扫码' : '支付宝扫码支付' }}</button>
               <img v-if="paymentQr" :src="paymentQr" alt="支付宝支付二维码" class="payment-qr" />
               <div v-if="paymentStatus === 'PAID'" class="payment-qr-mask">✓ 已支付</div>
               <div v-else-if="paymentStatus === 'EXPIRED'" class="payment-qr-mask expired">已超时</div>
@@ -315,7 +329,7 @@
         <div class="modal-buttons payment-actions">
           <button
             class="balance-pay-button"
-            :disabled="payingWithBalance || paymentStatus === 'PAID'"
+            :disabled="paymentLoading || !paymentOrderNo || payingWithBalance || paymentStatus === 'PAID'"
             @click="payWithBalance"
           >
             {{ payingWithBalance ? '支付中…' : '余额支付' }}
@@ -347,8 +361,10 @@ import Chart from 'chart.js/auto';
 import axios from 'axios';
 import QRCode from 'qrcode';
 import { provinceAndCityData } from 'element-china-area-data';
-import teeContractTerms from '@/utils/teeContractTerms';
+import registeredModelSelection from '@/utils/registeredModelSelection';
+import registeredModelsApi from '@/utils/registeredModelsApi';
 import teeApi from '@/utils/teeApi';
+import { buildWeightTemplateText } from '@/utils/teeWeightTemplate';
 
 export default {
   name: 'AssetDetail',
@@ -425,6 +441,8 @@ export default {
       showPaymentModal: false,
       paymentLoading: false,
       paymentQr: '',
+      paymentQrLoading: false,
+      paymentQrMessage: '',
       paymentOrderNo: '',
       paymentAmount: '0.00',
       paymentStatus: 'PENDING',
@@ -437,7 +455,10 @@ export default {
       transactionId: null, // 保存返回的交易ID
 
       selectedPcType: '',
-      teeModelFile: null,
+      selectedTeeModelId: '',
+      teeRegisteredModels: [],
+      teeModelsLoading: false,
+      teeModelsError: '',
       teeSchemaLoading: false,
       teeSchemaError: '',
       teeAssetSchema: null,
@@ -502,6 +523,9 @@ export default {
     return pcType === 'TEE';
   },
 
+  selectedTeeModel() {
+    return this.teeRegisteredModels.find(model => model.id === this.selectedTeeModelId) || null;
+  },
   teeAssetFields() {
     if (!this.teeAssetSchema) return [];
     const fields = Array.isArray(this.teeAssetSchema.fields) ? this.teeAssetSchema.fields : [];
@@ -539,6 +563,7 @@ export default {
       await this.fetchDefaultTradeCertInfo();
        
 
+        if (this.$route.query.openPurchase === '1' && this.isTeeAsset) await this.openPurchaseModal();
         this.drawPriceHistoryChart();
         console.log('页面初始化完成');
       } catch (error) {
@@ -779,7 +804,7 @@ async openPurchaseModal() {
   this.expirationTime = '';
   this.purchaseQuantity = 1;
   this.purchaseTradeLocation = this.asset.trade_location ? String(this.asset.trade_location).split('-') : [];
-  this.teeModelFile = null;
+  this.selectedTeeModelId = /^asset:[1-9][0-9]*$/.test(String(this.$route.query.modelAssetId || '')) ? this.$route.query.modelAssetId : '';
   this.teeSchemaLoading = false;
   this.teeSchemaError = '';
   this.teeAssetSchema = null;
@@ -807,7 +832,7 @@ async openPurchaseModal() {
 
   // 显示弹窗
   this.showPurchaseModal = true;
-  if (this.isTeeAsset) this.loadTeeAssetSchema();
+  if (this.isTeeAsset) { this.loadTeeAssetSchema(); this.loadRegisteredTeeModels(); }
 },
 
 
@@ -822,15 +847,18 @@ async openPurchaseModal() {
       this.showConfirmModal = false;
     },
 
-    onTeeModelChange(event) {
-      const file = event.target.files?.[0] || null;
-      if (file && !/\.c$/i.test(file.name || '')) {
-        alert('计算模型文件必须为 .c 文件');
-        event.target.value = '';
-        this.teeModelFile = null;
-        return;
-      }
-      this.teeModelFile = file;
+    async loadRegisteredTeeModels() {
+      this.teeModelsLoading = true;
+      this.teeModelsError = '';
+      try {
+        const models = await registeredModelsApi.list();
+        this.teeRegisteredModels = models.filter(model => model.status === 'REGISTERED');
+        if (!this.teeRegisteredModels.some(model => model.id === this.selectedTeeModelId)) this.selectedTeeModelId = '';
+      } catch (error) {
+        this.teeRegisteredModels = [];
+        this.selectedTeeModelId = '';
+        this.teeModelsError = error.response?.data?.message || '模型列表加载失败，请刷新重试';
+      } finally { this.teeModelsLoading = false; }
     },
 
     async loadTeeAssetSchema() {
@@ -855,17 +883,19 @@ async openPurchaseModal() {
       if (!assetId || this.teeTemplateDownloading) return;
       this.teeTemplateDownloading = true;
       try {
-        const blob = await teeApi.dataFormatTemplate(assetId);
+        const response = await teeApi.assetMaterials(assetId);
+        const template = buildWeightTemplateText(response.weightSchema);
+        const blob = new Blob([template], { type: 'text/csv;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const anchor = document.createElement('a');
         anchor.href = url;
-        anchor.download = 'asset-data-format-template.csv';
+        anchor.download = 'weight-template.csv';
         document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
         URL.revokeObjectURL(url);
       } catch (error) {
-        alert(error.response?.data?.message || error.message || '格式模板下载失败');
+        alert(error.response?.data?.message || error.message || '权重模板下载失败');
       } finally {
         this.teeTemplateDownloading = false;
       }
@@ -956,9 +986,9 @@ if (!certAddr) {
     return;
   }
 
-  const teeTerms = teeContractTerms.validateTeeTerms({
+  const teeTerms = registeredModelSelection.validateTeeTerms({
     pcType: this.selectedPcType,
-    file: this.teeModelFile
+    model: this.selectedTeeModel
   });
   if (!teeTerms.valid) {
     alert(teeTerms.message);
@@ -988,29 +1018,25 @@ if (!certAddr) {
     processing_type: this.processingChoice,
     expiration_time: this.expirationTime,
     pc_type: this.selectedPcType,
+    ...(this.isTeeAsset ? { model_registration_id: this.selectedTeeModelId } : {}),
   };
   console.log('用户选择的 expirationTime 是：', this.expirationTime);
 
   console.log('即将发送的请求体:', JSON.stringify(requestBody, null, 2)); // ⭐⭐
 
   // 改为：先创建支付订单并展示二维码，付款成功后由后端写入交易
-  let paymentPayload = requestBody;
-  if (this.isTeeAsset) {
-    const formData = new FormData();
-    Object.entries(requestBody).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) formData.append(key, String(value));
-    });
-    formData.append('modelFile', this.teeModelFile);
-    paymentPayload = formData;
-  }
+  const paymentPayload = requestBody;
   this.closePurchaseModal();
   await this.startPayment(paymentPayload);
 },
 
 // ===== 支付宝扫码支付 =====
 async startPayment(requestBody) {
+  this.stopPaymentPolling();
   this.paymentLoading = true;
   this.showPaymentModal = true;
+  this.paymentQrLoading = false;
+  this.paymentQrMessage = '';
   this.paymentQr = '';
   this.paymentOrderNo = '';
   this.paymentStatus = 'PENDING';
@@ -1035,14 +1061,23 @@ async startPayment(requestBody) {
         subject: `数字资产购买-${this.asset.asset_name || this.asset.file_hash}`,
       };
     }
-    const response = await axios.post('http://10.112.191.163:3000/api/create-payment', payload);
+    const orderPayload = payload instanceof FormData ? Object.fromEntries(payload.entries()) : payload;
+    const response = await axios.post('http://10.112.191.163:3000/api/create-payment', { ...orderPayload, prepare_only: true });
 
-    if (response.status === 201 && response.data.qr_code) {
+    if (response.status === 201 && response.data.out_trade_no) {
       this.paymentOrderNo = response.data.out_trade_no;
       this.paymentAmount = response.data.amount || this.paymentAmount;
-      this.paymentQr = await QRCode.toDataURL(response.data.qr_code, { width: 220, margin: 1 });
       this.paymentDeadline = Date.now() + 10 * 60 * 1000;
-      this.startPaymentPolling();
+      // Older servers may still return a QR during local order creation.
+      if (response.data.qr_code) {
+        this.paymentQr = await QRCode.toDataURL(response.data.qr_code, { width: 220, margin: 1 });
+        this.startPaymentPolling();
+      } else {
+        // Newer servers only create the local order (prepare_only), so the
+        // QR has to be requested explicitly or the dialog stays empty.
+        this.paymentLoading = false;
+        await this.loadPaymentQr();
+      }
     } else {
       this.showPaymentModal = false;
       alert('创建支付订单失败，请重试。');
@@ -1053,6 +1088,31 @@ async startPayment(requestBody) {
     alert(error.response?.data?.message || '创建支付订单失败，请稍后重试。');
   } finally {
     this.paymentLoading = false;
+  }
+},
+
+async loadPaymentQr() {
+  if (!this.paymentOrderNo || this.paymentQrLoading || this.payingWithBalance || this.paymentStatus !== 'PENDING') return;
+  const orderNo = this.paymentOrderNo;
+  this.paymentQrLoading = true;
+  this.paymentQrMessage = '';
+  try {
+    const { data } = await axios.post(`http://10.112.191.163:3000/api/payments/${encodeURIComponent(orderNo)}/qr`, {}, { timeout: 20000 });
+    if (this.paymentOrderNo !== orderNo || !this.showPaymentModal || this.paymentStatus !== 'PENDING') return;
+    if (data.qr_code) {
+      const qrImage = await QRCode.toDataURL(data.qr_code, { width: 220, margin: 1 });
+      if (this.paymentOrderNo !== orderNo || !this.showPaymentModal || this.paymentStatus !== 'PENDING') return;
+      this.paymentQr = qrImage;
+      this.paymentDeadline = Date.now() + 10 * 60 * 1000;
+      this.startPaymentPolling();
+    } else {
+      this.paymentQrMessage = [data.payment_message || '支付宝暂不可用，可使用余额支付或重试扫码', data.payment_error_detail].filter(Boolean).join('：');
+    }
+  } catch (error) {
+    if (this.paymentOrderNo !== orderNo || !this.showPaymentModal || this.paymentStatus !== 'PENDING') return;
+    this.paymentQrMessage = error.response?.data?.message || '支付宝连接异常，可使用余额支付或重试扫码';
+  } finally {
+    if (this.paymentOrderNo === orderNo) this.paymentQrLoading = false;
   }
 },
 
@@ -1239,6 +1299,11 @@ async payWithBalance() {
 };
 </script>
 <style scoped>
+.model-selection-actions { display: flex; align-items: center; gap: 16px; margin-top: 8px; }
+.model-selection-actions a { color: #409eff; }
+.model-selection-error { color: #c45656; }
+
+
 html,
 body {
   height: 100%;
@@ -1854,6 +1919,13 @@ body {
   line-height: 1.2;
 }
 
+.payment-qr-message {
+  color: #b45309;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+
 .payment-qr-wrap {
   position: relative;
   width: 216px;
@@ -2000,6 +2072,7 @@ body {
 }
 </style>
 <!--<style scoped>
+
 html,
 body {
   height: 100%;

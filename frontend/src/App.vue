@@ -1,12 +1,15 @@
 <template>
   <div id="app">
     <router-view />
+    <GlobalDeliveryNotifications />
   </div>
 </template>
 
 <script>
+import GlobalDeliveryNotifications from '@/components/GlobalDeliveryNotifications.vue';
 export default {
   name: 'App',
+  components: { GlobalDeliveryNotifications },
   provide() {
     return {
       username: this.username

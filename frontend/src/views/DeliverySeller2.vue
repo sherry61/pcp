@@ -460,6 +460,10 @@ import preCrypto from '@/utils/preCrypto'
 import teeApi from '@/utils/teeApi'
 import teeProgress from '@/utils/teeProgress'
 import deliveryUi from '@/utils/deliveryUi'
+import mpcAuditStatus from '@/utils/mpcAuditStatus'
+import { applyDeliveryStatusItem as applySummaryItem, summaryIds } from '@/utils/deliveryStatusSummary'
+import { getDeliveryNotificationTarget } from '@/utils/deliveryNotificationsApi'
+import { openDeliveryNotificationTarget } from '@/utils/globalDeliveryNotifications'
 
 const API_BASE = 'http://10.112.191.163:3000'
 
@@ -470,6 +474,7 @@ export default {
     return {
       username: '',
       userId: '',
+      deliveryNotificationFocus: '',
       requestedAssets: [],
       pagination: {
         page: 1,
@@ -546,11 +551,14 @@ export default {
     await this.initUser()
     await this.fetchRequestedAssets()
     this.startStatusPolling()
+    this.openDeliveryNotificationTarget()
   },
   beforeUnmount() {
     this.stopStatusPolling()
   },
+  watch: { '$route.query.transactionId'() { this.openDeliveryNotificationTarget() } },
   methods: {
+    openDeliveryNotificationTarget() { return openDeliveryNotificationTarget(this, 'seller', getDeliveryNotificationTarget) },
     parseJwt(token) {
       const base64Url = token.split('.')[1]
       const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
@@ -677,6 +685,8 @@ export default {
         this.requestedAssets = rows.sort((left, right) => this.compareTransactionIdDesc(left, right))
         this.pagination.total = addressResults.reduce((sum, item) => sum + Number(item.total || 0), 0)
         this.ensureSellerPageInRange()
+        // 先用一次批量查询把首屏状态补齐（毫秒级），逐条详情放到后台继续同步。
+        await this.syncDeliveryStatusSummary()
         void this.syncSellerPageStatus()
       } finally {
         this.isLoadingTransactions = false
@@ -737,9 +747,6 @@ export default {
         row.teeRemainingDeliveries = response.remainingDeliveries ?? null
         row.teeDeliveryLimitReached = Boolean(response.deliveryLimitReached)
         row.teeContractExpired = Boolean(response.contractExpired)
-        if (this.canSellerDeliverTee(row)) {
-          this.showTeeNotice(row, deliveryUi.TEE_NOTICE_STAGES.SELLER_ACTION_REQUIRED)
-        }
       } catch (error) {
         if (error?.response?.status === 404) {
           row.teeRequested = false
@@ -788,11 +795,16 @@ export default {
       }
 
       const rows = this.pagedRequestedAssets.filter((row) => row?.transaction_id)
+      const focused = this.teeDetailDialog.visible && this.teeDetailDialog.row
+      if (focused?.transaction_id && !rows.includes(focused)) rows.push(focused)
       if (!rows.length) {
         return
       }
 
-      await Promise.all(rows.map((row) => (
+      // 常规轮询只发一个批量请求；只有状态真的变了，才去补这一条的详情。
+      const changedRows = await this.syncDeliveryStatusSummary(rows)
+      const targets = changedRows === null ? rows : changedRows
+      await Promise.all(targets.map((row) => (
         this.isTeeRow(row)
           ? this.refreshTeeStatus(row)
           : (this.isHeRow(row)
@@ -803,6 +815,38 @@ export default {
               ? this.refreshPreStatus(row, false)
               : this.refreshMpcStatus(row, false))))
       )))
+    },
+
+    // 一次请求批量取回当前页所有交易的交付状态，纯读库，不再逐条打上游。
+    async syncDeliveryStatusSummary(rows = this.pagedRequestedAssets) {
+      const targets = (rows || []).filter((row) => row?.transaction_id)
+      if (!targets.length) return []
+
+      const ids = summaryIds(targets)
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/delivery-status`, {
+          params: { transactionIds: ids.join(',') },
+          timeout: 8000
+        })
+        const items = response.data?.items || {}
+        const changed = []
+        for (const row of targets) {
+          const item = items[String(row.transaction_id)]
+          if (!item) continue
+          const before = this.getStatusText(row)
+          const firstSync = !row.deliverySummarySynced
+          this.applyDeliveryStatusItem(row, item)
+          row.deliverySummarySynced = true
+          if (!firstSync && before !== this.getStatusText(row)) changed.push(row)
+        }
+        return changed
+      } catch (error) {
+        return null
+      }
+    },
+
+    applyDeliveryStatusItem(row, item) {
+      return applySummaryItem(row, item, { pcTypeOf: (target) => this.normalizePcType(target?.pc_type) })
     },
 
     normalizePcType(value) {
@@ -848,23 +892,18 @@ export default {
       return true
     },
     getSellerTeeActionLabel(row) {
-      if (String(row?.teeStep || '').toUpperCase() === 'WAITING_MODEL') return '等待买方上传'
       if (row.teeDelivering || this.isTeeRunning(row)) return '交付中'
-      if (row.teeContractExpired) return '合约已过期'
-      if (!row.teeRequested) return '待买方请求'
-      if (this.isTeeSuccess(row)) return '交付成功'
+      if (this.isTeeSuccess(row)) return '已完成'
       if (this.isTeeFailed(row)) return '交付失败'
+      if (!row.teeRequested) return '待买方请求'
       if (row.teeCurrentAttemptId != null) return '待买方重新请求'
       return '执行交付'
     },
     getSellerTeeStatusText(row) {
-      if (String(row?.teeStep || '').toUpperCase() === 'WAITING_MODEL') return '等待买方上传模型'
-      if (['MODEL_KEY_NEGOTIATING', 'MODEL_UPLOADING', 'MODEL_READY', 'CONTRACT_KEY_NEGOTIATING', 'CONTRACT_VERIFYING'].includes(String(row?.teeStep || '').toUpperCase())) return '正在校验计算授权'
       if (this.isTeeRunning(row)) return '交付中'
-      if (row?.teeContractExpired) return '合约已过期'
-      if (!row?.teeRequested) return '待买方请求交付'
-      if (this.isTeeSuccess(row)) return '交付成功'
+      if (this.isTeeSuccess(row)) return '已完成'
       if (this.isTeeFailed(row)) return '交付失败'
+      if (!row?.teeRequested) return '待买方请求交付'
       if (row.teeCurrentAttemptId != null) return '待买方重新请求'
       return '待执行交付'
     },
@@ -1042,7 +1081,7 @@ export default {
         const labelMap = {
           WAIT_BUYER: '待买方操作',
           WAIT_SELLER: '待卖方操作',
-          PROCESSING: currentStatus === 'PAMING' ? '审计中' : '计算中',
+          PROCESSING: (currentStatus === 'PAMING' || (this.isMpcRow(rowOrStatus) && currentStatus === 'COMPUTING')) ? '审计中' : '计算中',
           COMPLETED: '已完成',
           FAILED: '失败'
         }
@@ -1239,10 +1278,10 @@ export default {
       if (!row?.transaction_id) return
       row.syncingMpc = true
       try {
-        const response = await axios.get(`${API_BASE}/api/privacy/mpc/status`, {
-          params: { transaction_id: row.transaction_id }
+        const response = await axios.get(`${API_BASE}/api/privacy/mpc-audit/status`, {
+          params: { transactionId: row.transaction_id }
         })
-        row.mpcRecord = response.data?.data || null
+        row.mpcRecord = mpcAuditStatus.normalizeRecord(response.data?.data)
         if (showMessage) {
           this.$message?.success('MPC 状态已刷新')
         }
@@ -1270,7 +1309,7 @@ export default {
         case 'ready':
         case 'computing':
         case 'done':
-          return '已执行'
+          return '已提交计算'
         default:
           return '执行交付'
       }
@@ -1734,23 +1773,22 @@ async verifyContract(assetRow) {
       const files = [...this.mpcDialog.files]
 
       this.closeMpcSellerDialog()
-      this.mpcNoticeDialog.message = '资产交付正在进行中，请勿退出账户或关闭浏览器。'
-      this.mpcNoticeDialog.visible = true
+      this.$message?.info('正在提交交付材料并送审，请稍候。')
 
       ;(async () => {
         try {
-          const aggregatedFile = await this.runHiddenHeAggregation(transactionId, files)
           const formData = new FormData()
-          formData.append('transaction_id', transactionId)
-          formData.append('files', aggregatedFile, aggregatedFile.name)
+          formData.append('transactionId', transactionId)
+          files.forEach((file) => formData.append('files', file, file.name))
 
-          await axios.post(`${API_BASE}/api/privacy/mpc/upload-seller-data`, formData, {
+          // 直接把原始 CSV 交给后端计算；约定前 N-1 个文件进 A 组，最后 1 个进 B 组。
+          await axios.post(`${API_BASE}/api/privacy/mpc-audit/data`, formData, {
             headers: { 'Content-Type': 'multipart/form-data' }
           })
+          await axios.post(`${API_BASE}/api/privacy/mpc-audit/submit`, { transactionId })
 
           await this.refreshMpcStatus(row, false)
-          this.mpcNoticeDialog.message = '交付材料已提交，后续计算将在后台继续，现在可以关闭浏览器或退出账户。'
-          this.mpcNoticeDialog.visible = true
+          this.$message?.success('已提交计算')
         } catch (error) {
           const message = error?.response?.data?.message || error?.message || 'MPC 材料提交失败'
           this.$message?.error(message)

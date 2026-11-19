@@ -165,7 +165,7 @@
                       type="success"
                       class="action-btn-secondary action-btn-result"
                       :loading="row.teeDownloading"
-                      :disabled="isDeliveryExpired(row) || !row.teeResultReady"
+                      :disabled="!row.teeResultReady"
                       @click="getTeeResult(row)"
                     >
                       下载结果
@@ -379,13 +379,13 @@
               {{ teeModelDialog.file.name }}（{{ formatFileSize(teeModelDialog.file.size) }}）
             </div>
             <div class="dialog-hint">
-              后端只在本次请求内短暂读取模型字节，用于加密转发；数字合约由后端读取正式合约后另行加密提交，买方页面不会获取合约明文。
+              后端只在本次请求内短暂读取模型字节，用于加密转发；数字合约由后端读取正式合约后另行加密提交。
             </div>
           </div>
           <template #footer>
             <el-button :disabled="teeModelDialog.submitting" @click="closeTeeModelDialog">稍后上传</el-button>
             <el-button type="primary" :loading="teeModelDialog.submitting" :disabled="!teeModelDialog.file" @click="submitTeeModel">
-              加密传入 TEE
+              立即上传
             </el-button>
           </template>
         </el-dialog>
@@ -467,27 +467,35 @@
               <span class="dialog-label">统计摘要</span>
               <span>{{ formatMpcQualifiedCount(mpcResultDialog.result) }}</span>
             </div>
+            <div class="dialog-row">
+              <span class="dialog-label">审计状态</span>
+              <span>{{ formatMpcAuditStatus(mpcResultDialog.row) }}</span>
+            </div>
             <el-table
               v-if="Array.isArray(mpcResultDialog.result.user_results)"
-              :data="mpcResultDialog.result.user_results"
+              :data="mpcResultPreviewRows"
               border
               size="small"
+              max-height="360"
               style="width: 100%"
             >
               <el-table-column prop="user_id" label="用户ID" min-width="220" />
-              <el-table-column prop="total_assets" label="汇总资产" min-width="140" />
               <el-table-column label="是否达标" min-width="120">
                 <template #default="{ row }">
                   {{ getMpcResultText(row.is_qualified) }}
                 </template>
               </el-table-column>
             </el-table>
+            <div v-if="mpcResultTotalCount > mpcResultPreviewRows.length" class="dialog-hint compact-hint">
+              <span>共 {{ mpcResultTotalCount }} 条结果，仅展示前 {{ mpcResultPreviewRows.length }} 条，可下载完整结果。</span>
+            </div>
             <div class="dialog-hint compact-hint">
               <span>系统会先按用户汇总多份 CSV 中的资产，再执行阈值比较并返回批量筛选结果。</span>
             </div>
           </div>
 
           <template #footer>
+            <el-button @click="downloadMpcResult">下载完整结果</el-button>
             <el-button @click="closeMpcResultDialog">关闭</el-button>
           </template>
         </el-dialog>
@@ -571,8 +579,12 @@ import preCrypto from '@/utils/preCrypto'
 import teeApi from '@/utils/teeApi'
 import teeProgress from '@/utils/teeProgress'
 import teeWeightSchema from '@/utils/teeWeightSchema'
+import mpcAuditStatus from '@/utils/mpcAuditStatus'
 import teeModelUpload from '@/utils/teeModelUpload'
 import deliveryUi from '@/utils/deliveryUi'
+import { applyDeliveryStatusItem as applySummaryItem, summaryIds } from '@/utils/deliveryStatusSummary'
+import { getDeliveryNotificationTarget } from '@/utils/deliveryNotificationsApi'
+import { openDeliveryNotificationTarget } from '@/utils/globalDeliveryNotifications'
 import { decryptEnvelope, importPrivateKeyPem, decryptSm4, b64 } from '@/utils/teeCrypto'
 
 const API_BASE = 'http://10.112.191.163:3000'
@@ -583,6 +595,7 @@ export default {
   data() {
     return {
       userId: '',
+      deliveryNotificationFocus: '',
       username: '',
       isLoading: false,
       resultList: [],
@@ -661,6 +674,7 @@ export default {
   },
   mounted() {
     this.startStatusPolling()
+    this.openDeliveryNotificationTarget()
   },
   beforeUnmount() {
     this.stopStatusPolling()
@@ -668,9 +682,19 @@ export default {
   computed: {
     pagedResultList() {
       return this.resultList
+    },
+    mpcResultPreviewRows() {
+      const rows = this.mpcResultDialog.result?.user_results
+      return Array.isArray(rows) ? rows.slice(0, 10) : []
+    },
+    mpcResultTotalCount() {
+      const rows = this.mpcResultDialog.result?.user_results
+      return Array.isArray(rows) ? rows.length : 0
     }
   },
+  watch: { '$route.query.transactionId'() { this.openDeliveryNotificationTarget() } },
   methods: {
+    openDeliveryNotificationTarget() { return openDeliveryNotificationTarget(this, 'buyer', getDeliveryNotificationTarget) },
     parseJwt(token) {
       const base64Url = token.split('.')[1]
       const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/')
@@ -690,14 +714,16 @@ export default {
       const payload = this.parseJwt(token)
       this.username = decodeURIComponent(payload.username)
 
+      if (payload.id) { this.userId = String(payload.id); return }
       const response = await axios.post(`${API_BASE}/api/get-user-id`, {
         username: this.username
-      })
+      }, { timeout: 10000 })
       this.userId = String(response.data.id || '')
     },
 
     async getAllBuyerAddresses() {
   const addresses = []
+  let failedSources = 0
 
   const sources = [
     { org: 'wx-org1.chainmaker.org', api: 'get-certificates' },
@@ -710,12 +736,13 @@ export default {
     try {
       const response = await axios.post(`${API_BASE}/api/${source.api}`, {
         userId: this.userId
-      })
+      }, { timeout: 10000 })
 
       certs = Array.isArray(response.data.certificates)
         ? response.data.certificates
         : []
     } catch (error) {
+      failedSources++
       console.warn(`获取 ${source.api} 失败，跳过该组织:`, error?.response?.data || error.message)
       continue
     }
@@ -740,10 +767,12 @@ export default {
     }
   }
 
+  if (failedSources === sources.length) throw new Error('暂时无法读取证书信息，请稍后刷新')
   return [...new Set(addresses)]
 },
 
     async refreshResults() {
+      if (this.isLoading) return
       this.isLoading = true
       try {
         const buyerAddresses = await this.getAllBuyerAddresses()
@@ -755,7 +784,7 @@ export default {
 
         const addressResults = await Promise.all(buyerAddresses.map(async (address) => {
           try {
-            const response = await axios.get(`${API_BASE}/api/buyer-transaction-status/${address}`, { params: { page: this.pagination.page, pageSize: this.pagination.pageSize } })
+            const response = await axios.get(`${API_BASE}/api/buyer-transaction-status/${address}`, { params: { page: this.pagination.page, pageSize: this.pagination.pageSize }, timeout: 15000 })
             const transactions = Array.isArray(response.data.transactions) ? response.data.transactions : []
 
             const rows = transactions
@@ -810,17 +839,24 @@ export default {
                   teeContractExpired: false
                 }))
             return { rows, total: response.data.pagination?.total || rows.length }
-          } catch (error) { console.warn('加载买家交易失败:', address, error?.message || error); return { rows: [], total: 0 } }
+          } catch (error) {
+            console.warn('加载买家交易失败:', address, error?.message || error)
+            const cached = this.resultList.filter(row => row.buyer_address === address)
+            return { rows: cached, total: cached.length, failed: true }
+          }
         }))
+        if (addressResults.every(item => item.failed)) throw new Error('交付列表暂时无法读取，请稍后刷新')
         const rows = addressResults.flatMap((item) => item.rows)
 
         this.resultList = rows.sort((left, right) => this.compareTransactionIdDesc(left, right))
         this.pagination.total = addressResults.reduce((sum, item) => sum + Number(item.total || 0), 0)
         this.ensureBuyerPageInRange()
+        // 先用一次批量查询把首屏状态补齐（毫秒级），逐条详情放到后台继续同步。
+        await this.syncDeliveryStatusSummary()
         void this.syncBuyerPageStatus()
       } catch (error) {
         console.error('加载结果失败:', error)
-        this.$message?.error('加载结果失败')
+        this.$message?.error(error.message || '加载结果失败')
       } finally {
         this.isLoading = false
       }
@@ -865,8 +901,9 @@ export default {
     },
     canBuyerRequestTee(row) {
       if (!row || row.teeSubmitting || row.teeModelUploading) return false
-      if (row.teeContractExpired || row.teeDeliveryLimitReached) return false
+      if (row.teeContractExpired) return false
       if (this.canUploadTeeModel(row)) return true
+      if (row.teeDeliveryLimitReached) return false
       // 交付进行中不可再次请求；成功/失败后可重新请求。
       return !this.isTeeRunning(row)
     },
@@ -875,18 +912,15 @@ export default {
       if (row.teeModelUploading) return '上传中'
       if (this.canUploadTeeModel(row)) return '上传模型'
       if (this.isTeeRunning(row)) return '交付中'
-      if (row.teeContractExpired) return '合约已过期'
+      if (this.isTeeSuccess(row) && (row.teeContractExpired || row.teeDeliveryLimitReached)) return '已完成'
       if (row.teeRequested && !this.isTeeSuccess(row) && !this.isTeeFailed(row)) return '修改请求'
       return '请求交付'
     },
     getTeePhaseLabel(row) {
-      if (this.canUploadTeeModel(row)) return '待上传计算模型'
-      if (['MODEL_KEY_NEGOTIATING', 'MODEL_UPLOADING'].includes(String(row?.teeStep || '').toUpperCase())) return '正在上传计算模型'
       if (this.isTeeRunning(row)) return '交付中'
-      if (row?.teeContractExpired) return '合约已过期'
-      if (!row?.teeRequested) return '待请求交付'
-      if (this.isTeeSuccess(row)) return '交付成功'
+      if (this.isTeeSuccess(row)) return '已完成'
       if (this.isTeeFailed(row)) return '交付失败'
+      if (!row?.teeRequested) return '待请求交付'
       return '待卖方执行交付'
     },
     openTeeAction(row) {
@@ -1271,24 +1305,13 @@ export default {
         })))
       }
 
-      if (typeof window !== 'undefined') {
-        const latestCompletedRow = deliveryUi.prepareInitialTeeResultNotice(
-          window.localStorage,
-          rows.filter((row) => this.isTeeRow(row)),
-          { role: 'buyer', identity: this.userId || this.username || '' }
-        )
-        if (latestCompletedRow) {
-          this.showTeeNotice(latestCompletedRow, deliveryUi.TEE_NOTICE_STAGES.RESULT_READY)
-        }
-      }
+
     },
 
-    async refreshTeeStatus(row, signal, options = {}) {
+    async refreshTeeStatus(row, signal) {
       if (row.teeStatusRefreshing) return
       row.teeStatusRefreshing = true
       try {
-        const previousResultReady = Boolean(row.teeResultReady)
-        const previousAttemptId = row.teeCurrentAttemptId
         const r = await teeApi.status(row.transaction_id, signal)
         row.teeRequested = true
         row.teeStep = r.step || ''
@@ -1309,13 +1332,6 @@ export default {
         row.teeRemainingDeliveries = r.remainingDeliveries ?? null
         row.teeDeliveryLimitReached = Boolean(r.deliveryLimitReached)
         row.teeContractExpired = Boolean(r.contractExpired)
-        if (this.canUploadTeeModel(row)) {
-          this.showTeeNotice(row, deliveryUi.TEE_NOTICE_STAGES.MODEL_UPLOAD_REQUIRED)
-        }
-        const attemptChanged = String(previousAttemptId ?? '') !== String(row.teeCurrentAttemptId ?? '')
-        if (row.teeResultReady && !options.suppressResultNotice && (!previousResultReady || attemptChanged)) {
-          this.showTeeNotice(row, deliveryUi.TEE_NOTICE_STAGES.RESULT_READY)
-        }
       } catch (e) {
         if (e?.response?.status === 404) {
           row.teeRequested = false
@@ -1351,10 +1367,6 @@ export default {
         return false
       }
 
-      if (this.isDeliveryExpired(row)) {
-        return false
-      }
-
       if (this.isTeeRow(row)) {
         return teeProgress.shouldPollTeeStatus({
           requested: row.teeRequested,
@@ -1363,6 +1375,8 @@ export default {
           cleanupStatus: row.teeCleanupStatus
         })
       }
+
+      if (this.isDeliveryExpired(row)) return false
 
       if (this.isMpcRow(row)) {
         // 任务还没创建（或已被释放）时后端没有记录；终态也不会再变化。
@@ -1413,6 +1427,8 @@ export default {
       }
 
       const rows = this.pagedResultList.filter((row) => this.shouldPollRow(row))
+      const focused = this.teeDetailDialog.visible && this.teeDetailDialog.row
+      if (focused && this.shouldPollRow(focused) && !rows.includes(focused)) rows.push(focused)
       if (!rows.length) {
         return
       }
@@ -1420,15 +1436,53 @@ export default {
       this.pollingInFlight = true
       this.pollAbortController = new AbortController()
       const signal = this.pollAbortController.signal
-      const CONCURRENCY = 3
       try {
-        for (let i = 0; i < rows.length; i += CONCURRENCY) {
-          const batch = rows.slice(i, i + CONCURRENCY)
+        // 常规轮询只发一个批量请求；只有状态真的变了，才去补这一条的详情。
+        const changedRows = await this.syncDeliveryStatusSummary(rows, signal)
+        const targets = changedRows === null ? rows : changedRows
+        const CONCURRENCY = 3
+        for (let i = 0; i < targets.length; i += CONCURRENCY) {
+          const batch = targets.slice(i, i + CONCURRENCY)
           await Promise.all(batch.map((row) => this.refreshRowStatus(row, false, signal)))
         }
       } finally {
         this.pollingInFlight = false
+        this.pollAbortController = null
       }
+    },
+
+    // 一次请求批量取回当前页所有交易的交付状态，纯读库，不再逐条打上游。
+    async syncDeliveryStatusSummary(rows = this.pagedResultList, signal) {
+      const targets = (rows || []).filter((row) => row?.transaction_id)
+      if (!targets.length) return []
+
+      const ids = summaryIds(targets)
+      try {
+        const response = await axios.get(`${API_BASE}/api/privacy/delivery-status`, {
+          params: { transactionIds: ids.join(',') },
+          signal,
+          timeout: 8000
+        })
+        const items = response.data?.items || {}
+        const changed = []
+        for (const row of targets) {
+          const item = items[String(row.transaction_id)]
+          if (!item) continue
+          const before = this.getCurrentStatusText(row)
+          const firstSync = !row.deliverySummarySynced
+          this.applyDeliveryStatusItem(row, item)
+          row.deliverySummarySynced = true
+          if (!firstSync && before !== this.getCurrentStatusText(row)) changed.push(row)
+        }
+        return changed
+      } catch (error) {
+        if (error?.code === 'ERR_CANCELED' || error?.name === 'CanceledError') return []
+        return null
+      }
+    },
+
+    applyDeliveryStatusItem(row, item) {
+      return applySummaryItem(row, item, { pcTypeOf: (target) => this.normalizePcType(target?.pc_type) })
     },
 
     async refreshHeStatus(row, showMessage = true, signal) {
@@ -1571,7 +1625,7 @@ export default {
       const labelMap = {
         WAIT_BUYER: '待买方操作',
         WAIT_SELLER: '待卖方操作',
-        PROCESSING: currentStatus === 'PAMING' ? '审计中' : '计算中',
+        PROCESSING: (currentStatus === 'PAMING' || (this.isMpcRow(row) && currentStatus === 'COMPUTING')) ? '审计中' : '计算中',
         COMPLETED: '已完成',
         FAILED: '失败'
       }
@@ -1697,12 +1751,12 @@ export default {
       if (!row?.transaction_id) return
       row.syncingMpc = true
       try {
-        const response = await axios.get(`${API_BASE}/api/privacy/mpc/status`, {
-          params: { transaction_id: row.transaction_id },
+        const response = await axios.get(`${API_BASE}/api/privacy/mpc-audit/status`, {
+          params: { transactionId: row.transaction_id },
           signal,
           timeout: 15000
         })
-        row.mpcRecord = response.data?.data || null
+        row.mpcRecord = mpcAuditStatus.normalizeRecord(response.data?.data)
         if (showMessage) {
           this.$message?.success('MPC 状态已刷新')
         }
@@ -1746,7 +1800,7 @@ export default {
       if (!row?.transaction_id || !this.ensureDeliveryActive(row)) return
       this.mpcDialog.visible = true
       this.mpcDialog.row = row
-      this.mpcDialog.threshold = row?.mpcRecord?.compute_params?.threshold ?? ''
+      this.mpcDialog.threshold = row?.mpcRecord?.compute_params?.threshold ?? row?.mpcRecord?.threshold ?? ''
       this.mpcDialog.submitting = false
     },
 
@@ -1763,13 +1817,12 @@ export default {
       row.processingMpc = true
       this.mpcDialog.submitting = true
       try {
-        const formData = new FormData()
-        formData.append('transaction_id', row.transaction_id)
-        formData.append('threshold', String(threshold))
-        formData.append('compute_mode', 'asset_threshold_batch')
-
-        await axios.post(`${API_BASE}/api/privacy/mpc/create-task`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
+        await axios.post(`${API_BASE}/api/privacy/mpc-audit/create`, {
+          transactionId: row.transaction_id,
+          businessContractId: `CONTRACT-${row.transaction_id}`,
+          buyerId: row.buyer_address,
+          sellerId: row.seller_address,
+          threshold: String(threshold)
         })
 
         await this.refreshMpcStatus(row, false)
@@ -1789,8 +1842,8 @@ export default {
 
       row.viewingMpcResult = true
       try {
-        const response = await axios.get(`${API_BASE}/api/privacy/mpc/result`, {
-          params: { transaction_id: row.transaction_id }
+        const response = await axios.get(`${API_BASE}/api/privacy/mpc-audit/result`, {
+          params: { transactionId: row.transaction_id }
         })
         this.mpcResultDialog.visible = true
         this.mpcResultDialog.row = row
@@ -1809,6 +1862,36 @@ export default {
         return value ? '是' : '否'
       }
       return '-'
+    },
+
+    formatMpcAuditStatus(row) {
+      return mpcAuditStatus.formatAuditLabel(row?.mpcRecord)
+    },
+
+    downloadMpcResult() {
+      const rows = this.mpcResultDialog.result?.user_results || []
+      if (!rows.length) {
+        this.$message?.warning('暂无可下载的结果')
+        return
+      }
+      const escapeCsv = (value) => {
+        const text = String(value == null ? '' : value)
+        return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text
+      }
+      const lines = ['用户ID,是否达标']
+      rows.forEach((row) => {
+        lines.push(`${escapeCsv(row.user_id)},${row.is_qualified ? '是' : '否'}`)
+      })
+      const csv = `\uFEFF${lines.join('\r\n')}`
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `MPC核验结果_${this.mpcResultDialog.row?.transaction_id || Date.now()}.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
     },
 
     getMpcResultText(value) {
@@ -1830,7 +1913,7 @@ export default {
     },
 
     formatMpcThreshold(row) {
-      const threshold = row?.mpcRecord?.compute_params?.threshold
+      const threshold = row?.mpcRecord?.compute_params?.threshold ?? row?.mpcRecord?.threshold
       return threshold === undefined || threshold === null || threshold === '' ? '-' : String(threshold)
     },
 

@@ -31,7 +31,7 @@ import AuctionProcessing from './views/AuctionProcessingView.vue'
 const routes = [
   { path: '/home', name: 'Home', component: HomeView, meta: { requiresAuth: true, roles: ['admin','buyer','seller','auditor'] } },
 
-{ path: '/chain-registration', component: ChainRegistrationView, meta: { requiresAuth: true, roles: ['seller'] } },
+{ path: '/chain-registration', component: ChainRegistrationView, meta: { requiresAuth: true, roles: ['buyer','seller'] } },
 { path: '/asset-management2', component: AssetManagementView2, meta: { requiresAuth: true, roles: ['buyer','seller','auditor'] } },
 
 { path: '/market', component: MarketView, meta: { requiresAuth: true, roles: ['buyer','seller'] } },

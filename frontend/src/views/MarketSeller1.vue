@@ -6,7 +6,7 @@
       <AppSidebar />
 
       <div class="content">
-        <h2 class="title">交易市场</h2>
+        <h2 class="title">交易处理</h2>
 
         <div class="toolbar">
           <button class="btn" @click="refresh">刷新交易列表</button>
@@ -49,17 +49,6 @@
               <span class="k">资产交付方法:</span>
               <span class="v">{{ a.pc_type_label || "未选择" }}</span>
             </div>
-            <template v-if="normalizePcType(a.pc_type) === 'TEE'">
-              <div class="row">
-                <span class="k">模型哈希:</span>
-                <span class="v mono" :title="a.model_file_hash">{{ abbreviateHash(a.model_file_hash) }}</span>
-              </div>
-              <div class="row">
-                <span class="k">约定交付次数:</span>
-                <span class="v">{{ a.delivery_limit }} 次</span>
-              </div>
-            </template>
-
             <div class="actions">
               <button
                 class="btn primary"

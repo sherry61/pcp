@@ -39,7 +39,7 @@
     </template>
 
     <template v-else-if="!isAuditor">
-      <router-link v-if="isSeller" to="/chain-registration">
+      <router-link v-if="isBuyer || isSeller" to="/chain-registration">
         上链登记
       </router-link>
 
