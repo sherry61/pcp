@@ -6,7 +6,7 @@
 
       <el-input
         v-model="crossSearchTerm"
-        placeholder="输入资产名称 / 编码 / 机构"
+        placeholder="输入资产名称 / 机构"
         clearable
         @keyup.enter="crossSearchAssets"
       >
@@ -25,14 +25,9 @@
         :empty-text="emptyText"
         @row-click="selectCrossAsset"
       >
-        <el-table-column prop="asset_name" label="资产名称" min-width="170" show-overflow-tooltip />
-        <el-table-column label="所在平台（链）" min-width="210" show-overflow-tooltip>
+        <el-table-column prop="asset_name" label="资产名称" min-width="200" show-overflow-tooltip />
+        <el-table-column label="所在平台" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">{{ getCrossPlatform(row) }}</template>
-        </el-table-column>
-        <el-table-column label="唯一标识" min-width="150">
-          <template #default="{ row }">
-            <span class="mono">{{ truncateHash(row.file_hash) }}</span>
-          </template>
         </el-table-column>
       </el-table>
     </section>
@@ -71,18 +66,6 @@
           <el-form-item label="To（ChainMaker 地址）">
             <el-input v-model="bridgeToChainmaker" placeholder="例如 64b6a0f6..." />
           </el-form-item>
-
-          <el-form-item label="CategoryName">
-            <el-input v-model="bridgeCategoryName" placeholder="例如 WH" />
-          </el-form-item>
-
-          <el-form-item label="Metadata.source">
-            <el-input v-model="bridgeMetaSource" placeholder="peer-burn" />
-          </el-form-item>
-
-          <el-form-item label="Metadata.desc">
-            <el-input v-model="bridgeMetaDesc" placeholder="mint after peer burn" />
-          </el-form-item>
         </template>
 
         <template v-else>
@@ -118,6 +101,8 @@ import axios from 'axios';
 import { ElMessage } from 'element-plus';
 
 const API_BASE = 'http://10.112.191.163:3000';
+// 跨平台检索当前只放行北数所，其它平台暂时禁用
+const ALLOWED_PLATFORM = '北京国家大数据交易所';
 
 export default {
   name: 'CrossChainPanel',
@@ -157,9 +142,7 @@ export default {
       return `${value.slice(0, 6)}...${value.slice(-4)}`;
     },
     getCrossPlatform(asset) {
-      const platform = asset.platform_name || asset.chain_type || 'ChainMaker(chain1)';
-      const did = asset.orgDID || asset.orgId || '';
-      return did ? `${platform} / ${did}` : platform;
+      return asset.platform_name || asset.chain_type || 'ChainMaker(chain1)';
     },
     rowClassName({ row }) {
       if (!this.selectedCrossAsset) return '';
@@ -202,6 +185,8 @@ export default {
         }
 
         const matched = allCatalogs.filter((item) => {
+          // 当前只放行北数所，其它平台暂时禁用
+          if (String(item?.platform_name || '') !== ALLOWED_PLATFORM) return false;
           const fields = [
             item?.name,
             item?.code,

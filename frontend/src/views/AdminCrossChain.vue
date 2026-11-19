@@ -5,7 +5,14 @@
       <AppSidebar />
       <div class="content">
         <h2 class="page-title">跨链跨平台</h2>
-        <CrossChainPanel />
+        <el-tabs v-model="activeTab" class="cross-chain-tabs">
+          <el-tab-pane label="资产信息" name="assets">
+            <AssetCatalogPanel />
+          </el-tab-pane>
+          <el-tab-pane label="跨链调配" name="bridge">
+            <CrossChainPanel />
+          </el-tab-pane>
+        </el-tabs>
       </div>
     </div>
   </div>
@@ -14,11 +21,17 @@
 <script>
 import AppHeader from '@/components/AppHeader.vue';
 import AppSidebar from '@/components/AppSidebar.vue';
+import AssetCatalogPanel from '@/components/AssetCatalogPanel.vue';
 import CrossChainPanel from '@/components/CrossChainPanel.vue';
 
 export default {
   name: 'AdminCrossChain',
-  components: { AppHeader, AppSidebar, CrossChainPanel }
+  components: { AppHeader, AppSidebar, AssetCatalogPanel, CrossChainPanel },
+  data() {
+    return {
+      activeTab: 'assets'
+    };
+  }
 };
 </script>
 
@@ -49,5 +62,17 @@ export default {
   margin: 0 0 20px;
   font-size: 22px;
   color: #1f2937;
+}
+
+.cross-chain-tabs {
+  height: calc(100% - 42px);
+}
+
+.cross-chain-tabs :deep(.el-tabs__content) {
+  height: calc(100% - 55px);
+}
+
+.cross-chain-tabs :deep(.el-tab-pane) {
+  height: 100%;
 }
 </style>
