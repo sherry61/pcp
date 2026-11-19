@@ -36,31 +36,23 @@ export default {
   }
 },
   methods: {
-    async fetchPamEntryUrl(token) {
-      const response = await axios.post(
-        "http://10.112.191.163:3000/api/pam/entry-start",
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
-      return response.data?.entry_url;
-    },
-
     async enterAuditTarget(target, token) {
       if (!target) {
-        alert('管理员尚未分配审计入口，请联系管理员');
-        return;
+        throw new Error('管理员尚未分配审计入口，请联系管理员');
       }
 
       if (target === 'HUB') {
-        const pamEntryUrl = await this.fetchPamEntryUrl(token);
-        if (!pamEntryUrl) {
-          throw new Error('审计平台未返回跳转地址');
+        const response = await axios.get(
+          'http://10.112.191.163:3000/api/pam/launch',
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        const launchPath = response.data?.url;
+        if (!launchPath) {
+          throw new Error(response.data?.message || '生成审计中台入口失败');
         }
-        window.location.href = pamEntryUrl;
+        // 先到交易系统的 HTTP 中转页，再由中转页把票据表单提交到 Hub。
+        // HTTPS 页面直接向 HTTP Hub 提交表单会触发浏览器的混合表单拦截。
+        window.location.href = `http://10.112.191.163:3000${launchPath}`;
         return;
       }
 
@@ -70,12 +62,12 @@ export default {
           { node_id: String(target).slice(5) },
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        if (!response.data?.url) {
+        const launchPath = response.data?.url;
+        if (!launchPath) {
           throw new Error(response.data?.message || '生成审计节点入口失败');
         }
-        const launchPath = response.data.url;
-        // 自动提交页必须走 HTTP：节点本身是 HTTP，
-        // 如果从 HTTPS 页面直接提交表单，Chrome 会拦截并提示“提交的信息不安全”。
+        // 自动提交页必须走交易系统的 HTTP 地址：节点本身是 HTTP，
+        // 从 HTTPS 页面直接提交表单会被浏览器拦截。
         window.location.href = `http://10.112.191.163:3000${launchPath}`;
         return;
       }

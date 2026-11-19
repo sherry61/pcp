@@ -1,4 +1,16 @@
+const fs = require('fs');
+const path = require('path');
+
 const transactionSupervisionTarget = process.env.VUE_APP_TRANSACTION_SUPERVISION_API_TARGET;
+
+// 本地受信任证书。certs/ 目录不提交 Git，见 .gitignore。
+// 用 certs/ca.crt 作为根证书签发，访问端需先信任该根证书。
+const certificateDirectory = path.join(__dirname, 'certs');
+const certificateKey = path.join(certificateDirectory, 'server.key');
+const certificateFile = path.join(certificateDirectory, 'server.crt');
+const localCertificate = fs.existsSync(certificateKey) && fs.existsSync(certificateFile)
+  ? { key: fs.readFileSync(certificateKey), cert: fs.readFileSync(certificateFile) }
+  : null;
 
 module.exports = {
   chainWebpack: config => {
@@ -13,8 +25,12 @@ module.exports = {
   },
   devServer: {
     host: '0.0.0.0',
-    port: 8085,
+    port: 8087,
     https: true,
+    server: {
+      type: 'https',
+      ...(localCertificate ? { options: localCertificate } : {})
+    },
     proxy: {
       // ===== Node 后端（默认 3000）=====
       // https 页面下浏览器会拦截到 http://10.112.191.163:3000 的直连请求（混合内容），

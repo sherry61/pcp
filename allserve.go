@@ -59,7 +59,6 @@ func main() {
 			Env: map[string]string{
 				"PCC_CLIENT_ID":    "trading-system",
 				"PCP_BASE_URL":     "http://10.112.191.163:15130",
-				"HUB_WEB_ORIGIN":   "http://10.112.191.163:15140",
 				"HUB_API_BASE_URL": "http://127.0.0.1:18140",
 				"PCC_PRE_ROOT":     "/home/super/tr/pcc-engine",
 				// PCC 跑在容器里，回调地址必须是宿主机可达地址。

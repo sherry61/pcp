@@ -110,16 +110,12 @@ const DATA_CATALOG_PLATFORM_DID =
   process.env.DATA_CATALOG_PLATFORM_DID || 'did:web:data.web';
 const DATA_CATALOG_PLATFORM_URL =
   process.env.DATA_CATALOG_PLATFORM_URL || 'http://10.112.191.163';
-const HUB_WEB_ORIGIN =
-  process.env.HUB_WEB_ORIGIN || 'http://10.112.191.163:15140';
 const HUB_API_BASE_URL =
   process.env.HUB_API_BASE_URL || 'http://127.0.0.1:18140';
-const HUB_TRADING_TOKEN =
-  process.env.HUB_TRADING_TOKEN || '';
-const PAM_TRADING_AUTHORIZE_PATH =
-  process.env.PAM_TRADING_AUTHORIZE_PATH || '/api/pam/authorize';
-const PAM_ENTRY_COOKIE = 'pam_trade_entry';
-const PAM_ENTRY_COOKIE_TTL_SECONDS = 300;
+// Hub 运维台「安全与凭据 → 接入系统」创建的一次性凭据。
+// 兼容旧变量名，方便尚未更新 .env.pam 的部署。
+const HUB_INTEGRATION_TOKEN =
+  process.env.HUB_INTEGRATION_TOKEN || process.env.HUB_TRADING_TOKEN || '';
 
 const VM_HOST_BASE_URL = 'http://10.112.14.6:8000';
 const VM_TOKEN =
@@ -201,14 +197,14 @@ function parseCookies(req) {
 }
 
 async function hubApiFetch(pathname, options = {}) {
-  if (!HUB_TRADING_TOKEN) {
-    throw new Error('HUB_TRADING_TOKEN 未配置，无法访问审计平台');
+  if (!HUB_INTEGRATION_TOKEN) {
+    throw new Error('HUB_INTEGRATION_TOKEN 未配置，无法访问审计平台');
   }
   const url = new URL(pathname, `${HUB_API_BASE_URL.replace(/\/$/, '')}/`);
   const response = await fetch(url, {
     method: options.method || 'GET',
     headers: {
-      'x-trading-token': HUB_TRADING_TOKEN,
+      'X-Integration-Token': HUB_INTEGRATION_TOKEN,
       ...(options.body ? { 'content-type': 'application/json' } : {}),
       ...(options.headers || {})
     },
@@ -219,16 +215,6 @@ async function hubApiFetch(pathname, options = {}) {
     throw new Error(result.detail || `审计平台请求失败: HTTP ${response.status}`);
   }
   return result;
-}
-
-function buildPamEntryUrl(pccContractId = '') {
-  const base = `${HUB_WEB_ORIGIN.replace(/\/$/, '')}/entry/start`;
-  const query = new URLSearchParams();
-  if (pccContractId) {
-    query.set('pcc_contract_id', pccContractId);
-  }
-  const suffix = query.toString();
-  return suffix ? `${base}?${suffix}` : base;
 }
 
 // 把 db.query 封装成 Promise，方便用 async/await
@@ -313,6 +299,43 @@ function takePamNodeTicket(ticket) {
   pamNodeTickets.delete(ticket);
   if (item.expiresAt < Date.now()) return null;
   return item;
+}
+
+// Hub 入场票据不能从 HTTPS 页面直接提交到 HTTP Hub（浏览器会拦截混合表单）。
+// 这里先签发一个交易系统自己的一次性短票据，让浏览器跳到 HTTP 中转页，
+// 由中转页再向 Hub 申请真正的入场票据并自动提交。
+const pamHubTickets = new Map();
+function createPamHubTicket(userId) {
+  const ticket = crypto.randomBytes(24).toString('hex');
+  pamHubTickets.set(ticket, {
+    userId,
+    expiresAt: Date.now() + 60 * 1000
+  });
+  return ticket;
+}
+
+function takePamHubTicket(ticket) {
+  const item = pamHubTickets.get(ticket);
+  if (!item) return null;
+  pamHubTickets.delete(ticket);
+  if (item.expiresAt < Date.now()) return null;
+  return item;
+}
+
+function pamLaunchErrorPage(message, statusCode = 400) {
+  return `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <title>无法进入审计中台</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: flex; min-height: 100vh; align-items: center; justify-content: center; color: #374151; background: #f8fafc; }
+    .box { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 28px 34px; box-shadow: 0 10px 30px rgba(15, 23, 42, .08); text-align: center; }
+  </style>
+</head>
+<body><div class="box"><p>${escapeHtml(message)}</p></div></body>
+</html>`;
 }
 
 function extractBearerToken(req) {
@@ -2255,7 +2278,7 @@ app.post('/api/login', (req, res) => {
     });
 });
 
-app.all('/api/pam/entry-start', async (req, res) => {
+app.all('/api/pam/launch', async (req, res) => {
     const token = req.headers.authorization?.replace(/^Bearer\s+/i, '') || req.body?.token || req.query.token;
 
     if (!token) {
@@ -2271,7 +2294,7 @@ app.all('/api/pam/entry-start', async (req, res) => {
 
     try {
         const rows = await dbQuery(
-            'SELECT role, auditor_target FROM users WHERE id = ? LIMIT 1',
+            'SELECT id, role, auditor_target FROM users WHERE id = ? LIMIT 1',
             [claims.id]
         );
         const user = rows[0];
@@ -2282,71 +2305,94 @@ app.all('/api/pam/entry-start', async (req, res) => {
         if (role === 'AUDITOR' && String(user.auditor_target || '') !== 'HUB') {
             return res.status(403).json({ error: '管理员尚未分配 Hub 审计入口' });
         }
+
+        if (!HUB_INTEGRATION_TOKEN) {
+            return res.status(503).json({ error: '审计中台接入凭据未配置，请联系管理员' });
+        }
+
+        const ticket = createPamHubTicket(user.id);
+        res.set('Cache-Control', 'no-store');
+        return res.json({
+            message: '审计中台入口已生成',
+            url: `/api/pam/hub-launch?ticket=${encodeURIComponent(ticket)}`
+        });
     } catch (error) {
-        return res.status(500).json({ error: '校验审计权限失败' });
+        console.error('申请审计中台入场票据失败:', error.message);
+        return res.status(502).json({ error: error.message || '申请审计中台入场票据失败' });
     }
-
-    if (!HUB_WEB_ORIGIN || !HUB_TRADING_TOKEN) {
-        return res.status(503).json({ error: '审计平台跳转未配置，请联系管理员' });
-    }
-
-    const pccContractId = String(req.body?.pcc_contract_id || req.query.pcc_contract_id || '').trim();
-
-    res.cookie(PAM_ENTRY_COOKIE, token, {
-        httpOnly: true,
-        sameSite: 'lax',
-        path: '/',
-        maxAge: PAM_ENTRY_COOKIE_TTL_SECONDS * 1000
-    });
-
-    const entryUrl = buildPamEntryUrl(pccContractId);
-
-    if (req.method === 'GET') {
-        return res.redirect(303, entryUrl);
-    }
-
-    res.json({ message: '审计平台跳转地址已生成', entry_url: entryUrl });
 });
 
-app.get(PAM_TRADING_AUTHORIZE_PATH, async (req, res) => {
-    const requestId = String(req.query.request_id || '').trim();
-    if (!requestId) {
-        return res.status(400).send('缺少 request_id');
-    }
+// HTTP 中转页：浏览器先来到这里（同一 HTTP 源），再自动表单提交到 Hub。
+// 这样不会触发 Chrome 的「您要提交的信息不安全」混合表单拦截。
+app.get('/api/pam/hub-launch', async (req, res) => {
+    const ticket = String(req.query.ticket || '').trim();
+    const item = ticket ? takePamHubTicket(ticket) : null;
 
-    const token = parseCookies(req)[PAM_ENTRY_COOKIE];
-    if (!token) {
-        return res.status(401).send('缺少交易交接凭据，请重新从交易系统进入');
-    }
+    res.set('Cache-Control', 'no-store');
+    res.set('Referrer-Policy', 'no-referrer');
 
-    let claims;
-    try {
-        claims = jwt.verify(token, secretKey);
-    } catch (error) {
-        return res.status(401).send('交易登录已过期，请重新登录');
+    if (!item) {
+        return res.status(400).type('html').send(
+            pamLaunchErrorPage('审计入口已过期，请返回交易系统重新进入。')
+        );
     }
 
     try {
-        const entry = await hubApiFetch(`/hub/web/requests/${encodeURIComponent(requestId)}`);
-        if (entry.mode !== 'reader') {
-            return res.status(403).send('本次交接的角色不被允许');
+        const rows = await dbQuery(
+            'SELECT id, role, auditor_target FROM users WHERE id = ? LIMIT 1',
+            [item.userId]
+        );
+        const user = rows[0];
+        const role = String(user?.role || 'USER').toUpperCase();
+        if (!user || !['AUDITOR', 'ADMIN'].includes(role)) {
+            throw new Error('当前账号没有审计入口权限');
+        }
+        if (role === 'AUDITOR' && String(user.auditor_target || '') !== 'HUB') {
+            throw new Error('管理员尚未分配 Hub 审计入口');
+        }
+        if (!HUB_INTEGRATION_TOKEN) {
+            throw new Error('审计中台接入凭据未配置，请联系管理员');
         }
 
-        const subject = `trade:${claims.username || claims.id}`;
+        // 只传当前用户在交易系统里的稳定编号；合同与授权规则由 Hub 侧决定。
+        const subject = `trading-user-${user.id}`;
         const launch = await hubApiFetch('/hub/web/launches', {
             method: 'POST',
-            body: JSON.stringify({ request_id: requestId, subject })
+            body: JSON.stringify({ subject })
         });
-
-        if (!launch.launch_url) {
-            throw new Error('审计平台未返回跳转地址');
+        if (!launch.entry_url || !launch.ticket) {
+            throw new Error('审计中台未返回入场票据');
         }
 
-        res.clearCookie(PAM_ENTRY_COOKIE, { path: '/' });
-        return res.redirect(303, launch.launch_url);
+        const html = `<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="referrer" content="no-referrer">
+  <title>正在进入审计中台</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; display: flex; min-height: 100vh; align-items: center; justify-content: center; color: #374151; background: #f8fafc; }
+    .box { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 28px 34px; box-shadow: 0 10px 30px rgba(15, 23, 42, .08); text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="box">
+    <p>正在进入审计中台…</p>
+    <form id="hub-entry-form" method="post" action="${escapeHtml(launch.entry_url)}">
+      <input type="hidden" name="ticket" value="${escapeHtml(launch.ticket)}">
+      <noscript><button type="submit">继续进入审计中台</button></noscript>
+    </form>
+  </div>
+  <script>document.getElementById('hub-entry-form').submit();</script>
+</body>
+</html>`;
+
+        return res.type('html').send(html);
     } catch (error) {
-        console.error('PAM 授权回调失败:', error);
-        return res.status(502).send(error.message || '审计平台授权失败');
+        console.error('进入审计中台失败:', error.message);
+        return res.status(502).type('html').send(
+            pamLaunchErrorPage(error.message || '进入审计中台失败', 502)
+        );
     }
 });
 
